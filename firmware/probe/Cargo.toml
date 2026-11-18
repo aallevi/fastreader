@@ -1,0 +1,27 @@
+[package]
+name = "es3c28p-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Hardware probe: display colours, I2C scan, battery ADC, touch points"
+
+[[bin]]
+name = "probe"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+embedded-graphics = "0.8"
+esp-hal = { version = "1.0", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.20", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
+embedded-hal = "1.0"
+embedded-hal-bus = "0.3"
+mipidsi = "0.10"
+nb = "1"
+
+[profile.release]
+opt-level = "s"
+debug = 2

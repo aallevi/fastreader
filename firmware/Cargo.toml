@@ -1,0 +1,41 @@
+[package]
+name = "fastreader-firmware"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fast reader firmware for the LCDWIKI ES3C28P (ESP32-S3, 2.8\" ILI9341V, FT6336G)"
+
+[[bin]]
+name = "fastreader"
+path = "src/main.rs"
+test = false
+bench = false
+
+[features]
+# Opens every book at boot and logs load/pagination times and memory.
+selftest = []
+
+[dependencies]
+reader-core = { path = "../crates/reader-core" }
+reader-ui = { path = "../crates/reader-ui" }
+embedded-graphics = "0.8"
+esp-hal = { version = "1.0", features = ["esp32s3", "unstable"] }
+esp-alloc = { version = "0.11", features = ["esp32s3"] }
+esp-backtrace = { version = "0.20", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
+embedded-hal = "1.0"
+embedded-hal-bus = "0.3"
+mipidsi = "0.10"
+nb = "1"
+esp-storage = { version = "0.10", features = ["esp32s3"] }
+embedded-storage = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = 2
+
+[profile.dev]
+opt-level = "s"

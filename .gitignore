@@ -1,0 +1,7 @@
+target/
+firmware/target/
+tools/.venv/
+books/private/
+backup/
+assets/fonts-src/
+**/target/

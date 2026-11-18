@@ -1,0 +1,13 @@
+[package]
+name = "reader-sim"
+description = "Desktop simulator: window + PNG snapshots of every theme"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+reader-core.workspace = true
+reader-ui.workspace = true
+embedded-graphics.workspace = true
+minifb = "0.29"
+png = "0.18"

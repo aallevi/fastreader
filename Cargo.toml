@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/reader-core", "crates/reader-ui", "crates/reader-sim"]
+# The ESP32 firmware needs the Xtensa toolchain (espup), so it builds on its own.
+exclude = ["firmware"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+reader-core = { path = "crates/reader-core" }
+reader-ui = { path = "crates/reader-ui" }
+embedded-graphics = "0.8"
+u8g2-fonts = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

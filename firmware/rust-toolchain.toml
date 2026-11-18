@@ -1,0 +1,3 @@
+# Installed by `espup install` (the ESP32-S3 uses the Xtensa architecture).
+[toolchain]
+channel = "esp"

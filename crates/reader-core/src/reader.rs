@@ -1,0 +1,359 @@
+//! Playback: which word is showing and when the next one is due.
+//!
+//! Time is passed in as milliseconds from any monotonic clock, so the same
+//! code runs on the ESP32 timer, the desktop clock and in tests.
+
+use crate::book::Book;
+use crate::settings::{Pacing, Skip};
+
+pub const MIN_WPM: u16 = 100;
+pub const MAX_WPM: u16 = 1000;
+pub const WPM_STEP: u16 = 25;
+
+/// Words shown at reduced speed after (re)starting, so the eye can lock on.
+const RAMP_WORDS: usize = 4;
+
+pub struct Reader {
+    pub book: Book,
+    pos: usize,
+    wpm: u16,
+    playing: bool,
+    next_due: u64,
+    ramp: usize,
+    /// Words per flash (1–3).
+    chunk: u8,
+    /// Reached the end by playing; the next play starts over.
+    finished: bool,
+    pacing: Pacing,
+}
+
+impl Reader {
+    pub fn new(book: Book, wpm: u16) -> Self {
+        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, finished: false, pacing: Pacing::default() }
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+    pub fn wpm(&self) -> u16 {
+        self.wpm
+    }
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+    pub fn at_end(&self) -> bool {
+        self.shown().end >= self.book.len()
+    }
+
+    /// Swaps in another book, keeping speed and settings; stops playback.
+    pub fn set_book(&mut self, mut book: Book, pos: usize) {
+        book.set_pacing(&self.pacing);
+        self.book = book;
+        self.playing = false;
+        self.finished = false;
+        self.pos = pos.min(self.book.len().saturating_sub(1));
+    }
+
+    pub fn set_pacing(&mut self, p: Pacing) {
+        if p != self.pacing {
+            self.pacing = p;
+            self.book.set_pacing(&p);
+        }
+    }
+
+    pub fn chunk(&self) -> u8 {
+        self.chunk
+    }
+
+    pub fn set_chunk(&mut self, n: u8) {
+        self.chunk = n.clamp(1, 3);
+    }
+
+    /// The words on screen now (one, or a short phrase).
+    pub fn shown(&self) -> core::ops::Range<usize> {
+        self.book.group(self.pos, self.chunk)
+    }
+
+    /// Display time of the current word in ms, including the start-up ramp.
+    pub fn current_delay(&self) -> u64 {
+        if self.book.is_empty() {
+            return 0;
+        }
+        let base = 60_000 * self.book.weight_of(self.shown()) as u64 / (self.wpm as u64 * 100);
+        if self.ramp > 0 && self.pacing.ramp {
+            base * (100 + 25 * self.ramp as u64) / 100
+        } else {
+            base
+        }
+    }
+
+    pub fn ms_left(&self) -> u64 {
+        60_000 * self.book.weight_from(self.pos) as u64 / (self.wpm as u64 * 100)
+    }
+
+    /// Progress through the book in 1/1000ths.
+    pub fn permille(&self) -> u16 {
+        match self.book.len() {
+            0 | 1 => 1000 * self.pos.min(1) as u16,
+            n => (self.pos as u64 * 1000 / (n as u64 - 1)) as u16,
+        }
+    }
+
+    pub fn play(&mut self, now: u64) {
+        if self.book.is_empty() {
+            return;
+        }
+        if self.finished {
+            self.pos = 0;
+            self.finished = false;
+        }
+        self.playing = true;
+        self.ramp = RAMP_WORDS;
+        self.next_due = now + self.current_delay();
+    }
+
+    pub fn pause(&mut self) {
+        self.playing = false;
+    }
+
+    /// Changes speed; returns false if already at the limit.
+    pub fn nudge_wpm(&mut self, up: bool) -> bool {
+        let new = if up { self.wpm.saturating_add(WPM_STEP) } else { self.wpm.saturating_sub(WPM_STEP) };
+        let new = new.clamp(MIN_WPM, MAX_WPM);
+        let changed = new != self.wpm;
+        self.wpm = new;
+        changed
+    }
+
+    pub fn set_wpm(&mut self, wpm: u16) {
+        self.wpm = wpm.clamp(MIN_WPM, MAX_WPM);
+    }
+
+    /// Jumps to a word; playback restarts its ramp from there.
+    pub fn seek(&mut self, pos: usize, now: u64) {
+        self.pos = pos.min(self.book.len().saturating_sub(1));
+        self.finished = false;
+        if self.playing {
+            self.ramp = RAMP_WORDS;
+            self.next_due = now + self.current_delay();
+        }
+    }
+
+    /// Back to the start of this sentence, or the previous one if already
+    /// there. Returns false at the very beginning.
+    pub fn sentence_back(&mut self, now: u64) -> bool {
+        let here = self.book.sentence_start(self.pos);
+        let target = if here == self.pos && here > 0 { self.book.sentence_start(here - 1) } else { here };
+        let moved = target != self.pos;
+        self.seek(target, now);
+        moved
+    }
+
+    /// One word back or forward. Returns false at either end.
+    pub fn step_word(&mut self, forward: bool, now: u64) -> bool {
+        let target = if forward { self.pos + 1 } else { self.pos.wrapping_sub(1) };
+        if target >= self.book.len() {
+            return false;
+        }
+        self.seek(target, now);
+        true
+    }
+
+    /// ◀◀ by the chosen amount. Returns false at the very beginning.
+    pub fn skip_back(&mut self, skip: Skip, now: u64) -> bool {
+        let target = match skip {
+            Skip::Sentence => return self.sentence_back(now),
+            Skip::Words(n) => self.pos.saturating_sub(n as usize),
+            Skip::Paragraph => {
+                let here = self.book.paragraph_start(self.pos);
+                if here == self.pos && here > 0 { self.book.paragraph_start(here - 1) } else { here }
+            }
+        };
+        let moved = target != self.pos;
+        self.seek(target, now);
+        moved
+    }
+
+    /// ▶▶ by the chosen amount. Returns false at the end.
+    pub fn skip_forward(&mut self, skip: Skip, now: u64) -> bool {
+        let target = match skip {
+            Skip::Sentence => return self.sentence_forward(now),
+            Skip::Words(n) => Some(self.pos + n as usize).filter(|&t| t < self.book.len()),
+            Skip::Paragraph => self.book.next_paragraph(self.pos),
+        };
+        match target {
+            Some(t) => {
+                self.seek(t, now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn sentence_forward(&mut self, now: u64) -> bool {
+        match self.book.next_sentence(self.pos) {
+            Some(n) => {
+                self.seek(n, now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Advances as many words as are due. Returns true if the word changed.
+    /// Late ticks never cause a burst: if we fell more than one word behind,
+    /// the schedule resets from `now`.
+    pub fn tick(&mut self, now: u64) -> bool {
+        if !self.playing || now < self.next_due {
+            return false;
+        }
+        if self.at_end() {
+            self.playing = false;
+            self.finished = true;
+            return false;
+        }
+        self.pos = self.shown().end;
+        self.ramp = self.ramp.saturating_sub(1);
+        let delay = self.current_delay();
+        self.next_due = if now - self.next_due > delay { now + delay } else { self.next_due + delay };
+        true
+    }
+
+    /// When the platform should wake up next, if playing.
+    pub fn next_due(&self) -> Option<u64> {
+        self.playing.then_some(self.next_due)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::String;
+    use core::fmt::Write;
+
+    fn plain_book(n: usize) -> Book {
+        let mut s = String::new();
+        for i in 0..n {
+            write!(s, "w{} ", i % 10).unwrap();
+        }
+        Book::new("t", &s)
+    }
+
+    fn run_to_end(r: &mut Reader, step: u64) -> u64 {
+        let mut now = 0;
+        r.play(now);
+        while r.is_playing() {
+            now += step;
+            r.tick(now);
+        }
+        now
+    }
+
+    #[test]
+    fn plain_text_hits_target_wpm() {
+        // 1000 plain words at 500 wpm ≈ 2 minutes (+ ramp + final paragraph).
+        let mut r = Reader::new(plain_book(1000), 500);
+        let total = run_to_end(&mut r, 1);
+        let ideal = 120_000;
+        assert!(total >= ideal && total < ideal + 1_500, "took {total} ms");
+        assert_eq!(r.pos(), 999);
+    }
+
+    #[test]
+    fn coarse_ticks_do_not_drift() {
+        // A 10 ms scheduler must land on the same total as 1 ms ticks (±1 tick per word is not allowed to accumulate).
+        let mut a = Reader::new(plain_book(500), 300);
+        let mut b = Reader::new(plain_book(500), 300);
+        let ta = run_to_end(&mut a, 1);
+        let tb = run_to_end(&mut b, 10);
+        assert!(tb.abs_diff(ta) <= 10, "{ta} vs {tb}");
+    }
+
+    #[test]
+    fn late_wakeup_skips_no_words() {
+        let mut r = Reader::new(plain_book(100), 600);
+        r.play(0);
+        assert!(r.tick(10_000));
+        assert_eq!(r.pos(), 1, "one tick advances exactly one word");
+    }
+
+    #[test]
+    fn wpm_limits_report_no_change() {
+        let mut r = Reader::new(plain_book(3), MAX_WPM);
+        assert!(!r.nudge_wpm(true));
+        r.set_wpm(MIN_WPM);
+        assert!(!r.nudge_wpm(false));
+        assert!(r.nudge_wpm(true));
+        assert_eq!(r.wpm(), MIN_WPM + WPM_STEP);
+    }
+
+    #[test]
+    fn sentence_back_twice_goes_further() {
+        let mut r = Reader::new(Book::new("t", "A b. C d e. F g."), 300);
+        r.seek(3, 0);
+        assert!(r.sentence_back(0));
+        assert_eq!(r.pos(), 2);
+        assert!(r.sentence_back(0));
+        assert_eq!(r.pos(), 0);
+        assert!(!r.sentence_back(0));
+    }
+
+    #[test]
+    fn play_restarts_only_after_finishing() {
+        let mut r = Reader::new(plain_book(6), 300);
+        r.set_chunk(2);
+        r.seek(4, 0);
+        r.play(0);
+        assert_eq!(r.pos(), 4, "the last group is still shown, not skipped");
+        run_to_end(&mut r, 5);
+        r.play(0);
+        assert_eq!(r.pos(), 0, "after finishing, play starts over");
+    }
+
+    #[test]
+    fn chunks_keep_the_same_reading_speed() {
+        let mut one = Reader::new(plain_book(600), 400);
+        let mut three = Reader::new(plain_book(600), 400);
+        three.set_chunk(3);
+        let (a, b) = (run_to_end(&mut one, 1), run_to_end(&mut three, 1));
+        assert!(a.abs_diff(b) < 1_500, "1 word: {a} ms, 3 words: {b} ms");
+        assert_eq!(three.pos(), 597, "ends on the last group");
+    }
+
+    #[test]
+    fn skip_by_words_and_paragraphs() {
+        let mut r = Reader::new(Book::new("t", "a b c d e f g h i j k l.\n\nm n o.\n\np q."), 300);
+        assert!(r.skip_forward(Skip::Words(5), 0));
+        assert_eq!(r.pos(), 5);
+        assert!(r.skip_back(Skip::Words(10), 0));
+        assert_eq!(r.pos(), 0);
+        assert!(!r.skip_back(Skip::Words(10), 0));
+        assert!(r.skip_forward(Skip::Paragraph, 0));
+        assert_eq!(r.pos(), 12);
+        r.seek(14, 0);
+        assert!(r.skip_back(Skip::Paragraph, 0));
+        assert_eq!(r.pos(), 12, "first to the start of this paragraph");
+        assert!(r.skip_back(Skip::Paragraph, 0));
+        assert_eq!(r.pos(), 0, "then to the previous one");
+        assert!(!r.skip_forward(Skip::Words(50), 0));
+    }
+
+    #[test]
+    fn ramp_can_be_turned_off() {
+        let mut r = Reader::new(plain_book(10), 600);
+        r.play(0);
+        let with = r.current_delay();
+        r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
+        assert!(r.current_delay() < with);
+        assert_eq!(r.current_delay(), 100);
+    }
+
+    #[test]
+    fn empty_book_never_plays() {
+        let mut r = Reader::new(Book::new("t", ""), 300);
+        r.play(0);
+        assert!(!r.is_playing());
+        assert_eq!(r.permille(), 0);
+        assert_eq!(r.ms_left(), 0);
+    }
+}

@@ -1,0 +1,203 @@
+//! Scripted walkthrough: drives every function the way a finger would (find
+//! the drawn button, tap its centre through the hit test) and saves a PNG
+//! after each step. Used for visual review and as an end-to-end check: a
+//! step whose button can't be found or that doesn't change the screen panics.
+
+use std::path::Path;
+
+use reader_core::app::{Battery, PickKind, Screen};
+use reader_core::{App, Book, Hit, Key, Settings};
+use reader_ui::layout::{list_geom, menu_button, toolbar, Icon, RowKind};
+use reader_ui::{Canvas, Ui, CATALOG};
+
+use crate::{sim_device, write_png};
+
+struct Run<'a> {
+    app: App,
+    ui: Ui,
+    cv: Canvas,
+    now: u64,
+    n: usize,
+    dir: &'a Path,
+    prefix: String,
+}
+
+impl Run<'_> {
+    fn shot(&mut self, name: &str) {
+        self.ui.invalidate();
+        self.ui.paint(&mut self.app, self.now, &mut self.cv);
+        self.n += 1;
+        write_png(&self.dir.join(format!("{}{:02}-{name}.png", self.prefix, self.n)), &self.cv);
+    }
+
+    fn wait(&mut self, ms: u64) {
+        let end = self.now + ms;
+        while self.now < end {
+            self.now += 10;
+            self.app.tick(self.now);
+        }
+    }
+
+    /// Taps a drawn toolbar or header button by its icon, through hit testing.
+    fn tap_icon(&mut self, icon: Icon) {
+        let l = self.ui.layout;
+        let b = if self.app.screen.is_overlay() {
+            let g = list_geom(&self.app, &l);
+            [Some(g.back), Some(g.close), g.scroll.map(|s| s.0), g.scroll.map(|s| s.1)]
+                .into_iter()
+                .flatten()
+                .find(|b| b.icon == icon)
+        } else {
+            let mut bs = toolbar(&self.app, &l).0;
+            bs.push(menu_button(&l));
+            bs.into_iter().find(|b| b.icon == icon)
+        }
+        .unwrap_or_else(|| panic!("no {icon:?} button on {:?}", self.app.screen));
+        let hit = self.ui.hit(&self.app, b.rect.cx() as i32, b.rect.cy() as i32).expect("button not hittable");
+        self.app.touch_down(Some(hit));
+        self.app.tap(hit, self.now);
+        self.wait(30);
+    }
+
+    /// Taps a list row by its visible label.
+    fn tap_row(&mut self, label: &str) {
+        let l = self.ui.layout;
+        // Like a person: if the row isn't on screen, press the drawn ▼ until it is.
+        let mut tries = 0;
+        let row = loop {
+            let g = list_geom(&self.app, &l);
+            if let Some(r) = g.rows.iter().find(|r| matches!(r.kind, RowKind::Item(i) if reader_ui::layout::row_text(&self.app, i).0 == label)) {
+                break r.clone();
+            }
+            tries += 1;
+            assert!(tries < 6 && g.scroll.is_some(), "row {label:?} unreachable on {:?}", self.app.screen);
+            let len = match self.app.screen {
+                Screen::Pick { kind, .. } => self.app.pick_len(kind),
+                _ => reader_core::app::MENU_LEN,
+            };
+            let target = (0..len).find(|&i| reader_ui::layout::row_text(&self.app, i).0 == label).expect("no such row");
+            let sel = match self.app.screen {
+                Screen::Menu { sel } | Screen::Pick { sel, .. } => sel,
+                _ => 0,
+            };
+            self.tap_icon(if target > sel { Icon::Down } else { Icon::Up });
+        };
+        let hit = self.ui.hit(&self.app, row.rect.cx() as i32, row.rect.cy() as i32).expect("row not hittable");
+        assert!(matches!(hit, Hit::Row(_)));
+        self.app.tap(hit, self.now);
+        self.wait(30);
+    }
+
+    fn key(&mut self, k: Key) {
+        self.app.handle(k, self.now);
+        self.wait(30);
+    }
+}
+
+fn new_app(text: &str, s: Settings) -> App {
+    let mut a = App::new(Book::new("The Quiet Machine", text), CATALOG, s);
+    a.battery = Some(Battery { percent: 82, charging: false, millivolts: 4010 });
+    a.device = sim_device();
+    a
+}
+
+pub fn run(dir: &Path, (w, h): (u32, u32)) {
+    std::fs::create_dir_all(dir).unwrap();
+    let text = std::fs::read_to_string("books/sample.md").expect("books/sample.md");
+
+    // 1. The full story, in Vista.
+    let mut r = Run { app: new_app(&text, Settings::default()), ui: Ui::new(w, h), cv: Canvas::new(w, h), now: 0, n: 0, dir, prefix: "flow-".into() };
+    r.shot("start-paused-on-chapter-title");
+    r.tap_icon(Icon::Play);
+    r.shot("play-tapped-toast-reading");
+    r.wait(2_600);
+    r.shot("reading-mid-text");
+    r.tap_icon(Icon::Plus);
+    r.shot("faster-toast");
+    r.tap_icon(Icon::Minus);
+    r.tap_icon(Icon::Minus);
+    r.shot("slower-twice");
+    r.tap_icon(Icon::SentenceBack);
+    r.shot("back-one-sentence");
+    r.app.handle_held(Key::Left, r.now);
+    r.app.handle_held(Key::Left, r.now + 110);
+    r.app.handle_held(Key::Left, r.now + 220);
+    r.shot("hold-back-line-view");
+    r.app.release(r.now + 300);
+    r.wait(300);
+    r.shot("released-reading-again");
+    r.tap_icon(Icon::Pause);
+    r.wait(1500);
+    r.shot("paused-with-sentence-context");
+    r.tap_icon(Icon::Menu);
+    r.shot("menu");
+    r.tap_icon(Icon::Down);
+    r.shot("menu-scrolled");
+    r.tap_row("Font");
+    r.shot("font-list");
+    r.key(Key::Down);
+    r.shot("font-list-live-preview");
+    r.tap_icon(Icon::Back);
+    r.shot("back-kept-font");
+    r.tap_row("Words per flash");
+    r.tap_row("2 words");
+    r.shot("words-per-flash-set");
+    r.tap_icon(Icon::Close);
+    r.shot("two-words-per-flash");
+    r.tap_icon(Icon::Menu);
+    r.tap_row("Text size");
+    r.tap_row("Large");
+    r.tap_icon(Icon::Close);
+    r.shot("large-text");
+    r.tap_icon(Icon::Menu);
+    r.tap_row("View");
+    r.shot("page-view");
+    r.tap_icon(Icon::PageForward);
+    r.shot("next-page");
+    r.tap_icon(Icon::Bolt);
+    r.wait(800);
+    r.shot("speed-read-from-page");
+    r.tap_icon(Icon::Menu);
+    r.tap_row("Chapters");
+    r.shot("chapters-list");
+    r.tap_row("Chapter Two: Speed");
+    r.shot("jumped-to-chapter-two");
+    r.tap_icon(Icon::Menu);
+    r.tap_row("Device info");
+    r.shot("device-info");
+    r.key(Key::Menu);
+    for _ in 0..40 {
+        r.tap_icon(Icon::Plus);
+    }
+    r.shot("limit-fastest-amber");
+    r.app.reader.seek(r.app.reader.book.len() - 2, r.now);
+    r.app.reader.set_wpm(600);
+    r.tap_icon(Icon::Play);
+    r.wait(3_000);
+    r.shot("finished");
+
+    // 2. The same key screens in every theme.
+    for theme in 0..CATALOG.themes.len() as u8 {
+        let slug = CATALOG.themes[theme as usize].to_lowercase().replace(' ', "-");
+        let mut r = Run { app: new_app(&text, Settings { theme, ..Settings::default() }), ui: Ui::new(w, h), cv: Canvas::new(w, h), now: 0, n: 0, dir, prefix: format!("{slug}-") };
+        r.app.reader.seek(30, 0);
+        r.shot("paused");
+        r.tap_icon(Icon::Play);
+        r.wait(1600);
+        r.shot("playing");
+        r.tap_icon(Icon::Plus);
+        r.shot("toast");
+        r.app.handle_held(Key::Left, r.now);
+        r.shot("line");
+        r.app.release(r.now);
+        r.tap_icon(Icon::Menu);
+        r.shot("menu");
+        r.app.screen = Screen::Pick { kind: PickKind::Font, sel: 1, original: 0 };
+        r.shot("fonts");
+        r.key(Key::Menu);
+        r.app.settings.pages = true;
+        r.app.screen = Screen::Page;
+        r.shot("page");
+    }
+    println!("wrote walkthrough to {}", dir.display());
+}

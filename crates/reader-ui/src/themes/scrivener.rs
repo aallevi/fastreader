@@ -1,0 +1,40 @@
+//! Scrivener composition mode: warm paper column floating on a dark
+//! backdrop, quiet dark control strip, a paper-coloured play button.
+use crate::text::{PLEX_SANS, PLEX_SANS_BOLD};
+use crate::theme::*;
+
+pub const SCRIVENER: Theme = Theme {
+    name: "Scrivener",
+    chrome: Chrome::Scrivener,
+    ui: (PLEX_SANS, PLEX_SANS_BOLD),
+    radius: 4.0,
+    upper: false,
+    light_on_dark: false,
+    desktop: &[(0, 0x262628), (255, 0x262628)],
+    bar: &[(0, 0x2E2E31), (255, 0x2A2A2C)],
+    bar_text: 0xC9C4BA,
+    bar_dim: 0x8A867E,
+    page: 0xF4F2E8,
+    text: 0x2B2622,
+    dim: 0x8F8678,
+    heading: 0x5A3A22,
+    mark: 0xE3D7B8,
+    mark_text: 0x2B2622,
+    guide: 0xDDD5C3,
+    ornament: 0xA8874F,
+    button: ButtonStyle { face: &[(0, 0x48484C), (255, 0x404044)], edge: 0x1E1E20, text: 0xE6E1D8 },
+    button_hot: ButtonStyle { face: &[(0, 0x5E5E63), (255, 0x55555A)], edge: 0x1E1E20, text: 0xFFFFFF },
+    primary: ButtonStyle { face: &[(0, 0xEFEADF), (255, 0xD9D2C1)], edge: 0xA79F8B, text: 0x2B2622 },
+    primary_hot: ButtonStyle { face: &[(0, 0xD9D2C1), (255, 0xC7BFAB)], edge: 0xA79F8B, text: 0x2B2622 },
+    row: ButtonStyle { face: &[(0, 0xF3F4F7), (255, 0xEBEDF1)], edge: 0xC9D0DA, text: 0x222222 },
+    row_sel: ButtonStyle { face: &[(0, 0xC2D5EE), (255, 0xB4CBE8)], edge: 0x8FAAD0, text: 0x111111 },
+    list: &[(0, 0xE6E9EE), (255, 0xE1E5EB)],
+    section: 0x555555,
+    toast: 0xF4F2E8,
+    toast_edge: 0xBFB7A3,
+    toast_text: 0x2B2622,
+    limit: 0xD98A3D,
+    limit_text: 0xFFFFFF,
+    track: 0xDDD5C3,
+    fill: 0xA8874F,
+};

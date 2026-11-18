@@ -1,0 +1,19 @@
+[package]
+name = "reader-ui"
+description = "Anti-aliased, themeable renderer for the fast reader"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+reader-core.workspace = true
+ab_glyph = { version = "0.2", default-features = false, features = ["libm"] }
+libm = "0.2"
+core_maths = "0.1"
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false }
+
+[[bench]]
+name = "render"
+harness = false
