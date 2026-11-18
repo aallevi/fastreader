@@ -2,7 +2,7 @@
 
 ## Done
 - Reader core: markup (chapters, bold, italic), pacing with adjustable pauses, words per flash, skip amount, chapters, go-to, page view, library with per-book positions, settings record with checksum.
-- Interface: 5 themes (Vista, macOS, Scrivener, Windows 98, E-Ink); anti-aliased TrueType text; menu top-left; − speed + then ⏮ ▶ ⏭; rounded/bevelled buttons; guide lines (none / lines / ornate); info only when paused; messages in the title bar; no sliding UI.
+- Interface: 6 themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night); anti-aliased TrueType text; menu top-left; − speed + then ⏮ ▶ ⏭; rounded/bevelled buttons; info only when paused; messages in the title bar; no sliding UI.
 - Device (LCDWIKI ES3C28P): display, touch, BOOT button, PWM brightness, rotation, settings + positions saved to flash, octal PSRAM at 80 MHz, books embedded at build time.
 - Tools: `tools/convert.py` (EPUB/PDF/TXT → markup), desktop simulator with web view and settings, scripted walkthrough, tests and benchmarks. See [AUDIT.md](AUDIT.md).
 

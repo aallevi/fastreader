@@ -2,10 +2,10 @@
 
 A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 2.8" 320×240 IPS, touch), written in Rust. Inspired by [AllanBinder/ereader](https://github.com/AllanBinder/ereader); see [AUDIT.md](AUDIT.md) for how the two compare and how every function was checked.
 
-- Words centred between guide lines; chapter titles bold and on screen longer; bold and italic kept.
-- Speed view and page view; hold ⏮/⏭ to scroll the text as a line.
+- Words centred on a clean page; chapter titles bold and on screen longer; bold and italic kept.
+- Hold ⏮/⏭ while reading to scroll the text as a line.
 - Library of several books, each remembering where you stopped.
-- Five themes (Vista, macOS, Scrivener, Windows 98, E-Ink), six reading fonts, anti-aliased.
+- Six themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night), six reading fonts, anti-aliased.
 - Four reading modes: word by word, phrases (grouped by meaning), ticker (text glides), page (normal text with a moving phrase highlight).
 - A browser view of the book plus every setting: on the device, Menu → Web view, join Wi-Fi "FastReader", open http://192.168.4.1.
 
@@ -14,9 +14,9 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 | On screen | Physical key | Reading | Page view | Menus |
 |---|---|---|---|---|
 | ☰ (top-left) | BOOT long press | menu | menu | close |
-| − / + | ▼ / ▲ | speed ∓25 wpm (hold repeats) | page ∓1 | move |
-| ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | page ∓1 | back / open |
-| ▶ ❚❚ | BOOT short press | play / pause | speed-read from here | choose |
+| − / + | ▼ / ▲ | speed ∓25 wpm (hold repeats) | speed ∓25 wpm | move |
+| ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | page back / forward | back / open |
+| ▶ ❚❚ | BOOT short press | play / pause | play / pause the moving highlight | choose |
 
 A tap acts on release, sliding off cancels, and there are no swipes or invisible zones. Every press lights its button and shows a short message in the title bar (amber means a limit, like the fastest speed). Info appears only while paused.
 
