@@ -50,6 +50,7 @@ pub enum MenuItem {
     Align,
     Brightness,
     Rotate,
+    Wifi,
     Info,
     Sleep,
 }
@@ -58,14 +59,14 @@ pub enum MenuItem {
 pub const MENU: [(&str, &[MenuItem]); 3] = [
     ("Reading", &[MenuItem::Resume, MenuItem::Library, MenuItem::Mode, MenuItem::Speed, MenuItem::Words, MenuItem::Skip, MenuItem::Chapters, MenuItem::GoTo, MenuItem::Restart]),
     ("Look", &[MenuItem::Size, MenuItem::Font, MenuItem::Theme, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
-    ("Device", &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::Info, MenuItem::Sleep]),
+    ("Device", &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Info, MenuItem::Sleep]),
 ];
 
 pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 19;
+pub const MENU_LEN: u8 = 20;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -95,6 +96,7 @@ impl MenuItem {
             MenuItem::Align => "Text alignment",
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
+            MenuItem::Wifi => "Web view (Wi-Fi)",
             MenuItem::Info => "Device info",
             MenuItem::Sleep => "Sleep",
         }
@@ -327,6 +329,7 @@ pub enum Msg {
     PagesView,
     SpeedView,
     Highlight(bool),
+    Wifi(bool),
     Rotated,
     NoChapters,
     /// The screen itself shows the change (menu opened, highlight moved).
@@ -360,6 +363,8 @@ pub enum Effect {
     Sleep,
     /// Load library book N and call [`App::open_book`].
     OpenBook(u8),
+    /// Turn the Wi-Fi web view on or off.
+    Wifi(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -384,6 +389,8 @@ pub struct DeviceInfo {
     pub firmware: String,
     pub touch: String,
     pub free_memory_kb: u32,
+    /// How to reach the web view, e.g. "Wi-Fi FastReader → 192.168.4.1".
+    pub web: String,
 }
 
 pub struct App {
@@ -646,6 +653,9 @@ impl App {
         s.theme = s.theme.min(self.catalog.themes.len().saturating_sub(1) as u8);
         s.font = s.font.min(self.catalog.fonts.len().saturating_sub(1) as u8);
         let display = s.brightness != self.settings.brightness || s.flipped != self.settings.flipped;
+        if s.wifi != self.settings.wifi {
+            self.effect(Effect::Wifi(s.wifi));
+        }
         let view_changed = s.mode != self.settings.mode;
         self.settings = s;
         self.reader.set_wpm(s.wpm);
@@ -829,6 +839,12 @@ impl App {
                 self.save();
                 Feedback::ok(Msg::Restarted)
             }
+            MenuItem::Wifi => {
+                self.settings.wifi = !self.settings.wifi;
+                self.effect(Effect::Wifi(self.settings.wifi));
+                self.save();
+                Feedback::ok(Msg::Wifi(self.settings.wifi))
+            }
             MenuItem::Rotate => {
                 self.settings.flipped = !self.settings.flipped;
                 self.effect(Effect::Display);
@@ -950,6 +966,7 @@ impl App {
             MenuItem::Chapters => format!("{}", self.reader.book.chapters().len()),
             MenuItem::GoTo => format!("{}%", self.reader.permille() / 10),
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
+            MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
             MenuItem::Info | MenuItem::Resume | MenuItem::Restart | MenuItem::Sleep => return None,
             other => {
                 let kind = other.pick()?;
@@ -1221,6 +1238,15 @@ mod tests {
         assert_eq!(a.reader.pos(), 9);
         a.handle(Left, 0);
         assert_eq!(a.reader.pos(), 6, "back to the start of the paragraph (after the heading 'Two')");
+    }
+
+    #[test]
+    fn wifi_toggle_asks_the_platform() {
+        let mut a = app();
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Wifi) };
+        assert_eq!(a.handle(Select, 0).msg, Msg::Wifi(true));
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Wifi(true)));
+        assert_eq!(a.menu_value(MenuItem::Wifi).unwrap(), "On");
     }
 
     #[test]

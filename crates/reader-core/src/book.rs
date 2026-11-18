@@ -296,8 +296,26 @@ impl Book {
     /// a `<span id="wN">` so the page can highlight the word being read.
     /// Streams into any `fmt::Write`, so the ESP32 can send it in chunks.
     pub fn write_html(&self, out: &mut impl Write) -> fmt::Result {
+        self.write_html_range(0..self.words.len(), out)
+    }
+
+    /// The whole paragraphs covering roughly `from..to`, for loading a big
+    /// book into the web view a piece at a time.
+    pub fn paragraphs_around(&self, from: usize, to: usize) -> core::ops::Range<usize> {
+        let n = self.words.len();
+        if n == 0 {
+            return 0..0;
+        }
+        let a = self.paragraph_start(from.min(n - 1));
+        let z = if to >= n { n } else { self.next_paragraph(to.saturating_sub(1).max(a)).unwrap_or(n) };
+        a..z.max(a + 1).min(n)
+    }
+
+    /// HTML for words `r` (call with whole paragraphs, see `paragraphs_around`).
+    pub fn write_html_range(&self, r: core::ops::Range<usize>, out: &mut impl Write) -> fmt::Result {
         let mut open = false;
-        for (i, w) in self.words.iter().enumerate() {
+        for i in r.start..r.end.min(self.words.len()) {
+            let w = self.words[i];
             if !open {
                 out.write_str(if w.style.heading() { "<h2>" } else { "<p>" })?;
                 open = true;
@@ -306,7 +324,7 @@ impl Book {
             write!(out, "<span id=\"w{i}\">")?;
             if b { out.write_str("<b>")?; }
             if it { out.write_str("<i>")?; }
-            escape_html(self.text_of(*w), out)?;
+            escape_html(self.text_of(w), out)?;
             if it { out.write_str("</i>")?; }
             if b { out.write_str("</b>")?; }
             out.write_str("</span>")?;
@@ -634,6 +652,21 @@ mod tests {
         assert!(s.contains("&lt;b&gt;") && s.contains("&amp;"));
         assert!(s.contains("<span id=\"w4\"><b>c.</b></span></p>"), "{s}");
         assert!(s.contains("<p><span id=\"w5\">Next</span></p>"));
+    }
+
+    #[test]
+    fn html_ranges_cover_whole_paragraphs() {
+        let b = Book::new("t", "One two.\n\nThree four five.\n\nSix.");
+        assert_eq!(b.paragraphs_around(3, 4), 2..5);
+        assert_eq!(b.paragraphs_around(0, 1), 0..2);
+        assert_eq!(b.paragraphs_around(4, 99), 2..6);
+        let mut whole = String::new();
+        b.write_html(&mut whole).unwrap();
+        let mut parts = String::new();
+        for r in [b.paragraphs_around(0, 1), b.paragraphs_around(2, 3), b.paragraphs_around(5, 6)] {
+            b.write_html_range(r, &mut parts).unwrap();
+        }
+        assert_eq!(parts, whole, "pieces join into the same document");
     }
 
     #[test]

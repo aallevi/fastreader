@@ -868,6 +868,8 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::NoChapters => "This book has no chapters".into(),
         Msg::Highlight(true) => "Highlight on".into(),
         Msg::Highlight(false) => "Highlight off".into(),
+        Msg::Wifi(true) => "Web view on: join Wi-Fi FastReader".into(),
+        Msg::Wifi(false) => "Web view off".into(),
         Msg::Shown => String::new(),
     }
 }

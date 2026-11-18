@@ -2,13 +2,20 @@
 //!
 //! All reading logic and drawing live in `reader-core` / `reader-ui` and are
 //! tested on the desktop; this file wires up the hardware: display flush,
-//! touch, BOOT button, backlight, battery, saving settings, and the loop.
+//! touch, BOOT button, backlight, battery, saving settings, the Wi-Fi web
+//! view, and the loop. Everything runs as async tasks on one executor: the
+//! screen loop, plus (when the web view is on) the network stack, a DHCP
+//! server and three HTTP workers. They share the app through a RefCell that
+//! is only ever borrowed between awaits.
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
 mod board;
+mod net;
+
+use core::cell::RefCell;
 
 use alloc::format;
 use embedded_graphics::pixelcolor::raw::RawU16;
@@ -23,7 +30,9 @@ use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::ledc::channel::{self, ChannelIFace};
 use esp_hal::ledc::timer::{self, TimerIFace};
 use esp_hal::ledc::{LSGlobalClkSource, Ledc, LowSpeed};
-use esp_hal::main;
+use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
+use esp_hal::timer::timg::TimerGroup;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::spi::Mode;
 use esp_hal::time::{Instant, Rate};
@@ -52,10 +61,21 @@ const MAX_BOOKS: usize = 64;
 
 const TOUCH_ADDR: u8 = 0x38;
 
-#[main]
-fn main() -> ! {
+/// Makes a `&'static mut` from a value, once (for state shared with tasks).
+#[macro_export]
+macro_rules! mk_static {
+    ($t:ty, $val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        STATIC_CELL.uninit().write($val)
+    }};
+}
+
+#[esp_hal::main]
+async fn main(spawner: Spawner) -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
-    esp_alloc::heap_allocator!(size: 120 * 1024);
+    // Internal RAM: the Wi-Fi driver needs it (DMA); reclaimed = bootloader's RAM.
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 96 * 1024);
     // Book text, the 300 KB canvas and the glyph cache live in PSRAM.
     // The ES3C28P has 8 MB of octal PSRAM; say so instead of auto-detecting,
     // and run it at 80 MHz (the default 40 MHz halves every pixel operation).
@@ -69,6 +89,9 @@ fn main() -> ! {
             ..Default::default()
         }
     );
+    let timg0 = TimerGroup::new(p.TIMG0);
+    esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+    let mut wifi_peripheral = Some(p.WIFI);
     let mut delay = Delay::new();
     let out = OutputConfig::default();
     println!("fastreader: boot, heap {} KB free", esp_alloc::HEAP.free() / 1024);
@@ -129,7 +152,17 @@ fn main() -> ! {
         Book::parse(text, title)
     };
     let mut app = App::new(open(settings.book), CATALOG, settings);
-    app.library = BOOKS.iter().map(|(t, text)| Book::parse(&text[..text.len().min(200)], t).title).collect();
+    app.library = BOOKS
+        .iter()
+        .map(|(t, text)| {
+            // Only the head is needed for the title; cut on a character boundary.
+            let mut cut = text.len().min(200);
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            Book::parse(&text[..cut], t).title
+        })
+        .collect();
     app.positions = load_positions(&mut flash);
     app.positions.resize(BOOKS.len(), 0);
     app.device = DeviceInfo {
@@ -137,6 +170,7 @@ fn main() -> ! {
         firmware: format!("fastreader {}", env!("CARGO_PKG_VERSION")),
         touch: if touch_ok { "FT6336G ok".into() } else { "not found".into() },
         free_memory_kb: (esp_alloc::HEAP.free() / 1024) as u32,
+        web: alloc::string::String::new(),
     };
     let mut cv = Canvas::new(WIDTH, HEIGHT);
     let mut ui = Ui::new(WIDTH, HEIGHT);
@@ -240,7 +274,21 @@ fn main() -> ! {
         ui.invalidate();
     }
 
+    // From here the app is shared with the web tasks.
+    let app_cell: &'static RefCell<App> = mk_static!(RefCell<App>, RefCell::new(app));
+    if app_cell.borrow().settings.wifi || cfg!(feature = "wifi-boot") {
+        if let Some(w) = wifi_peripheral.take() {
+            net::start(spawner, w, app_cell, start);
+            app_cell.borrow_mut().device.web = net::ADDRESS.into();
+        }
+    }
+
     loop {
+        // Everything up to the sleep at the bottom runs without awaiting, so
+        // the web tasks never see the app half-way through a frame.
+        let idle = {
+        let mut app_guard = app_cell.borrow_mut();
+        let app = &mut *app_guard;
         let now = start.elapsed().as_millis();
 
         // Battery every 10 s (and at start).
@@ -259,7 +307,7 @@ fn main() -> ! {
                     let rx = ((b[1] as u16 & 0x0F) << 8) | b[2] as u16;
                     let ry = ((b[3] as u16 & 0x0F) << 8) | b[4] as u16;
                     let (x, y) = board::touch_to_screen(rx, ry, app.settings.flipped);
-                    Some(ui.hit(&app, x, y))
+                    Some(ui.hit(app, x, y))
                 }
                 _ => None,
             }
@@ -313,6 +361,25 @@ fn main() -> ! {
                     let _ = lcd.sleep(&mut delay);
                     asleep = true;
                 }
+                Effect::Wifi(true) => {
+                    if let Some(w) = wifi_peripheral.take() {
+                        net::start(spawner, w, app_cell, start);
+                    }
+                    app.device.web = net::ADDRESS.into();
+                }
+                Effect::Wifi(false) => {
+                    // The radio can only be fully powered down by a restart:
+                    // save everything, show the message, then reset.
+                    let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
+                    app.positions.resize(app.library.len().max(1), 0);
+                    let book = app.settings.book as usize;
+                    app.positions[book] = app.reader.pos() as u32;
+                    save_positions(&mut flash, &app.positions);
+                    let damage = ui.paint(app, now, &mut cv);
+                    flush!(damage);
+                    delay.delay_millis(1200);
+                    esp_hal::system::software_reset();
+                }
             }
         }
         // Write settings only when they changed (flash wear), never while playing fast.
@@ -324,13 +391,14 @@ fn main() -> ! {
         }
 
         if !asleep {
-            let damage = ui.paint(&mut app, now, &mut cv);
+            let damage = ui.paint(app, now, &mut cv);
             flush!(damage);
         }
 
         // Poll touch at ~100 Hz; sleep a little longer when idle.
-        let idle = app.next_wake().map_or(15, |t| t.saturating_sub(start.elapsed().as_millis()).min(10));
-        delay.delay_millis(idle.max(2) as u32);
+        app.next_wake().map_or(15, |t| t.saturating_sub(start.elapsed().as_millis()).min(10)).max(2)
+        };
+        Timer::after(Duration::from_millis(idle)).await;
     }
 }
 

@@ -81,6 +81,8 @@ pub struct Settings {
     pub justify: bool,
     /// Page view: highlight the current phrase even while paused.
     pub highlight: bool,
+    /// Web view over Wi-Fi (off by default: the radio costs battery).
+    pub wifi: bool,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -108,6 +110,7 @@ impl Default for Settings {
             indent: false,
             justify: false,
             highlight: true,
+            wifi: false,
             skip: 0,
             context: true,
             book: 0,
@@ -118,12 +121,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 22] = [
+pub const FIELDS: [(&str, u16, u16); 23] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -146,6 +149,7 @@ pub const FIELDS: [(&str, u16, u16); 22] = [
     ("indent", 0, 1),
     ("justify", 0, 1),
     ("highlight", 0, 1),
+    ("wifi", 0, 1),
 ];
 
 impl Settings {
@@ -173,6 +177,7 @@ impl Settings {
             "indent" => self.indent as u16,
             "justify" => self.justify as u16,
             "highlight" => self.highlight as u16,
+            "wifi" => self.wifi as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -206,6 +211,7 @@ impl Settings {
             "indent" => self.indent = v != 0,
             "justify" => self.justify = v != 0,
             "highlight" => self.highlight = v != 0,
+            "wifi" => self.wifi = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,

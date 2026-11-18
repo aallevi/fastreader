@@ -14,6 +14,8 @@ bench = false
 [features]
 # Opens every book at boot and logs load/pagination times and memory.
 selftest = []
+# Start the Wi-Fi web view at boot regardless of the setting (testing).
+wifi-boot = []
 
 [dependencies]
 reader-core = { path = "../crates/reader-core" }
@@ -30,6 +32,18 @@ mipidsi = "0.10"
 nb = "1"
 esp-storage = { version = "0.10", features = ["esp32s3"] }
 embedded-storage = "0.3"
+# Wi-Fi web view (versions as in esp-hal 1.2.2's embassy_access_point example)
+esp-radio = { version = "=1.0.0-beta.1", features = ["esp32s3", "wifi"] }
+esp-rtos = { version = "0.4", features = ["esp32s3", "esp-radio", "embassy"] }
+embassy-executor = "0.10"
+embassy-time = "0.5"
+embassy-sync = "0.7"
+embassy-net = { version = "0.9", features = ["dhcpv4", "medium-ethernet", "tcp", "udp", "proto-ipv4"] }
+edge-dhcp = "0.8"
+edge-nal = "0.7"
+edge-nal-embassy = "0.9"
+embedded-io-async = "0.7"
+static_cell = "2.1"
 
 [profile.release]
 opt-level = "s"

@@ -220,6 +220,7 @@ fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
                 RowKind::Info("Board".into(), d.board.clone()),
                 RowKind::Info("Firmware".into(), d.firmware.clone()),
                 RowKind::Info("Touch".into(), d.touch.clone()),
+                RowKind::Info("Web view".into(), if app.settings.wifi { d.web.clone() } else { "off (Menu → Web view)".into() }),
                 RowKind::Info("Battery".into(), bat),
                 RowKind::Info("Free memory".into(), alloc::format!("{} KB", d.free_memory_kb)),
                 RowKind::Info("Book".into(), alloc::format!("{} words, {} chapters", b.len(), b.chapters().len())),

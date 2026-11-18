@@ -14,6 +14,7 @@ pub mod painter;
 pub mod text;
 pub mod theme;
 pub mod themes;
+pub mod web;
 
 use reader_core::Catalog;
 

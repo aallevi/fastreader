@@ -99,6 +99,7 @@ pub fn sim_device() -> DeviceInfo {
         firmware: format!("fastreader {}", env!("CARGO_PKG_VERSION")),
         touch: "mouse".into(),
         free_memory_kb: 7_900,
+        web: "http://localhost:8080 (simulator)".into(),
     }
 }
 
@@ -203,6 +204,7 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
                         let _ = std::fs::write(settings_path(), a.settings.to_bytes());
                     }
                     Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+                    Effect::Wifi(on) => println!("(web view {}: the simulator always serves http://localhost:8080)", if on { "on" } else { "off" }),
                     Effect::OpenBook(i) => {
                         let book = load_book(&books[i as usize]);
                         a.open_book(book, i);

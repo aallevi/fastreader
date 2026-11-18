@@ -60,7 +60,9 @@
 <header><h1 id="title">Fast Reader</h1><span class="stat" id="wpm"></span><span class="stat" id="pct"></span><button id="gear" aria-controls="settings">Settings</button></header>
 <aside id="settings" aria-label="Reader settings"><button class="toggle close" id="closeSet">Close</button><div id="setBody">Loading…</div></aside>
 <div class="bar"><div id="prog"></div></div>
+<div id="less" aria-hidden="true"></div>
 <main id="book">Loading…</main>
+<div id="more" aria-hidden="true"></div>
 <nav aria-label="Device controls">
   <button data-k="left" title="Previous sentence">◀</button>
   <button data-k="down" title="Slower">−</button>
@@ -71,32 +73,64 @@
 </nav>
 <script>
 // Click any word to jump the device there. The page follows the device.
-let words = [], cur = -1, theme = -1, book = -1;
+// Big books load in pieces: the text around the reader first, more as you
+// scroll towards either end (the device can't send 5 MB of HTML at once).
+let cur = -1, theme = -1, book = -1, len = 0, from = 0, to = 0, busy = false;
 const $ = id => document.getElementById(id);
-async function load() {
-  $('book').innerHTML = await (await fetch('/book')).text();
-  words = $('book').querySelectorAll('span[id^=w]');
+const WINDOW = 3000;
+async function fetchRange(a, count) {
+  const r = await fetch(`/book?from=${a}&count=${count}`);
+  const [x, y] = (r.headers.get('X-Range') || '0-0').split('-').map(Number);
+  return {x, y, html: await r.text()};
 }
-function mark(pos) {
-  if (pos === cur || !words.length) return;
-  const lo = Math.min(pos, cur < 0 ? 0 : cur), hi = Math.max(pos, cur);
-  for (let i = Math.max(lo, 0); i <= hi && i < words.length; i++) words[i].classList.toggle('read', i < pos);
-  if (cur >= 0 && words[cur]) words[cur].classList.remove('now');
+async function loadAround(pos) {
+  busy = true;
+  const {x, y, html} = await fetchRange(Math.max(0, pos - WINDOW / 2), WINDOW);
+  from = x; to = y; $('book').innerHTML = html; cur = -1;
+  busy = false;
+}
+async function loadMore(down) {
+  if (busy || (down ? to >= len : from <= 0)) return;
+  busy = true;
+  if (down) {
+    const {y, html} = await fetchRange(to, WINDOW);
+    $('book').insertAdjacentHTML('beforeend', html); to = y;
+  } else {
+    const before = document.documentElement.scrollHeight;
+    const {x, html} = await fetchRange(Math.max(0, from - WINDOW), from - Math.max(0, from - WINDOW));
+    $('book').insertAdjacentHTML('afterbegin', html); from = x;
+    window.scrollBy(0, document.documentElement.scrollHeight - before);  // keep your place
+  }
+  busy = false;
+}
+new IntersectionObserver(es => es.forEach(e => e.isIntersecting && loadMore(e.target.id === 'more'))).observe($('more'));
+new IntersectionObserver(es => es.forEach(e => e.isIntersecting && loadMore(false))).observe($('less'));
+function word(i) { return document.getElementById('w' + i); }
+async function mark(pos) {
+  if (pos === cur) return;
+  if (pos < from || pos >= to) await loadAround(pos);
+  const old = word(cur);
+  if (old) old.classList.remove('now');
+  // Words before the reader are dimmed: toggle only the ones that changed.
+  const lo = Math.max(from, Math.min(pos, cur < 0 ? from : cur)), hi = Math.min(to, Math.max(pos, cur));
+  for (let i = cur < 0 ? from : lo; i < (cur < 0 ? pos : hi); i++) { const w = word(i); if (w) w.classList.toggle('read', i < pos); }
+  if (cur >= 0 && pos < cur) for (let i = pos; i < cur; i++) { const w = word(i); if (w) w.classList.remove('read'); }
   cur = pos;
-  const w = words[pos];
+  const w = word(pos);
   if (w) { w.classList.add('now'); if ($('follow').checked) w.scrollIntoView({block: 'center', behavior: 'smooth'}); }
 }
 async function poll() {
   try {
     const s = await (await fetch('/state')).json();
+    len = s.len;
     $('title').textContent = s.title; $('wpm').textContent = s.wpm + ' wpm';
     $('pct').textContent = Math.floor(s.permille / 10) + '%'; $('prog').style.width = s.permille / 10 + '%';
     $('play').textContent = s.playing ? '❚❚' : '▶';
     if (s.theme !== theme) { theme = s.theme; $('theme').href = '/theme.css?' + theme; }
-    if (s.book !== book) { if (book !== -1) { cur = -1; await load(); } book = s.book; }
-    mark(s.pos);
+    if (s.book !== book) { book = s.book; await loadAround(s.pos); }
+    await mark(s.pos);
   } catch (e) {}
-  setTimeout(poll, 250);
+  setTimeout(poll, 300);
 }
 $('book').addEventListener('click', e => {
   const s = e.target.closest('span[id^=w]');
@@ -107,17 +141,21 @@ document.querySelectorAll('nav button').forEach(b =>
 
 // ---- settings: every option the device has, changed through the same core
 // validation (/set clamps and refuses unknown names).
+const X = v => (v / 10).toFixed(1) + '×';
 const GROUPS = [
   ['Reading', [
-    ['book', 'Book', 'books'], ['wpm', 'Speed', 'step', 25, v => v + ' wpm'], ['chunk', 'Words per flash', 'step', 1, v => v],
-    ['skip', 'Skip buttons jump', 'skips'], ['pages', 'View', 'toggle', ['Speed', 'Pages']],
-    ['context', 'Sentence under the word when paused', 'toggle', ['Off', 'On']]]],
+    ['book', 'Book', 'books'], ['mode', 'Reading mode', 'modes'], ['wpm', 'Speed', 'step', 25, v => v + ' wpm'],
+    ['chunk', 'Words per flash (word mode)', 'step', 1, v => v], ['phrase', 'Longest phrase (phrase & page modes)', 'step', 1, v => v + ' letters'],
+    ['skip', 'Skip buttons jump', 'skips'], ['context', 'Sentence under the word when paused', 'toggle', ['Off', 'On']]]],
   ['Pauses', [
-    ['comma', 'After , ; :', 'step', 1, v => (v / 10).toFixed(1) + '×'], ['sentence', 'After . ! ?', 'step', 1, v => (v / 10).toFixed(1) + '×'],
-    ['paragraph', 'After a paragraph', 'step', 1, v => (v / 10).toFixed(1) + '×'], ['title', 'Chapter titles', 'step', 1, v => (v / 10).toFixed(1) + '×'],
+    ['comma', 'After , ; :', 'step', 1, X], ['sentence', 'After . ! ?', 'step', 1, X],
+    ['paragraph', 'After a paragraph', 'step', 1, X], ['title', 'Chapter titles', 'step', 1, X],
     ['long_words', 'Extra time for long words', 'toggle', ['Off', 'On']], ['ramp', 'Ease in after play', 'toggle', ['Off', 'On']]]],
   ['Look', [
     ['theme', 'Theme', 'themes'], ['font', 'Font', 'fonts'], ['size', 'Text size', 'sizes']]],
+  ['Page mode', [
+    ['spacing', 'Line spacing', 'spacings'], ['indent', 'Paragraphs', 'paragraphs'], ['justify', 'Alignment', 'aligns'],
+    ['highlight', 'Highlight the phrase when paused', 'toggle', ['Off', 'On']]]],
   ['Device', [
     ['brightness', 'Brightness', 'brightness'], ['flipped', 'Rotate screen', 'toggle', ['0°', '180°']]]],
 ];
@@ -159,7 +197,7 @@ function renderSettings() {
 }
 $('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); $('settings').classList.add('open'); };
 $('closeSet').onclick = () => $('settings').classList.remove('open');
-load().then(poll);
+poll();
 </script>
 </body>
 </html>
