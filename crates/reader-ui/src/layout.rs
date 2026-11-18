@@ -99,6 +99,15 @@ pub fn menu_button(l: &Layout) -> Button {
     Button { rect, hit_rect: Rect::new(0, h.y, l.i(48.0), h.h), hit: Hit::Key(Key::Menu), icon: Icon::Menu, primary: false }
 }
 
+/// The small highlight dot, top-right in Page mode (left of the battery).
+pub fn highlight_button(l: &Layout) -> Button {
+    let h = l.header;
+    let size = l.i(18.0);
+    let cx = h.right() - l.i(78.0);
+    let rect = Rect::new(cx - size / 2, h.cy() as i32 - size / 2, size, size);
+    Button { rect, hit_rect: Rect::new(cx - l.i(22.0), h.y, l.i(44.0), h.h), hit: Hit::Highlight, icon: Icon::Menu, primary: false }
+}
+
 /// Bottom bar: speed on the left (− value +), then the transport in
 /// music-player order (⏮ ▶ ⏭). Page view: page number, then ◀ ⚡ ▶.
 pub fn toolbar(app: &App, l: &Layout) -> (Vec<Button>, Option<Label>) {
@@ -117,34 +126,23 @@ pub fn toolbar(app: &App, l: &Layout) -> (Vec<Button>, Option<Label>) {
     let x2 = t.right() - pad - small;
     let x1 = x2 - gap - play_w;
     let x0 = x1 - gap - small;
-    let label = match app.screen {
-        Screen::Page => {
-            v.push((at(x0, small), key(Key::Left), Icon::PageBack, false));
-            v.push((at(x1, play_w), key(Key::Select), Icon::Bolt, true));
-            v.push((at(x2, small), key(Key::Right), Icon::PageForward, false));
-            app.page_index().map(|i| Label {
-                rect: Rect::new(pad, t.y, x0 - 2 * pad, t.h),
-                big: alloc::format!("{}", i + 1),
-                small: if app.pages_done { alloc::format!("of {}", app.pages.len()) } else { String::from("page") },
-            })
-        }
-        _ => {
-            let play = if app.reader.is_playing() { Icon::Pause } else { Icon::Play };
-            v.push((at(x0, small), key(Key::Left), Icon::SentenceBack, false));
-            v.push((at(x1, play_w), key(Key::Select), play, true));
-            v.push((at(x2, small), key(Key::Right), Icon::SentenceForward, false));
-            // Speed, left-aligned: − [300 wpm] +
-            let sw = l.i(34.0);
-            let lw = l.i(46.0);
-            v.push((at(pad, sw), key(Key::Down), Icon::Minus, false));
-            v.push((at(pad + sw + lw, sw), key(Key::Up), Icon::Plus, false));
-            Some(Label {
-                rect: Rect::new(pad + sw, t.y, lw, t.h),
-                big: alloc::format!("{}", app.reader.wpm()),
-                small: String::from("wpm"),
-            })
-        }
-    };
+    // Same bar in every mode: speed on the left, transport on the right.
+    // In Page mode ⏮/⏭ turn pages, so they show page arrows.
+    let page = app.screen == Screen::Page;
+    let play = if app.reader.is_playing() { Icon::Pause } else { Icon::Play };
+    let (back, fwd) = if page { (Icon::PageBack, Icon::PageForward) } else { (Icon::SentenceBack, Icon::SentenceForward) };
+    v.push((at(x0, small), key(Key::Left), back, false));
+    v.push((at(x1, play_w), key(Key::Select), play, true));
+    v.push((at(x2, small), key(Key::Right), fwd, false));
+    let sw = l.i(34.0);
+    let lw = l.i(46.0);
+    v.push((at(pad, sw), key(Key::Down), Icon::Minus, false));
+    v.push((at(pad + sw + lw, sw), key(Key::Up), Icon::Plus, false));
+    let label = Some(Label {
+        rect: Rect::new(pad + sw, t.y, lw, t.h),
+        big: alloc::format!("{}", app.reader.wpm()),
+        small: String::from("wpm"),
+    });
     v.sort_by_key(|e| e.0.x);
     // Hit areas: full bar height, split halfway between neighbours (Fitts),
     // never over the label between − and +.
@@ -337,6 +335,9 @@ pub fn hit_test(app: &App, l: &Layout, x: i32, y: i32) -> Option<Hit> {
     let mb = menu_button(l);
     if mb.hit_rect.contains(x, y) {
         return Some(mb.hit);
+    }
+    if app.screen == Screen::Page && highlight_button(l).hit_rect.contains(x, y) {
+        return Some(Hit::Highlight);
     }
     toolbar(app, l).0.into_iter().find(|b| b.hit_rect.contains(x, y)).map(|b| b.hit)
 }

@@ -149,6 +149,20 @@ fn main() -> ! {
     apply_display(&mut lcd, &mut delay, &mut backlight, &app.settings);
     println!("fastreader: ready (touch {})", touch_ok);
 
+    // Sends the damaged rectangles to the panel as dithered RGB565.
+    macro_rules! flush {
+        ($rects:expr) => {
+            for r in $rects {
+                if r.is_empty() {
+                    continue;
+                }
+                px_buf.clear();
+                px_buf.extend(cv.rgb565(r).map(|c| Rgb565::from(RawU16::new(c))));
+                let _ = lcd.set_pixels(r.x as u16, r.y as u16, (r.right() - 1) as u16, (r.bottom() - 1) as u16, px_buf.iter().copied());
+            }
+        };
+    }
+
     #[cfg(feature = "selftest")]
     {
         let before = esp_alloc::HEAP.free();
@@ -166,13 +180,13 @@ fn main() -> ! {
         app.open_book(open(i), i);
         let load = t0.elapsed().as_millis();
         let t1 = Instant::now();
-        app.settings.pages = true;
+        app.settings.mode = 3;
         app.screen = reader_core::Screen::Page;
         ui.invalidate();
         let _ = ui.paint(&mut app, 0, &mut cv);
         let pages = t1.elapsed().as_millis();
         let t2 = Instant::now();
-        app.settings.pages = false;
+        app.settings.mode = 0;
         app.screen = reader_core::Screen::Reading;
         ui.invalidate();
         let _ = ui.paint(&mut app, 0, &mut cv);
@@ -187,6 +201,43 @@ fn main() -> ! {
             "selftest: book {} {:?}: {} words, load {} ms, paginate {} ms ({} pages), full paint {} ms, word paint {} us, heap free {} KB",
             i, app.reader.book.title, app.reader.book.len(), load, pages, app.pages.len(), full, word, esp_alloc::HEAP.free() / 1024
         );
+    }
+
+    // Each reading mode while playing: time per frame including the SPI push.
+    #[cfg(feature = "selftest")]
+    for mode in 0..4u16 {
+        app.park_book();
+        app.open_book(open(1), 1);
+        let _ = app.set_setting("mode", mode);
+        app.screen = if mode == 3 { reader_core::Screen::Page } else { reader_core::Screen::Reading };
+        ui.invalidate();
+        let mut now = 100_000;
+        let damage = ui.paint(&mut app, now, &mut cv);
+        flush!(damage);
+        app.handle(reader_core::Key::Select, now);
+        let (mut total, mut worst, mut frames) = (0u64, 0u64, 0u64);
+        for _ in 0..90 {
+            now += 33;
+            app.tick(now);
+            let t = Instant::now();
+            let damage = ui.paint(&mut app, now, &mut cv);
+            let pushed = !damage.is_empty();
+            flush!(damage);
+            if pushed {
+                let us = t.elapsed().as_micros();
+                total += us;
+                worst = worst.max(us);
+                frames += 1;
+            }
+        }
+        app.handle(reader_core::Key::Select, now);
+        println!("selftest: mode {} drew {} of 90 frames, avg {} us, worst {} us (incl. SPI)", mode, frames, total / frames.max(1), worst);
+    }
+    #[cfg(feature = "selftest")]
+    {
+        let _ = app.set_setting("mode", 0);
+        app.screen = reader_core::Screen::Reading;
+        ui.invalidate();
     }
 
     loop {
@@ -273,14 +324,8 @@ fn main() -> ! {
         }
 
         if !asleep {
-            for r in ui.paint(&mut app, now, &mut cv) {
-                if r.is_empty() {
-                    continue;
-                }
-                px_buf.clear();
-                px_buf.extend(cv.rgb565(r).map(|c| Rgb565::from(RawU16::new(c))));
-                let _ = lcd.set_pixels(r.x as u16, r.y as u16, (r.right() - 1) as u16, (r.bottom() - 1) as u16, px_buf.iter().copied());
-            }
+            let damage = ui.paint(&mut app, now, &mut cv);
+            flush!(damage);
         }
 
         // Poll touch at ~100 Hz; sleep a little longer when idle.

@@ -20,8 +20,10 @@ pub struct Reader {
     playing: bool,
     next_due: u64,
     ramp: usize,
-    /// Words per flash (1–3).
+    /// Words per flash (1–3) in Word mode.
     chunk: u8,
+    /// Phrase grouping (Phrase/Page modes): longest group in letters, or 0 for off.
+    phrase: u8,
     /// Reached the end by playing; the next play starts over.
     finished: bool,
     pacing: Pacing,
@@ -29,7 +31,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(book: Book, wpm: u16) -> Self {
-        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, finished: false, pacing: Pacing::default() }
+        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, pacing: Pacing::default() }
     }
 
     pub fn pos(&self) -> usize {
@@ -69,9 +71,33 @@ impl Reader {
         self.chunk = n.clamp(1, 3);
     }
 
-    /// The words on screen now (one, or a short phrase).
+    /// Group by meaning (`Some(max letters)`) or by a fixed word count (`None`).
+    pub fn set_phrase(&mut self, max_letters: Option<u8>) {
+        self.phrase = max_letters.map_or(0, |m| m.clamp(10, 30));
+    }
+
+    pub fn phrase_mode(&self) -> bool {
+        self.phrase > 0
+    }
+
+    /// The words on screen now (one, a few, or a phrase).
     pub fn shown(&self) -> core::ops::Range<usize> {
-        self.book.group(self.pos, self.chunk)
+        if self.phrase > 0 {
+            self.book.phrase(self.pos, self.phrase)
+        } else {
+            self.book.group(self.pos, self.chunk)
+        }
+    }
+
+    /// How far through the current group's display time we are (0.0–1.0);
+    /// the ticker uses it to glide smoothly between words.
+    pub fn progress(&self, now: u64) -> f32 {
+        if !self.playing {
+            return 0.0;
+        }
+        let d = self.current_delay().max(1);
+        let start = self.next_due.saturating_sub(d);
+        (now.saturating_sub(start) as f32 / d as f32).clamp(0.0, 1.0)
     }
 
     /// Display time of the current word in ms, including the start-up ramp.
@@ -346,6 +372,33 @@ mod tests {
         r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
         assert!(r.current_delay() < with);
         assert_eq!(r.current_delay(), 100);
+    }
+
+    #[test]
+    fn phrase_grouping_advances_by_whole_phrases() {
+        let mut r = Reader::new(Book::new("t", "She walked into the old house of the family, and waited."), 300);
+        r.set_phrase(Some(18));
+        assert_eq!(r.shown(), 0..2);
+        r.play(0);
+        let mut now = 0;
+        while r.pos() == 0 {
+            now += 5;
+            r.tick(now);
+        }
+        assert_eq!(r.pos(), 2, "jumps to the next phrase");
+        r.set_phrase(None);
+        assert_eq!(r.shown(), 2..3);
+    }
+
+    #[test]
+    fn progress_runs_from_zero_to_one_per_word() {
+        let mut r = Reader::new(plain_book(10), 600);
+        r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
+        r.play(0);
+        assert_eq!(r.progress(0), 0.0);
+        assert!((r.progress(50) - 0.5).abs() < 0.01);
+        r.pause();
+        assert_eq!(r.progress(70), 0.0);
     }
 
     #[test]

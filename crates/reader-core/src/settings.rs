@@ -15,6 +15,25 @@ pub enum Skip {
 }
 
 pub const SKIPS: [Skip; 6] = [Skip::Sentence, Skip::Words(5), Skip::Words(10), Skip::Words(25), Skip::Words(50), Skip::Paragraph];
+/// How the text is presented.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// One word (or 2–3) at a time, centred.
+    Word,
+    /// Short meaningful groups, starting at a fixed point on the left.
+    Phrase,
+    /// The text glides past as one line.
+    Ticker,
+    /// Normal pages; ▶ moves a phrase highlight and turns pages.
+    Page,
+}
+
+pub const MODES: [Mode; 4] = [Mode::Word, Mode::Phrase, Mode::Ticker, Mode::Page];
+pub const MODE_NAMES: [&str; 4] = ["Word by word", "Phrases", "Ticker", "Page"];
+pub const SPACING_NAMES: [&str; 3] = ["Tight", "Normal", "Airy"];
+pub const PARAGRAPH_NAMES: [&str; 2] = ["Spaced", "Indented"];
+pub const ALIGN_NAMES: [&str; 2] = ["Ragged right", "Justified"];
+
 pub const SKIP_NAMES: [&str; 6] = ["1 sentence", "5 words", "10 words", "25 words", "50 words", "1 paragraph"];
 
 /// Pause lengths, in tenths of a word's time (15 = 1.5×).
@@ -50,8 +69,18 @@ pub struct Settings {
     pub brightness: u8,
     /// Screen turned 180°.
     pub flipped: bool,
-    /// Last view: speed reading or pages.
-    pub pages: bool,
+    /// Index into [`MODES`].
+    pub mode: u8,
+    /// Longest phrase in letters (Phrase and Page modes).
+    pub phrase: u8,
+    /// Page view: 0 tight, 1 normal, 2 airy line spacing.
+    pub spacing: u8,
+    /// Page view: indent paragraphs like a printed book instead of spacing them.
+    pub indent: bool,
+    /// Page view: justified lines.
+    pub justify: bool,
+    /// Page view: highlight the current phrase even while paused.
+    pub highlight: bool,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -73,7 +102,12 @@ impl Default for Settings {
             chunk: 1,
             brightness: 4,
             flipped: false,
-            pages: false,
+            mode: 0,
+            phrase: 18,
+            spacing: 1,
+            indent: false,
+            justify: false,
+            highlight: true,
             skip: 0,
             context: true,
             book: 0,
@@ -84,11 +118,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 5;
-pub const SETTINGS_LEN: usize = 26; // magic 2 + version + wpm 2 + pos 4 + 16 fields + checksum
+const VERSION: u8 = 6;
+/// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
+pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 17] = [
+pub const FIELDS: [(&str, u16, u16); 22] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -96,7 +131,7 @@ pub const FIELDS: [(&str, u16, u16); 17] = [
     ("chunk", 1, 3),
     ("brightness", 1, 5),
     ("flipped", 0, 1),
-    ("pages", 0, 1),
+    ("mode", 0, 3),
     ("skip", 0, 5),
     ("context", 0, 1),
     ("comma", 10, 40),
@@ -106,9 +141,18 @@ pub const FIELDS: [(&str, u16, u16); 17] = [
     ("long_words", 0, 1),
     ("ramp", 0, 1),
     ("book", 0, 255),
+    ("phrase", 10, 30),
+    ("spacing", 0, 2),
+    ("indent", 0, 1),
+    ("justify", 0, 1),
+    ("highlight", 0, 1),
 ];
 
 impl Settings {
+    pub fn mode(&self) -> Mode {
+        MODES[self.mode.min(MODES.len() as u8 - 1) as usize]
+    }
+
     pub fn skip(&self) -> Skip {
         SKIPS[self.skip.min(SKIPS.len() as u8 - 1) as usize]
     }
@@ -123,7 +167,12 @@ impl Settings {
             "chunk" => self.chunk as u16,
             "brightness" => self.brightness as u16,
             "flipped" => self.flipped as u16,
-            "pages" => self.pages as u16,
+            "mode" => self.mode as u16,
+            "phrase" => self.phrase as u16,
+            "spacing" => self.spacing as u16,
+            "indent" => self.indent as u16,
+            "justify" => self.justify as u16,
+            "highlight" => self.highlight as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -151,7 +200,12 @@ impl Settings {
             "chunk" => self.chunk = b,
             "brightness" => self.brightness = b,
             "flipped" => self.flipped = v != 0,
-            "pages" => self.pages = v != 0,
+            "mode" => self.mode = b,
+            "phrase" => self.phrase = b,
+            "spacing" => self.spacing = b,
+            "indent" => self.indent = v != 0,
+            "justify" => self.justify = v != 0,
+            "highlight" => self.highlight = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,
@@ -205,7 +259,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let mut s = Settings { wpm: 525, theme: 2, font: 3, size: 2, chunk: 3, brightness: 1, flipped: true, pages: true, pos: 123_456, ..Settings::default() };
+        let mut s = Settings { wpm: 525, theme: 2, font: 3, size: 2, chunk: 3, brightness: 1, flipped: true, mode: 3, pos: 123_456, ..Settings::default() };
         s.set("skip", 4).unwrap();
         s.set("comma", 33).unwrap();
         s.set("ramp", 0).unwrap();

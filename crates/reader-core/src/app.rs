@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Settings, Skip, SKIPS, SKIP_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 pub const TOAST_MS: u64 = 1_400;
@@ -35,7 +35,7 @@ pub struct Catalog {
 pub enum MenuItem {
     Resume,
     Library,
-    View,
+    Mode,
     Speed,
     Words,
     Skip,
@@ -45,6 +45,9 @@ pub enum MenuItem {
     Size,
     Font,
     Theme,
+    Spacing,
+    Paragraphs,
+    Align,
     Brightness,
     Rotate,
     Info,
@@ -53,8 +56,8 @@ pub enum MenuItem {
 
 /// Menu groups, shown as section headings.
 pub const MENU: [(&str, &[MenuItem]); 3] = [
-    ("Reading", &[MenuItem::Resume, MenuItem::Library, MenuItem::View, MenuItem::Speed, MenuItem::Words, MenuItem::Skip, MenuItem::Chapters, MenuItem::GoTo, MenuItem::Restart]),
-    ("Look", &[MenuItem::Size, MenuItem::Font, MenuItem::Theme]),
+    ("Reading", &[MenuItem::Resume, MenuItem::Library, MenuItem::Mode, MenuItem::Speed, MenuItem::Words, MenuItem::Skip, MenuItem::Chapters, MenuItem::GoTo, MenuItem::Restart]),
+    ("Look", &[MenuItem::Size, MenuItem::Font, MenuItem::Theme, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
     ("Device", &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::Info, MenuItem::Sleep]),
 ];
 
@@ -62,7 +65,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 16;
+pub const MENU_LEN: u8 = 19;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -77,7 +80,7 @@ impl MenuItem {
         match self {
             MenuItem::Resume => "Resume",
             MenuItem::Library => "Library",
-            MenuItem::View => "View",
+            MenuItem::Mode => "Reading mode",
             MenuItem::Speed => "Speed",
             MenuItem::Words => "Words per flash",
             MenuItem::Skip => "Skip buttons jump",
@@ -87,6 +90,9 @@ impl MenuItem {
             MenuItem::Size => "Text size",
             MenuItem::Font => "Font",
             MenuItem::Theme => "Theme",
+            MenuItem::Spacing => "Line spacing",
+            MenuItem::Paragraphs => "Paragraphs",
+            MenuItem::Align => "Text alignment",
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Info => "Device info",
@@ -99,6 +105,10 @@ impl MenuItem {
         Some(match self {
             MenuItem::Speed => PickKind::Speed,
             MenuItem::Library => PickKind::Book,
+            MenuItem::Mode => PickKind::Mode,
+            MenuItem::Spacing => PickKind::Spacing,
+            MenuItem::Paragraphs => PickKind::Paragraphs,
+            MenuItem::Align => PickKind::Align,
             MenuItem::Words => PickKind::Words,
             MenuItem::Skip => PickKind::Skip,
             MenuItem::Chapters => PickKind::Chapter,
@@ -115,6 +125,10 @@ impl MenuItem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickKind {
     Book,
+    Mode,
+    Spacing,
+    Paragraphs,
+    Align,
     Speed,
     Words,
     Skip,
@@ -130,6 +144,10 @@ impl PickKind {
     pub const fn title(self) -> &'static str {
         match self {
             PickKind::Book => "Library",
+            PickKind::Mode => "Reading mode",
+            PickKind::Spacing => "Line spacing",
+            PickKind::Paragraphs => "Paragraphs",
+            PickKind::Align => "Text alignment",
             PickKind::Speed => "Speed",
             PickKind::Words => "Words per flash",
             PickKind::Skip => "Skip buttons jump",
@@ -144,7 +162,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align)
     }
 }
 
@@ -179,7 +197,6 @@ pub enum Action {
     PageBack,
     PageForward,
     TogglePlay,
-    SpeedReadHere,
     OpenMenu,
     CloseMenu,
     Prev,
@@ -201,7 +218,6 @@ impl Action {
             Action::PageBack => "previous page",
             Action::PageForward => "next page",
             Action::TogglePlay => "play / pause",
-            Action::SpeedReadHere => "speed read from here",
             Action::OpenMenu => "menu",
             Action::CloseMenu => "close menu",
             Action::Prev => "move up",
@@ -230,12 +246,13 @@ const LINE: Table = [
     (Key::Select, Action::TogglePlay),
     (Key::Menu, Action::OpenMenu),
 ];
+// Same keys as reading: speed on ▲▼, play on ●; ◀ ▶ turn pages.
 const PAGE: Table = [
-    (Key::Up, Action::PageBack),
-    (Key::Down, Action::PageForward),
+    (Key::Up, Action::Faster),
+    (Key::Down, Action::Slower),
     (Key::Left, Action::PageBack),
     (Key::Right, Action::PageForward),
-    (Key::Select, Action::SpeedReadHere),
+    (Key::Select, Action::TogglePlay),
     (Key::Menu, Action::OpenMenu),
 ];
 const LIST: Table = [
@@ -276,6 +293,8 @@ pub enum Hit {
     Row(u8),
     /// The list's page-up / page-down buttons, with how many rows fit.
     Scroll { down: bool, rows: u8 },
+    /// The small dot in Page mode: highlight the current phrase or not.
+    Highlight,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +326,7 @@ pub enum Msg {
     Sleeping,
     PagesView,
     SpeedView,
+    Highlight(bool),
     Rotated,
     NoChapters,
     /// The screen itself shows the change (menu opened, highlight moved).
@@ -377,6 +397,9 @@ pub struct App {
     /// a little at a time; `pages_done` once the whole book is measured.
     pub pages: Vec<u32>,
     pub pages_done: bool,
+    /// While the page count is still being worked out and the reader is
+    /// past the measured part: where the page on screen ends (set by the renderer).
+    pub page_next: Option<u32>,
     /// Titles of the books the platform can open, and where each was left.
     pub library: Vec<String>,
     pub positions: Vec<u32>,
@@ -388,6 +411,8 @@ pub struct App {
     pressed: Option<Hit>,
     resume_after_menu: bool,
     effects: Vec<Effect>,
+    /// Time of the last `tick`, for smooth animation (ticker) frame pacing.
+    last_tick: u64,
 }
 
 impl App {
@@ -398,15 +423,16 @@ impl App {
         reader.set_chunk(settings.chunk);
         reader.set_pacing(settings.pacing);
         reader.seek(settings.pos as usize, 0);
-        App {
+        let mut app = App {
             reader,
             catalog,
-            screen: if settings.pages { Screen::Page } else { Screen::Reading },
+            screen: if settings.mode() == Mode::Page { Screen::Page } else { Screen::Reading },
             settings,
             battery: None,
             device: DeviceInfo::default(),
             pages: Vec::new(),
             pages_done: false,
+            page_next: None,
             library: Vec::new(),
             positions: Vec::new(),
             toast: None,
@@ -415,7 +441,10 @@ impl App {
             pressed: None,
             resume_after_menu: false,
             effects: Vec::new(),
-        }
+            last_tick: 0,
+        };
+        app.apply_mode();
+        app
     }
 
     pub fn toast(&self) -> Option<Toast> {
@@ -440,7 +469,7 @@ impl App {
 
     /// The view to return to when leaving the menu.
     fn home(&self) -> Screen {
-        if self.settings.pages { Screen::Page } else { Screen::Reading }
+        if self.settings.mode() == Mode::Page { Screen::Page } else { Screen::Reading }
     }
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
@@ -505,6 +534,13 @@ impl App {
                 }
                 self.feedback(fb, now)
             }
+            (Hit::Highlight, Screen::Page) => {
+                self.settings.highlight = !self.settings.highlight;
+                self.flash = None;
+                self.effect(Effect::SaveSettings);
+                let fb = Feedback::ok(Msg::Highlight(self.settings.highlight));
+                self.feedback(fb, now)
+            }
             // A stale target from a screen that just changed: ignore quietly.
             _ => Feedback::ok(Msg::Shown),
         }
@@ -520,6 +556,7 @@ impl App {
 
     /// Advances playback and expires toasts/flashes. True if anything visible changed.
     pub fn tick(&mut self, now: u64) -> bool {
+        self.last_tick = now;
         let was_playing = self.reader.is_playing();
         let mut changed = self.reader.tick(now);
         if was_playing && !self.reader.is_playing() {
@@ -541,7 +578,15 @@ impl App {
 
     /// When the platform needs to call `tick` next (sleep until then).
     pub fn next_wake(&self) -> Option<u64> {
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1)].into_iter().flatten().min()
+        // The ticker glides between words: ask for ~30 frames a second.
+        let frame = (self.animating()).then_some(self.last_tick + 33);
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame].into_iter().flatten().min()
+    }
+
+    /// True while something moves between words (the ticker), so the screen
+    /// must be redrawn every frame rather than once per word.
+    pub fn animating(&self) -> bool {
+        self.screen == Screen::Reading && self.settings.mode() == Mode::Ticker && self.reader.is_playing()
     }
 
     fn save(&mut self) {
@@ -567,6 +612,21 @@ impl App {
         self.effect(Effect::SaveSettings);
     }
 
+    /// Groups words the way the current mode reads them.
+    pub fn apply_mode(&mut self) {
+        match self.settings.mode() {
+            Mode::Word => {
+                self.reader.set_phrase(None);
+                self.reader.set_chunk(self.settings.chunk);
+            }
+            Mode::Phrase | Mode::Page => self.reader.set_phrase(Some(self.settings.phrase)),
+            Mode::Ticker => {
+                self.reader.set_phrase(None);
+                self.reader.set_chunk(1);
+            }
+        }
+    }
+
     /// Frees the open book before a big one is loaded (memory is tight on
     /// the device), remembering where it was left.
     pub fn park_book(&mut self) {
@@ -586,11 +646,11 @@ impl App {
         s.theme = s.theme.min(self.catalog.themes.len().saturating_sub(1) as u8);
         s.font = s.font.min(self.catalog.fonts.len().saturating_sub(1) as u8);
         let display = s.brightness != self.settings.brightness || s.flipped != self.settings.flipped;
-        let view_changed = s.pages != self.settings.pages;
+        let view_changed = s.mode != self.settings.mode;
         self.settings = s;
         self.reader.set_wpm(s.wpm);
-        self.reader.set_chunk(s.chunk);
         self.reader.set_pacing(s.pacing);
+        self.apply_mode();
         if display {
             self.effect(Effect::Display);
         }
@@ -605,12 +665,18 @@ impl App {
     // ------------------------------------------------------------ pages
 
     /// Index of the page containing the current word.
+    /// `None` while the reader is beyond the pages measured so far.
     pub fn page_index(&self) -> Option<usize> {
         if self.pages.is_empty() {
             return None;
         }
         let pos = self.reader.pos() as u32;
-        Some(self.pages.partition_point(|&s| s <= pos).saturating_sub(1))
+        let i = self.pages.partition_point(|&s| s <= pos);
+        // In the last measured page we don't know where it ends yet.
+        if i == self.pages.len() && !self.pages_done {
+            return None;
+        }
+        Some(i.saturating_sub(1))
     }
 
     fn turn_page(&mut self, forward: bool, now: u64) -> Feedback {
@@ -619,9 +685,10 @@ impl App {
             Some(i) if forward => self.pages.get(i + 1).map(|&s| s as usize),
             Some(i) if self.pages[i] as usize != pos => Some(self.pages[i] as usize),
             Some(i) => i.checked_sub(1).map(|j| self.pages[j] as usize),
-            // Pages not measured yet: move by a screenful of words.
-            None if forward => (pos + 60 < self.reader.book.len()).then_some(pos + 60),
-            None => (pos > 0).then(|| pos.saturating_sub(60)),
+            // Beyond the measured pages: the renderer tells where this page ends;
+            // back goes to the start of the previous paragraph.
+            None if forward => self.page_next.map(|n| n as usize).filter(|&n| n > pos && n < self.reader.book.len()),
+            None => (pos > 0).then(|| self.reader.book.paragraph_start(pos - 1)),
         };
         match target {
             Some(t) => {
@@ -681,13 +748,6 @@ impl App {
                     self.reader.play(now);
                     Feedback::ok(Msg::Playing)
                 }
-            }
-            (_, Action::SpeedReadHere) => {
-                self.settings.pages = false;
-                self.screen = Screen::Reading;
-                self.reader.play(now);
-                self.save();
-                Feedback::ok(Msg::Playing)
             }
             (_, Action::OpenMenu) => {
                 self.resume_after_menu = self.reader.is_playing() || matches!(screen, Screen::Line { resume: true });
@@ -758,17 +818,9 @@ impl App {
         }
         match item {
             MenuItem::Resume => {
-                self.resume_after_menu = !self.settings.pages;
+                self.resume_after_menu = true;
                 self.close_menu(now);
-                Feedback::ok(if self.settings.pages { Msg::PagesView } else { Msg::Playing })
-            }
-            MenuItem::View => {
-                self.settings.pages = !self.settings.pages;
-                self.resume_after_menu = false;
-                self.save();
-                self.close_menu(now);
-                // The whole screen changes: that is the feedback.
-                Feedback::ok(Msg::Shown)
+                Feedback::ok(Msg::Playing)
             }
             MenuItem::Restart => {
                 self.reader.seek(0, now);
@@ -805,6 +857,15 @@ impl App {
             self.close_menu(now);
             return Feedback::ok(Msg::Set(kind, sel));
         }
+        if kind == PickKind::Mode {
+            // Switching mode ends the errand: straight into the new view.
+            self.settings.mode = sel;
+            self.apply_mode();
+            self.save();
+            self.resume_after_menu = false;
+            self.close_menu(now);
+            return Feedback::ok(Msg::Set(kind, sel));
+        }
         match kind {
             PickKind::Speed => {
                 self.reader.set_wpm(SPEED_PRESETS[sel as usize]);
@@ -812,7 +873,7 @@ impl App {
             }
             PickKind::Words => {
                 self.settings.chunk = sel + 1;
-                self.reader.set_chunk(sel + 1);
+                self.apply_mode();
             }
             PickKind::Skip => self.settings.skip = sel,
             PickKind::Chapter => {
@@ -846,6 +907,10 @@ impl App {
     pub fn pick_len(&self, kind: PickKind) -> u8 {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
+            PickKind::Mode => MODE_NAMES.len() as u8,
+            PickKind::Spacing => SPACING_NAMES.len() as u8,
+            PickKind::Paragraphs => PARAGRAPH_NAMES.len() as u8,
+            PickKind::Align => ALIGN_NAMES.len() as u8,
             PickKind::Speed => SPEED_PRESETS.len() as u8,
             PickKind::Words | PickKind::Size => 3,
             PickKind::Skip => SKIPS.len() as u8,
@@ -861,6 +926,10 @@ impl App {
         let i = i as usize;
         match kind {
             PickKind::Book => self.library.get(i).cloned().unwrap_or_else(|| self.reader.book.title.clone()),
+            PickKind::Mode => MODE_NAMES[i].into(),
+            PickKind::Spacing => SPACING_NAMES[i].into(),
+            PickKind::Paragraphs => PARAGRAPH_NAMES[i].into(),
+            PickKind::Align => ALIGN_NAMES[i].into(),
             PickKind::Speed => format!("{} wpm", SPEED_PRESETS[i]),
             PickKind::Words => CHUNK_NAMES[i].into(),
             PickKind::Skip => SKIP_NAMES[i].into(),
@@ -876,7 +945,6 @@ impl App {
     /// The current value shown next to a menu item.
     pub fn menu_value(&self, item: MenuItem) -> Option<String> {
         Some(match item {
-            MenuItem::View => (if self.settings.pages { "Pages" } else { "Speed" }).into(),
             MenuItem::Speed => format!("{} wpm", self.reader.wpm()),
             MenuItem::Words => format!("{}", self.reader.chunk()),
             MenuItem::Chapters => format!("{}", self.reader.book.chapters().len()),
@@ -894,6 +962,10 @@ impl App {
     pub fn current_pick(&self, kind: PickKind) -> u8 {
         match kind {
             PickKind::Book => self.settings.book.min(self.pick_len(kind) - 1),
+            PickKind::Mode => self.settings.mode,
+            PickKind::Spacing => self.settings.spacing,
+            PickKind::Paragraphs => self.settings.indent as u8,
+            PickKind::Align => self.settings.justify as u8,
             PickKind::Speed => {
                 let w = self.reader.wpm();
                 SPEED_PRESETS.iter().enumerate().min_by_key(|(_, p)| p.abs_diff(w)).map_or(0, |(i, _)| i as u8)
@@ -915,6 +987,9 @@ impl App {
             PickKind::Size => self.settings.size = v,
             PickKind::Font => self.settings.font = v,
             PickKind::Theme => self.settings.theme = v,
+            PickKind::Spacing => self.settings.spacing = v,
+            PickKind::Paragraphs => self.settings.indent = v == 1,
+            PickKind::Align => self.settings.justify = v == 1,
             PickKind::Brightness => {
                 self.settings.brightness = v + 1;
                 self.effect(Effect::Display);
@@ -1099,26 +1174,80 @@ mod tests {
         assert_eq!(a.handle(Select, 0), Feedback::limit(Msg::NoChapters));
     }
 
-    #[test]
-    fn page_view_turns_pages_and_speed_reads_from_there() {
-        let mut a = app();
-        a.screen = Screen::Menu { sel: menu_index(MenuItem::View) };
+    fn choose_mode(a: &mut App, m: Mode) {
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Mode) };
         a.handle(Select, 0);
+        let target = crate::settings::MODES.iter().position(|x| *x == m).unwrap() as u8;
+        if let Screen::Pick { kind, original, .. } = a.screen {
+            a.screen = Screen::Pick { kind, sel: target, original };
+        }
+        a.handle(Select, 0);
+    }
+
+    #[test]
+    fn page_mode_turns_pages_and_plays_a_moving_highlight() {
+        let mut a = app();
+        choose_mode(&mut a, Mode::Page);
         assert_eq!(a.screen, Screen::Page);
+        assert!(a.reader.phrase_mode(), "page mode reads by phrases");
         a.pages = alloc::vec![0, 4, 9];
+        a.pages_done = true;
         a.handle(Right, 0);
         assert_eq!(a.reader.pos(), 4);
-        a.handle(Down, 0);
-        assert_eq!(a.reader.pos(), 9);
+        assert_eq!(a.handle(Right, 0).msg, Msg::Shown);
         assert_eq!(a.handle(Right, 0).tone, Tone::Limit);
-        a.handle(Up, 0);
+        a.handle(Left, 0);
         assert_eq!(a.reader.pos(), 4);
+        a.handle(Up, 0);
+        assert_eq!(a.reader.wpm(), 500, "▲ is speed in every mode");
         a.handle(Select, 0);
-        assert_eq!(a.screen, Screen::Reading);
+        assert_eq!(a.screen, Screen::Page, "play stays on the page");
         assert!(a.reader.is_playing());
         a.handle(Menu, 0);
         a.handle(Menu, 0);
-        assert_eq!(a.screen, Screen::Reading, "menu returns to the view you were in");
+        assert_eq!(a.screen, Screen::Page, "menu returns to the view you were in");
+    }
+
+    #[test]
+    fn pages_still_being_measured_use_the_renderers_hint() {
+        let mut a = app();
+        choose_mode(&mut a, Mode::Page);
+        a.pages = alloc::vec![0, 4];
+        a.pages_done = false;
+        a.reader.seek(7, 0);
+        assert_eq!(a.page_index(), None, "past the measured pages");
+        a.page_next = Some(9);
+        a.handle(Right, 0);
+        assert_eq!(a.reader.pos(), 9);
+        a.handle(Left, 0);
+        assert_eq!(a.reader.pos(), 6, "back to the start of the paragraph (after the heading 'Two')");
+    }
+
+    #[test]
+    fn highlight_dot_toggles_in_page_mode_only() {
+        let mut a = app();
+        assert!(a.settings.highlight);
+        a.tap(Hit::Highlight, 0);
+        assert!(a.settings.highlight, "ignored outside page mode");
+        choose_mode(&mut a, Mode::Page);
+        assert_eq!(a.tap(Hit::Highlight, 0).msg, Msg::Highlight(false));
+        assert!(!a.settings.highlight);
+    }
+
+    #[test]
+    fn each_mode_groups_words_its_own_way() {
+        let mut a = App::new(Book::new("t", "She walked into the old house of the family."), CAT, Settings { chunk: 2, ..Settings::default() });
+        assert_eq!(a.reader.shown(), 0..2, "word mode: 2 words per flash");
+        choose_mode(&mut a, Mode::Phrase);
+        assert_eq!(a.screen, Screen::Reading);
+        a.reader.seek(2, 0);
+        assert_eq!(a.reader.shown(), 2..6, "phrase: 'into the old house'");
+        choose_mode(&mut a, Mode::Ticker);
+        assert_eq!(a.reader.shown(), 2..3, "ticker: one word at a time");
+        a.handle(Select, 0);
+        a.tick(100);
+        assert!(a.animating());
+        assert!(a.next_wake().unwrap() <= 133, "about 30 frames a second while gliding");
     }
 
     #[test]
@@ -1126,6 +1255,7 @@ mod tests {
         let mut a = app();
         a.screen = Screen::Page;
         a.pages = alloc::vec![0, 4, 9];
+        a.pages_done = true;
         a.reader.seek(6, 0);
         a.handle(Left, 0);
         assert_eq!(a.reader.pos(), 4);
@@ -1233,7 +1363,7 @@ mod tests {
         assert_eq!(a.settings.theme, 2, "clamped to the themes that exist");
         a.set_setting("brightness", 2).unwrap();
         assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Display));
-        a.set_setting("pages", 1).unwrap();
+        a.set_setting("mode", 3).unwrap();
         assert_eq!(a.screen, Screen::Page);
         assert!(a.set_setting("nonsense", 1).is_err());
         let before = a.reader.ms_left();
@@ -1263,10 +1393,11 @@ mod tests {
 
     #[test]
     fn saved_view_and_chunk_are_restored() {
-        let s = Settings { pages: true, chunk: 2, theme: 200, ..Settings::default() };
+        let s = Settings { mode: 3, chunk: 2, theme: 200, ..Settings::default() };
         let a = App::new(Book::new("t", TEXT), CAT, s);
         assert_eq!(a.screen, Screen::Page);
         assert_eq!(a.reader.chunk(), 2);
+        assert!(a.reader.phrase_mode());
         assert!(a.settings.theme < 3);
     }
 }

@@ -35,7 +35,7 @@ fn benches(c: &mut Criterion) {
             })
         });
     }
-    let mut app = App::new(Book::new("n", &novel), CATALOG, Settings { pages: true, ..Settings::default() });
+    let mut app = App::new(Book::new("n", &novel), CATALOG, Settings { mode: 3, ..Settings::default() });
     let mut cv = Canvas::new(320, 240);
     c.bench_function("paginate a novel", |b| {
         b.iter(|| {

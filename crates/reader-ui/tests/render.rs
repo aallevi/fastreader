@@ -29,7 +29,8 @@ fn every_theme_screen_size_and_font_renders() {
         for theme in 0..THEMES.len() as u8 {
             for font in 0..CATALOG.fonts.len() as u8 {
                 for size in 0..3 {
-                    let mut a = app_with(TEXT, Settings { theme, font, size, ..Settings::default() });
+                    let mode = (font + size) % 4; // cover every mode without a 4th loop
+                    let mut a = app_with(TEXT, Settings { theme, font, size, mode, ..Settings::default() });
                     a.reader.seek(37, 0);
                     for &s in &screens {
                         a.screen = s;
@@ -131,7 +132,7 @@ fn tapping_a_menu_row_opens_it() {
 #[test]
 fn pages_cover_the_whole_book_in_order() {
     for size in 0..3 {
-        let mut a = app_with(&TEXT.repeat(5), Settings { pages: true, size, ..Settings::default() });
+        let mut a = app_with(&TEXT.repeat(5), Settings { mode: 3, size, ..Settings::default() });
         let mut cv = Canvas::new(320, 240);
         let mut ui = Ui::new(320, 240);
         let mut frames = 0;
@@ -170,4 +171,115 @@ fn damage_stays_on_screen_during_a_long_read() {
             assert_eq!(r.intersect(&screen), r);
         }
     }
+}
+
+#[test]
+fn every_typography_option_paginates_the_whole_book() {
+    for spacing in 0..3 {
+        for (indent, justify) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut a = app_with(&TEXT.repeat(4), Settings { mode: 3, spacing, indent, justify, ..Settings::default() });
+            let mut cv = Canvas::new(320, 240);
+            let mut ui = Ui::new(320, 240);
+            for t in 0..400 {
+                ui.paint(&mut a, t, &mut cv);
+                if a.pages_done {
+                    break;
+                }
+            }
+            assert!(a.pages_done);
+            assert!(a.pages.windows(2).all(|w| w[0] < w[1]));
+            // Every word is on exactly one page: page starts never skip text.
+            assert_eq!(a.pages[0], 0);
+        }
+    }
+}
+
+#[test]
+fn airy_spacing_needs_more_pages_than_tight() {
+    let count = |spacing| {
+        let mut a = app_with(&TEXT.repeat(4), Settings { mode: 3, spacing, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        for t in 0..400 {
+            ui.paint(&mut a, t, &mut cv);
+        }
+        a.pages.len()
+    };
+    assert!(count(2) > count(0));
+}
+
+#[test]
+fn ticker_redraws_only_the_text_band_each_frame() {
+    let mut a = app_with(&TEXT.repeat(20), Settings { mode: 2, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    a.handle(Key::Select, 0);
+    ui.paint(&mut a, 0, &mut cv);
+    // Let the "Reading" message and the button flash expire first.
+    a.tick(1990);
+    ui.paint(&mut a, 1990, &mut cv);
+    let mut frames = 0;
+    for t in (2000..3000).step_by(33) {
+        a.tick(t);
+        let dmg = ui.paint(&mut a, t, &mut cv);
+        if !dmg.is_empty() {
+            frames += 1;
+            let area: i32 = dmg.iter().map(|r| r.w * r.h).sum();
+            assert!(area * 100 / (320 * 240) <= 45, "frame pushed {area} px: {dmg:?}");
+        }
+    }
+    assert!(frames >= 25, "the ticker moves every frame ({frames} of 30)");
+}
+
+#[test]
+fn highlight_dot_is_tappable_in_page_mode() {
+    let mut a = app_with(TEXT, Settings { mode: 3, ..Settings::default() });
+    let ui = Ui::new(320, 240);
+    let b = reader_ui::layout::highlight_button(&ui.layout);
+    assert_eq!(ui.hit(&a, b.rect.cx() as i32, b.rect.cy() as i32), Some(Hit::Highlight));
+    a.tap(Hit::Highlight, 0);
+    assert!(!a.settings.highlight);
+}
+
+#[test]
+fn page_highlight_moves_by_redrawing_only_a_few_lines() {
+    let mut a = app_with(&TEXT.repeat(20), Settings { mode: 3, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    for t in 0..50 {
+        ui.paint(&mut a, t, &mut cv);
+    }
+    a.handle(Key::Select, 100);
+    ui.paint(&mut a, 100, &mut cv);
+    a.tick(1_990);
+    ui.paint(&mut a, 1_990, &mut cv);
+    let mut checked = 0;
+    let mut now = 2_000;
+    while checked < 10 {
+        let before = a.reader.pos();
+        let page = a.page_index();
+        now += 20;
+        a.tick(now);
+        let dmg = ui.paint(&mut a, now, &mut cv);
+        if a.reader.pos() != before && a.page_index() == page {
+            let area: i32 = dmg.iter().map(|r| r.w * r.h).sum();
+            // Usually 2 lines (~20%); up to 3 when leaving a two-line title.
+            assert!(area * 100 / (320 * 240) <= 40, "highlight step pushed {area} px: {dmg:?}");
+            checked += 1;
+        }
+    }
+}
+
+#[test]
+fn page_deep_in_a_long_book_shows_without_counting_first() {
+    let mut a = app_with(&TEXT.repeat(400), Settings { mode: 3, ..Settings::default() });
+    a.reader.seek(a.reader.book.len() * 4 / 5, 0);
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    ui.paint(&mut a, 0, &mut cv);
+    assert!(!a.pages_done, "one frame only counts a few pages");
+    assert_eq!(a.page_index(), None);
+    let next = a.page_next.expect("the page on screen knows where it ends");
+    a.handle(Key::Right, 10);
+    assert_eq!(a.reader.pos() as u32, next, "page forward works before the count is done");
 }

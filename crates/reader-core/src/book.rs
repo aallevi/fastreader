@@ -249,6 +249,42 @@ impl Book {
         i..end.max(i)
     }
 
+    /// A meaningful group starting at `i`, for Phrase and Page modes.
+    ///
+    /// Follows the original e-reader's rule (a group never runs past
+    /// punctuation, so every flash reads on its own) plus two refinements:
+    /// - at most `max_letters` letters and 4 words, about the 14–15 letters a
+    ///   reader takes in right of a fixation (McConkie & Rayner) plus the start;
+    /// - never end on a function word ("the", "of", "di", "della"…): it is
+    ///   carried to the next group, so groups split where phrases do.
+    pub fn phrase(&self, i: usize, max_letters: u8) -> core::ops::Range<usize> {
+        let n = self.words.len();
+        if i >= n {
+            return i..i;
+        }
+        let max = max_letters as usize;
+        let mut end = i + 1;
+        let mut letters = self.words[i].len as usize;
+        while end < n && end - i < 4 {
+            let prev = self.words[end - 1];
+            let next = self.words[end];
+            if prev.pause != Pause::Normal || next.style.heading() != prev.style.heading() {
+                break;
+            }
+            let lone_function_word = end - i == 1 && is_function_word(self.text_of(prev));
+            if letters + 1 + next.len as usize > max && !lone_function_word {
+                break;
+            }
+            letters += 1 + next.len as usize;
+            end += 1;
+        }
+        // Don't leave a function word dangling at the end of a group.
+        while end - i > 1 && end < n && self.words[end - 1].pause == Pause::Normal && is_function_word(self.text_of(self.words[end - 1])) {
+            end -= 1;
+        }
+        i..end
+    }
+
     /// Summed weight of a range of words.
     pub fn weight_of(&self, r: core::ops::Range<usize>) -> u32 {
         let e = r.end.min(self.words.len());
@@ -418,6 +454,42 @@ fn classify(word: &str) -> Pause {
     }
 }
 
+/// Short words that lean on the next one (articles, prepositions,
+/// conjunctions, auxiliaries), English and Italian.
+const FUNCTION_WORDS: &[&str] = &[
+    // English
+    "a", "an", "the", "of", "to", "in", "on", "at", "by", "for", "with", "from", "into", "as", "and", "or", "but", "nor",
+    "if", "than", "that", "this", "these", "those", "its", "his", "her", "their", "my", "your", "our", "is", "was",
+    "are", "were", "be", "been", "has", "had", "have", "not", "no", "so", "very", "i", "we", "you", "he", "she", "they", "it",
+    // Italian
+    "il", "lo", "la", "i", "gli", "le", "l'", "un", "uno", "una", "un'", "di", "da", "in", "con", "su", "per", "tra", "fra",
+    "e", "ed", "o", "od", "ma", "che", "non", "si", "ci", "mi", "ti", "vi", "ne", "se", "come", "del", "dello", "della",
+    "dei", "degli", "delle", "al", "allo", "alla", "ai", "agli", "alle", "dal", "dallo", "dalla", "dai", "dagli", "dalle",
+    "nel", "nello", "nella", "nei", "negli", "nelle", "sul", "sullo", "sulla", "sui", "sugli", "sulle", "col", "è", "ha",
+    "sono", "era", "più", "lui", "lei", "suo", "sua", "suoi", "sue", "mio", "mia", "tuo", "tua",
+];
+
+fn is_function_word(word: &str) -> bool {
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '’');
+    if core.chars().count() > 6 {
+        return false;
+    }
+    let mut buf = [0u8; 24];
+    let mut n = 0;
+    for c in core.chars().flat_map(char::to_lowercase) {
+        let c = if c == '’' { '\'' } else { c };
+        let mut tmp = [0u8; 4];
+        let e = c.encode_utf8(&mut tmp);
+        if n + e.len() > buf.len() {
+            return false;
+        }
+        buf[n..n + e.len()].copy_from_slice(e.as_bytes());
+        n += e.len();
+    }
+    let w = core::str::from_utf8(&buf[..n]).unwrap_or("");
+    FUNCTION_WORDS.contains(&w)
+}
+
 /// Optimal Recognition Point: index (in chars) of the letter the eye should
 /// land on. Slightly left of centre, the classic Spritz-style table.
 pub fn orp_index(word: &str) -> usize {
@@ -580,6 +652,47 @@ mod tests {
         assert_eq!(b.title, "Cancroregina");
         assert_eq!(words(&b), ["I", "Testo."]);
         assert_eq!(Book::parse("Plain.", "file").title, "file");
+    }
+
+    fn phrases(b: &Book, max: u8) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            let r = b.phrase(i, max);
+            out.push((r.clone()).map(|j| b.text_of(b.word(j).unwrap())).collect::<Vec<_>>().join(" "));
+            i = r.end;
+        }
+        out
+    }
+
+    #[test]
+    fn phrases_split_where_meaning_does() {
+        let b = Book::new("t", "She walked into the old house of the family, and waited.");
+        assert_eq!(phrases(&b, 18), ["She walked", "into the old house", "of the family,", "and waited."]);
+    }
+
+    #[test]
+    fn italian_function_words_stay_with_their_noun() {
+        let b = Book::new("t", "La differenza della ripetizione è il concetto del libro.");
+        let p = phrases(&b, 18);
+        assert!(p.iter().all(|g| !g.ends_with(" della") && !g.ends_with(" il") && !g.ends_with(" del")), "{p:?}");
+        assert_eq!(p.join(" "), "La differenza della ripetizione è il concetto del libro.");
+    }
+
+    #[test]
+    fn phrases_never_cross_punctuation_or_exceed_four_words() {
+        let b = Book::new("t", "a b c d e f g h. Yes, no.");
+        for g in phrases(&b, 30) {
+            assert!(g.split(' ').count() <= 4, "{g}");
+            let inner = &g[..g.len() - 1];
+            assert!(!inner.contains('.') && !inner.contains(','), "{g}");
+        }
+    }
+
+    #[test]
+    fn a_lone_function_word_takes_the_long_word_after_it() {
+        let b = Book::new("t", "the antidisestablishmentarianism movement");
+        assert_eq!(phrases(&b, 18)[0], "the antidisestablishmentarianism");
     }
 
     #[test]

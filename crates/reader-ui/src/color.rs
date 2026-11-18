@@ -4,8 +4,13 @@ pub type Rgb = u32;
 
 #[inline]
 pub fn mix(a: Rgb, b: Rgb, t: u8) -> Rgb {
+    // x/255 as (x·257 + 257) >> 16: exact for these ranges, no division
+    // (divisions are slow on the ESP32's Xtensa core).
     let t = t as u32;
-    let ch = |s: u32| (((a >> s) & 0xFF) * (255 - t) + ((b >> s) & 0xFF) * t + 127) / 255;
+    let ch = |s: u32| {
+        let v = ((a >> s) & 0xFF) * (255 - t) + ((b >> s) & 0xFF) * t + 128;
+        (v + (v >> 8)) >> 8
+    };
     ch(16) << 16 | ch(8) << 8 | ch(0)
 }
 
@@ -39,15 +44,35 @@ static TEXT_ALPHA: [u8; 256] = {
 const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
 /// RGB888 → RGB565 with a 4×4 ordered dither (hides 6/5-bit banding).
+/// Quantized on the panel's own scale (a 5-bit level means level×255/31),
+/// with a threshold in [0,1) so each 4×4 tile averages to the true value.
+/// Table-driven: two lookups per channel, no arithmetic per pixel.
 #[inline]
 pub fn to565_dithered(c: Rgb, x: i32, y: i32) -> u16 {
-    // Quantize on the panel's own scale (a 5-bit level means level×255/31),
-    // adding a threshold in [0,1) so the 4×4 tile averages to the true value.
-    let d = BAYER[(y & 3) as usize][(x & 3) as usize] as u32;
-    let q = |v: u32, max: u32| -> u32 { ((v * max * 16 + (2 * d + 1) * 255 / 2) / (255 * 16)).min(max) };
-    let (r, g, b) = (q((c >> 16) & 0xFF, 31), q((c >> 8) & 0xFF, 63), q(c & 0xFF, 31));
-    (r << 11 | g << 5 | b) as u16
+    let d = BAYER[(y & 3) as usize][(x & 3) as usize] as usize;
+    let r = Q5[d][((c >> 16) & 0xFF) as usize] as u16;
+    let g = Q6[d][((c >> 8) & 0xFF) as usize] as u16;
+    let b = Q5[d][(c & 0xFF) as usize] as u16;
+    r << 11 | g << 5 | b
 }
+
+const fn quant_table(max: u32) -> [[u8; 256]; 16] {
+    let mut t = [[0u8; 256]; 16];
+    let mut d = 0;
+    while d < 16 {
+        let mut v = 0;
+        while v < 256 {
+            let q = (v as u32 * max * 16 + (2 * d as u32 + 1) * 255 / 2) / (255 * 16);
+            t[d][v] = if q > max { max as u8 } else { q as u8 };
+            v += 1;
+        }
+        d += 1;
+    }
+    t
+}
+
+static Q5: [[u8; 256]; 16] = quant_table(31);
+static Q6: [[u8; 256]; 16] = quant_table(63);
 
 pub fn from565(p: u16) -> Rgb {
     let r = ((p >> 11) & 0x1F) as u32;
@@ -65,6 +90,19 @@ mod tests {
         for a in 0..=255u32 {
             let want = (libm::powf(a as f32 / 255.0, 0.8) * 255.0).round() as i32;
             assert!((text_alpha(a as u8) as i32 - want).abs() <= 3, "{a}: {} vs {want}", text_alpha(a as u8));
+        }
+    }
+
+    #[test]
+    fn mix_matches_exact_division() {
+        for a in [0u32, 1, 37, 128, 200, 255] {
+            for b in [0u32, 5, 99, 255] {
+                for t in [0u32, 1, 64, 127, 128, 200, 254, 255] {
+                    let want = (a * (255 - t) + b * t + 127) / 255;
+                    let got = mix(a, b, t as u8);
+                    assert!(got.abs_diff(want) <= 1, "{a} {b} {t}: {got} vs {want}");
+                }
+            }
         }
     }
 

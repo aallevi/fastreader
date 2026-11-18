@@ -17,14 +17,14 @@ use alloc::vec::Vec;
 
 use reader_core::app::{Battery, Feedback, Msg, Screen, Tone};
 use reader_core::book::Pause;
-use reader_core::settings::Skip;
+use reader_core::settings::{Mode, Skip};
 use reader_core::{App, Hit, Settings, Style};
 
 use crate::canvas::{Canvas, Paint};
 use crate::color::{mix, Rgb};
 use crate::geom::Rect;
 use crate::icons;
-use crate::layout::{self, hit_test, list_geom, menu_button, toolbar, Button, Icon, Layout, RowKind};
+use crate::layout::{self, highlight_button, hit_test, list_geom, menu_button, toolbar, Button, Icon, Layout, RowKind};
 use crate::text::{family, Face, Fonts};
 use crate::theme::{ButtonStyle, Chrome, Theme};
 use crate::themes::theme;
@@ -53,29 +53,35 @@ struct View {
     look: Settings,
     frame: Frame,
     header: (String, Option<Battery>, Option<u32>, bool),
-    word: (usize, u8, bool),
+    word: (usize, u8, bool, u16),
     context: Option<usize>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
 }
 
+/// Everything that changes where pages break.
+type PagesKey = (u8, u8, usize, i32, i32, u8, (u8, bool, bool, u8));
+
 pub struct Ui {
     pub layout: Layout,
     pub fonts: Fonts,
     last: Option<View>,
-    pages_key: Option<(u8, u8, usize, i32, i32, u8)>,
+    pages_key: Option<PagesKey>,
     /// Bounding box of the word on screen, so the next word only clears that.
     word_box: Rect,
+    /// The page on screen: first word, highlighted phrase, highlight shown.
+    page_drawn: Option<(usize, core::ops::Range<usize>, bool)>,
 }
 
 impl Ui {
     pub fn new(w: u32, h: u32) -> Self {
-        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default() }
+        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None }
     }
 
     /// Forces a full repaint next time (after wake-up, rotation...).
     pub fn invalidate(&mut self) {
         self.last = None;
+        self.page_drawn = None;
     }
 
     /// The touch target under a point, in screen coordinates.
@@ -85,8 +91,16 @@ impl Ui {
 
     /// Paints what changed and returns the rectangles to send to the panel.
     pub fn paint(&mut self, app: &mut App, now: u64, cv: &mut Canvas) -> Vec<Rect> {
-        if app.screen == Screen::Page || app.settings.pages {
+        if app.screen == Screen::Page || app.settings.mode() == Mode::Page {
             self.paginate(app);
+            // Past the measured pages: lay out the page on screen to know where it ends.
+            app.page_next = None;
+            if app.page_index().is_none() && app.screen == Screen::Page {
+                let th = theme(app.settings.theme);
+                let start = page_start(app);
+                let (_, next) = layout_page(&mut self.fonts, app, page_area(th, &self.layout), start, &self.layout);
+                app.page_next = Some(next as u32);
+            }
         }
         let th = theme(app.settings.theme);
         cv.linear_text = th.light_on_dark;
@@ -105,7 +119,13 @@ impl Ui {
             look,
             frame,
             header: (header_title(app), app.battery, app.toast().map(|t| t.serial), lit == Some(Hit::Key(reader_core::Key::Menu))),
-            word: (app.reader.pos(), app.reader.chunk(), matches!(app.screen, Screen::Line { .. })),
+            word: (
+                app.reader.pos(),
+                app.reader.chunk(),
+                matches!(app.screen, Screen::Line { .. }),
+                // While the ticker glides, every frame is a new picture.
+                if app.animating() { (app.reader.progress(now) * 256.0) as u16 } else { 0 },
+            ),
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some(app.reader.pos()),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
@@ -127,7 +147,8 @@ impl Ui {
             draw_header(f, cv, &ctx);
             clear(cv, th, &l, l.stage);
             if app.screen == Screen::Page {
-                draw_page(f, cv, &ctx);
+                draw_page(f, cv, &ctx, None);
+                self.page_drawn = Some((page_start(app), app.reader.shown(), page_highlight(app)));
             } else {
                 *word_box = draw_word(f, cv, &ctx);
                 draw_context(f, cv, &ctx);
@@ -141,10 +162,16 @@ impl Ui {
                 damage.push(l.header);
             }
             if app.screen == Screen::Page {
-                if o.word != view.word {
-                    draw_page(f, cv, &ctx);
+                let now_drawn = (page_start(app), app.reader.shown(), page_highlight(app));
+                if self.page_drawn.as_ref() != Some(&now_drawn) {
+                    // Same page, highlight moved: redraw only the lines it left and entered.
+                    let partial = self.page_drawn.as_ref().filter(|d| d.0 == now_drawn.0).map(|d| d.1.clone());
+                    damage.extend(draw_page(f, cv, &ctx, partial));
+                    self.page_drawn = Some(now_drawn);
+                }
+                if o.status != view.status {
                     draw_status(f, cv, &ctx);
-                    damage.push(l.stage);
+                    damage.push(l.status);
                 }
             } else {
                 if o.word != view.word {
@@ -172,29 +199,28 @@ impl Ui {
         damage
     }
 
-    /// Splits the book into pages for the current font, size and screen,
-    /// incrementally: the pages around the reader right away, the rest a
-    /// few dozen per frame, so even a 170k-word book opens instantly.
+    /// Splits the book into pages for the current font, size and screen, a
+    /// few dozen per frame in the background. Until the count reaches the
+    /// reader, the page on screen starts at its paragraph (see `page_start`).
     fn paginate(&mut self, app: &mut App) {
         const PAGES_PER_FRAME: usize = 24;
         let l = self.layout;
         let th = theme(app.settings.theme);
         let area = page_area(th, &l);
-        let key = (app.settings.font, app.settings.size, app.reader.book.len(), area.w, area.h, app.settings.theme);
+        let st = &app.settings;
+        let key = (st.font, st.size, app.reader.book.len(), area.w, area.h, st.theme, (st.spacing, st.indent, st.justify, st.phrase));
         if self.pages_key != Some(key) || app.pages.is_empty() {
             app.pages = alloc::vec![0];
             app.pages_done = app.reader.book.is_empty();
             self.pages_key = Some(key);
         }
         let n = app.reader.book.len();
-        let mut budget = PAGES_PER_FRAME;
-        while !app.pages_done {
-            // Always know the page after the one being read; beyond that, spend the budget.
-            let need = *app.pages.last().unwrap() as usize <= app.reader.pos() || app.pages.len() <= app.page_index().unwrap_or(0) + 1;
-            if !need && budget == 0 {
+        // A fixed amount of work per frame, however far into the book the
+        // reader is: the page on screen never waits for the count.
+        for _ in 0..PAGES_PER_FRAME {
+            if app.pages_done {
                 break;
             }
-            budget = budget.saturating_sub(1);
             let start = *app.pages.last().unwrap() as usize;
             let (_, next) = layout_page(&mut self.fonts, app, area, start, &l);
             if next >= n || next <= start {
@@ -450,6 +476,19 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         }
     }
     right -= l.px(8.0);
+    if app.screen == Screen::Page {
+        // The highlight dot: a ring when off, filled when on.
+        let hb = highlight_button(l);
+        let (cx, cy, rad) = (hb.rect.cx(), hb.rect.cy(), hb.rect.w as f32 / 2.0);
+        if app.lit(c.now) == Some(Hit::Highlight) {
+            cv.circle(cx, cy, rad + l.px(3.0), Paint::Solid(mix(th.bar[0].1, title_c, 60)));
+        }
+        cv.ring(cx, cy, rad - 1.0, l.px(1.6), title_c);
+        if app.settings.highlight {
+            cv.circle(cx, cy, rad - l.px(4.5), Paint::Solid(title_c));
+        }
+        right = right.min(hb.hit_rect.x as f32 - l.px(2.0));
+    }
     // Messages take the title's place for a moment, then the title returns.
     if app.toast().is_some() {
         draw_toast(f, cv, c, Rect::new(x as i32, r.y, (right - x) as i32, r.h));
@@ -488,6 +527,14 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         draw_line(f, cv, c);
         return l.word.intersect(&p);
     }
+    let mode = app.settings.mode();
+    if mode == Mode::Ticker {
+        // Only the strip the line of text occupies is redrawn each frame.
+        let band = ticker_band(f, c).intersect(&l.word.intersect(&p));
+        clear(cv, th, l, band);
+        draw_ticker(f, cv, c);
+        return band;
+    }
     let fam = family(app.settings.font);
     let words: Vec<(&str, Face, bool)> = app
         .reader
@@ -498,8 +545,11 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         })
         .collect();
     let heading = words.iter().any(|w| w.2);
-    let mut px = word_px(c);
-    let avail = (p.w as f32 - l.px(28.0)).max(10.0);
+    // Phrases are set a little smaller so a whole group fits on one line.
+    let phrase = mode == Mode::Phrase;
+    let mut px = word_px(c) * if phrase { PHRASE_SCALE } else { 1.0 };
+    let left = p.x as f32 + phrase_left(l, p);
+    let avail = if phrase { p.right() as f32 - l.px(14.0) - left } else { (p.w as f32 - l.px(28.0)).max(10.0) };
     let measure = |f: &mut Fonts, px: f32| -> f32 {
         let space = f.measure(words[0].1, px, " ");
         words.iter().map(|(s, face, _)| f.measure(*face, px, s)).sum::<f32>() + space * (words.len() - 1) as f32
@@ -513,18 +563,84 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     let base = word_baseline(f, c);
     let m = f.line(fam.face(Style::PLAIN), px);
     let colour = if heading { th.heading } else { th.text };
-    let mut x = p.cx() - total.min(avail) / 2.0;
+    // Word mode centres; Phrase mode starts every group at the same left
+    // point, so the eye returns to one spot and only the right edge moves
+    // (as on the original e-reader).
+    let x0 = if phrase { left } else { p.cx() - total.min(avail) / 2.0 };
+    let mut x = x0;
     cv.clip(l.word.intersect(&p));
     let space = f.measure(words[0].1, px, " ");
     for (s, face, _) in &words {
         x += f.draw(cv, *face, px, s, x, base, colour) + space;
     }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
-    let reach = total.min(avail) / 2.0 + l.px(3.0);
     cv.unclip();
     let top = base - m.ascent - l.px(3.0);
-    Rect::new((p.cx() - reach) as i32, top as i32, (2.0 * reach) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
+    let pad = l.px(3.0);
+    Rect::new((x0 - pad) as i32, top as i32, (total.min(avail) + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
         .intersect(&l.word.intersect(&p))
+}
+
+/// Phrase and ticker text size relative to the single-word size.
+const PHRASE_SCALE: f32 = 0.72;
+
+/// Where Phrase-mode groups start: a tenth of the way in, like the
+/// original's fixed left edge.
+fn phrase_left(l: &Layout, p: Rect) -> f32 {
+    (p.w as f32 * 0.10).max(l.px(18.0))
+}
+
+/// The horizontal strip the ticker's text covers.
+fn ticker_band(f: &mut Fonts, c: &Ctx) -> Rect {
+    let px = word_px(c) * PHRASE_SCALE;
+    let m = f.line(family(c.app.settings.font).face(Style::PLAIN), px);
+    let base = c.l.word.cy() + (m.ascent - m.descent) / 2.0;
+    let pad = c.l.px(3.0);
+    Rect::new(c.l.word.x, (base - m.ascent - pad) as i32, c.l.word.w, (m.ascent + m.descent + 2.0 * pad) as i32 + 1)
+}
+
+/// Ticker: the text glides right to left as one line at reading speed. The
+/// word being read sits a third of the way in; between words it slides
+/// smoothly (reader progress), so the eye can stay still.
+fn draw_ticker(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let book = &app.reader.book;
+    let fam = family(app.settings.font);
+    let px = word_px(c) * PHRASE_SCALE;
+    let p = paper(th, l);
+    let pos = app.reader.pos();
+    let base = l.word.cy() + {
+        let m = f.line(fam.face(Style::PLAIN), px);
+        (m.ascent - m.descent) / 2.0
+    };
+    let space = f.measure(fam.face(Style::PLAIN), px, " ");
+    let word = |i: usize| book.word(i).unwrap();
+    let cur = word(pos);
+    let cw = f.measure(fam.face(cur.style), px, book.text_of(cur));
+    let anchor = p.x as f32 + p.w as f32 * 0.32;
+    let x_cur = anchor - app.reader.progress(c.now) * (cw + space);
+    cv.clip(l.word.intersect(&p));
+    let colour = |w: reader_core::Word, past: bool| {
+        if past { th.dim } else if w.style.heading() { th.heading } else { th.text }
+    };
+    let mut x = x_cur;
+    let mut i = pos;
+    while x < p.right() as f32 && i < book.len() {
+        let w = word(i);
+        x += f.draw(cv, fam.face(w.style), px, book.text_of(w), x, base, colour(w, false)) + space;
+        i += 1;
+    }
+    let mut x = x_cur - space;
+    let mut i = pos;
+    while x > p.x as f32 && i > 0 {
+        i -= 1;
+        let w = word(i);
+        let s = book.text_of(w);
+        let ww = f.measure(fam.face(w.style), px, s);
+        f.draw(cv, fam.face(w.style), px, s, x - ww, base, colour(w, true));
+        x -= ww + space;
+    }
+    cv.unclip();
 }
 
 /// Hold-to-scroll: the text as one line, current word highlighted at the centre.
@@ -616,15 +732,25 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let top = r.y as f32 + (r.h as f32 - lh * lines.len() as f32) / 2.0 + lh * 0.78;
     for (n, line) in lines.iter().enumerate() {
         let width: f32 = line.iter().map(|w| w.1).sum::<f32>() + space * (line.len().saturating_sub(1)) as f32;
-        let mut x = r.cx() - width / 2.0;
+        let x0 = r.cx() - width / 2.0;
         let y = top + n as f32 * lh;
+        // One highlight shape around the whole group on this line.
+        let mut x = x0;
+        let mut span: Option<(f32, f32)> = None;
+        for &(idx, ww) in line {
+            if shown.contains(&idx) {
+                span = Some(span.map_or((x, x + ww), |(a, _)| (a, x + ww)));
+            }
+            x += ww + space;
+        }
+        if let Some((a, z)) = span {
+            let hr = Rect::new((a - 2.0) as i32, (y - lh * 0.78) as i32, (z - a + 4.0) as i32, (lh * 0.98) as i32);
+            cv.rrect(hr, th.radius.min(3.0), Paint::Solid(th.mark));
+        }
+        let mut x = x0;
         for &(idx, ww) in line {
             let w = book.word(idx).unwrap();
             let here = shown.contains(&idx);
-            if here {
-                let hr = Rect::new((x - 2.0) as i32, (y - lh * 0.78) as i32, (ww + 4.0) as i32, (lh * 0.98) as i32);
-                cv.rrect(hr, th.radius.min(3.0), Paint::Solid(th.mark));
-            }
             f.draw(cv, fam.face(w.style), px, book.text_of(w), x, y, if here { th.mark_text } else { th.dim });
             x += ww + space;
         }
@@ -655,6 +781,7 @@ fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let left = match (app.screen, app.page_index()) {
         (Screen::Page, Some(i)) if app.pages_done => format!("Page {} of {}  ·  {}%", i + 1, app.pages.len(), app.reader.permille() / 10),
         (Screen::Page, Some(i)) => format!("Page {}  ·  {}%", i + 1, app.reader.permille() / 10),
+        (Screen::Page, None) => format!("Page …  ·  {}%  ·  counting pages", app.reader.permille() / 10),
         _ => {
             let mins = app.reader.ms_left() / 60_000;
             let left = if mins == 0 { String::from("< 1 min left") } else { format!("{mins} min left") };
@@ -739,6 +866,8 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::SpeedView => "Speed view".into(),
         Msg::Rotated => "Screen rotated".into(),
         Msg::NoChapters => "This book has no chapters".into(),
+        Msg::Highlight(true) => "Highlight on".into(),
+        Msg::Highlight(false) => "Highlight off".into(),
         Msg::Shown => String::new(),
     }
 }
@@ -791,10 +920,18 @@ struct Placed {
 
 /// Lays out one page starting at word `start`; returns the words and where
 /// the next page starts. Pagination and drawing share this, so they agree.
+///
+/// Typography follows the reader's settings: line spacing (tight / normal /
+/// airy), paragraphs spaced apart or indented like a printed book (no indent
+/// after a heading, as in print), and ragged or justified lines (a line is
+/// never stretched by more than a sixth, and paragraph ends stay ragged).
 fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -> (Vec<Placed>, usize) {
     let book = &app.reader.book;
-    let fam = family(app.settings.font);
-    let base_px = l.px(PAGE_PX[app.settings.size.min(2) as usize]);
+    let st = &app.settings;
+    let fam = family(st.font);
+    let base_px = l.px(PAGE_PX[st.size.min(2) as usize]);
+    let leading = [1.18, 1.36, 1.6][st.spacing.min(2) as usize];
+    let indent = base_px * 1.6;
     let mut out: Vec<Placed> = Vec::new();
     let mut y = area.y as f32;
     let mut line: Vec<Placed> = Vec::new();
@@ -804,19 +941,25 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
     let mut gap_before = 0.0;
 
     // Finishes a line; returns false if it doesn't fit on the page.
-    let flush = |line: &mut Vec<Placed>, out: &mut Vec<Placed>, y: &mut f32, heading: bool, gap: f32, f: &mut Fonts| -> bool {
+    let flush = |line: &mut Vec<Placed>, out: &mut Vec<Placed>, y: &mut f32, heading: bool, gap: f32, last: bool, f: &mut Fonts| -> bool {
         if line.is_empty() {
             return true;
         }
         let m = f.line(line[0].face, line[0].px);
-        let lh = m.height * if heading { 1.15 } else { 1.25 };
+        let lh = m.height * if heading { 1.15 } else { leading };
         if *y + gap + lh > area.bottom() as f32 && !out.is_empty() {
             return false;
         }
         *y += gap;
         let base = *y + m.ascent;
-        for mut p in line.drain(..) {
+        // Justify: share the leftover width between the gaps.
+        let n = line.len();
+        let right = line[n - 1].x + line[n - 1].w;
+        let spare = area.right() as f32 - right;
+        let stretch = if st.justify && !last && !heading && n > 1 && spare < area.w as f32 / 6.0 { spare / (n - 1) as f32 } else { 0.0 };
+        for (k, mut p) in line.drain(..).enumerate() {
             p.base = base;
+            p.x += stretch * k as f32;
             out.push(p);
         }
         *y += lh;
@@ -832,7 +975,7 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
         let ww = f.measure(face, px, book.text_of(w));
         let space = f.measure(face, px, " ");
         if !line.is_empty() && (heading != line_heading || x + ww > area.w as f32) {
-            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, f) {
+            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, false, f) {
                 let next = next_of(&out);
                 return (out, next);
             }
@@ -841,43 +984,117 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
         }
         if line.is_empty() {
             line_heading = heading;
+            // First line of a paragraph, book style: indent (not after a heading).
+            let para_start = i == 0 || book.word(i - 1).is_some_and(|p| p.pause == Pause::Paragraph);
+            let after_heading = i > 0 && book.word(i - 1).is_some_and(|p| p.style.heading());
+            if st.indent && para_start && !heading && !after_heading && i > 0 {
+                x = indent;
+            }
         }
         line.push(Placed { idx: i, x: area.x as f32 + x, base: 0.0, w: ww, face, px });
         x += ww + space;
         i += 1;
         if w.pause == Pause::Paragraph {
-            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, f) {
+            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, true, f) {
                 let next = next_of(&out);
                 return (out, next);
             }
-            gap_before = base_px * 0.55;
+            gap_before = if st.indent && !heading { 0.0 } else { base_px * 0.6 };
             x = 0.0;
         }
     }
-    if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, f) {
+    if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, true, f) {
         let next = next_of(&out);
         return (out, next);
     }
     (out, book.len())
 }
 
-fn draw_page(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+/// First word of the page on screen.
+fn page_start(app: &App) -> usize {
+    match app.page_index() {
+        Some(i) => app.pages[i] as usize,
+        None => app.reader.book.paragraph_start(app.reader.pos()),
+    }
+}
+
+/// Whether the current phrase is highlighted on the page.
+fn page_highlight(app: &App) -> bool {
+    app.reader.is_playing() || app.settings.highlight
+}
+
+/// Draws the page. With `moved_from` (the previously highlighted phrase),
+/// only the lines that phrase or the current one touch are redrawn.
+/// Returns the damaged rectangles.
+fn draw_page(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, moved_from: Option<core::ops::Range<usize>>) -> Vec<Rect> {
     let (th, l, app) = (c.th, c.l, c.app);
-    clear(cv, th, l, Rect::new(l.stage.x, l.stage.y, l.stage.w, l.status.y - l.stage.y));
     let area = page_area(th, l);
-    let start = app.page_index().map_or(app.reader.pos(), |i| app.pages[i] as usize);
+    let text_area = Rect::new(l.stage.x, l.stage.y, l.stage.w, l.status.y - l.stage.y);
+    let start = page_start(app);
     let (placed, _) = layout_page(f, app, area, start, l);
     let book = &app.reader.book;
     let pos = app.reader.pos();
-    for p in &placed {
-        let w = book.word(p.idx).unwrap();
-        let colour = if w.style.heading() { th.heading } else { th.text };
-        if p.idx == pos && pos != start {
-            // Where speed reading left off.
-            cv.fill(Rect::new(p.x as i32, (p.base + l.px(3.0)) as i32, p.w as i32, l.i(2.0).max(1)), th.fill);
+    let phrase = app.reader.shown();
+    let show = page_highlight(app);
+
+    // Group the placed words into lines (same baseline).
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    for (k, p) in placed.iter().enumerate() {
+        match lines.last_mut() {
+            Some(line) if placed[line.0].base == p.base => line.1 = k,
+            _ => lines.push((k, k)),
         }
-        f.draw(cv, p.face, p.px, book.text_of(w), p.x, p.base, colour);
     }
+    let line_rect = |f: &mut Fonts, a: usize| {
+        let p = &placed[a];
+        let m = f.line(p.face, p.px);
+        Rect::new(text_area.x, (p.base - m.ascent - l.px(2.0)) as i32, text_area.w, (m.ascent + m.descent + l.px(4.0)) as i32)
+    };
+    let mut damage = Vec::new();
+    match &moved_from {
+        None => {
+            clear(cv, th, l, text_area);
+            damage.push(text_area);
+        }
+        Some(old) => {
+            for &(a, z) in &lines {
+                let touches = (a..=z).any(|k| phrase.contains(&placed[k].idx) || old.contains(&placed[k].idx));
+                if touches {
+                    let r = line_rect(f, a).intersect(&text_area);
+                    clear(cv, th, l, r);
+                    damage.push(r);
+                }
+            }
+        }
+    }
+    for &(a, z) in &lines {
+        let r = line_rect(f, a);
+        if moved_from.is_some() && !damage.iter().any(|d| *d == r.intersect(&text_area)) {
+            continue;
+        }
+        // The phrase being read: one highlight shape per line.
+        if show {
+            let lit: Vec<usize> = (a..=z).filter(|&k| phrase.contains(&placed[k].idx)).collect();
+            if let (Some(&first), Some(&last)) = (lit.first(), lit.last()) {
+                let (p0, p1) = (&placed[first], &placed[last]);
+                let m = f.line(p0.face, p0.px);
+                let pad = l.px(2.5);
+                let hr = Rect::new((p0.x - pad) as i32, (p0.base - m.ascent - pad * 0.4) as i32, (p1.x + p1.w - p0.x + 2.0 * pad) as i32, (m.ascent + m.descent + pad) as i32);
+                cv.rrect(hr, th.radius.clamp(1.0, 4.0), Paint::Solid(th.mark));
+            }
+        }
+        for p in &placed[a..=z] {
+            let w = book.word(p.idx).unwrap();
+            let lit = show && phrase.contains(&p.idx);
+            let colour = if lit { th.mark_text } else if w.style.heading() { th.heading } else { th.text };
+            if !show && p.idx == pos && pos != start {
+                // Where speed reading left off.
+                cv.fill(Rect::new(p.x as i32, (p.base + l.px(3.0)) as i32, p.w as i32, l.i(2.0).max(1)), th.fill);
+            }
+            f.draw(cv, p.face, p.px, book.text_of(w), p.x, p.base, colour);
+        }
+    }
+    damage
 }
 
 // ------------------------------------------------------------------ lists
