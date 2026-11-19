@@ -145,7 +145,7 @@ const X = v => (v / 10).toFixed(1) + '×';
 const GROUPS = [
   ['Reading', [
     ['book', 'Book', 'books'], ['mode', 'Reading mode', 'modes'], ['wpm', 'Speed', 'step', 25, v => v + ' wpm'],
-    ['chunk', 'Words per flash (word mode)', 'step', 1, v => v], ['phrase', 'Longest phrase (phrase & page modes)', 'step', 1, v => v + ' letters'],
+    ['chunk', 'Words per flash (word mode)', 'step', 1, v => v], ['phrase', 'Words per group (phrase & page modes)', 'step', 1, v => v],
     ['skip', 'Skip buttons jump', 'skips'], ['context', 'Sentence under the word when paused', 'toggle', ['Off', 'On']]]],
   ['Pauses', [
     ['comma', 'After , ; :', 'step', 1, X], ['sentence', 'After . ! ?', 'step', 1, X],

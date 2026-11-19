@@ -6,7 +6,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 - Hold ⏮/⏭ while reading to scroll the text as a line.
 - Library of several books, each remembering where you stopped.
 - Six themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night), six reading fonts, anti-aliased.
-- Four reading modes: word by word, phrases (grouped by meaning), ticker (text glides), page (normal text with a moving phrase highlight).
+- Four reading modes: word by word, phrases (fixed groups of 1–3 words that end at sentences, starting at the same left point, as on the original e-reader), ticker (text glides), page (normal text with a moving phrase highlight).
 - A browser view of the book plus every setting: on the device, Menu → Web view, join Wi-Fi "FastReader", open http://192.168.4.1.
 
 ## Controls: one meaning per key, on every screen

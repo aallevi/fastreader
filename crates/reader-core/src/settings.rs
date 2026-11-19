@@ -71,7 +71,7 @@ pub struct Settings {
     pub flipped: bool,
     /// Index into [`MODES`].
     pub mode: u8,
-    /// Longest phrase in letters (Phrase and Page modes).
+    /// Words per group in Phrase and Page modes (1–3), as on the original e-reader.
     pub phrase: u8,
     /// Page view: 0 tight, 1 normal, 2 airy line spacing.
     pub spacing: u8,
@@ -105,7 +105,7 @@ impl Default for Settings {
             brightness: 4,
             flipped: false,
             mode: 0,
-            phrase: 18,
+            phrase: 3,
             spacing: 1,
             indent: false,
             justify: false,
@@ -121,7 +121,7 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 7;
+const VERSION: u8 = 8;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
@@ -144,7 +144,7 @@ pub const FIELDS: [(&str, u16, u16); 23] = [
     ("long_words", 0, 1),
     ("ramp", 0, 1),
     ("book", 0, 255),
-    ("phrase", 10, 30),
+    ("phrase", 1, 3),
     ("spacing", 0, 2),
     ("indent", 0, 1),
     ("justify", 0, 1),

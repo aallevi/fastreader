@@ -22,7 +22,7 @@ pub struct Reader {
     ramp: usize,
     /// Words per flash (1–3) in Word mode.
     chunk: u8,
-    /// Phrase grouping (Phrase/Page modes): longest group in letters, or 0 for off.
+    /// Phrase grouping (Phrase/Page modes): words per group, or 0 for off.
     phrase: u8,
     /// Reached the end by playing; the next play starts over.
     finished: bool,
@@ -71,9 +71,10 @@ impl Reader {
         self.chunk = n.clamp(1, 3);
     }
 
-    /// Group by meaning (`Some(max letters)`) or by a fixed word count (`None`).
-    pub fn set_phrase(&mut self, max_letters: Option<u8>) {
-        self.phrase = max_letters.map_or(0, |m| m.clamp(10, 30));
+    /// Phrase grouping with `Some(words)` (ends early at sentences), or
+    /// Word-mode grouping with `None` (ends early at any punctuation).
+    pub fn set_phrase(&mut self, words: Option<u8>) {
+        self.phrase = words.map_or(0, |n| n.clamp(1, 3));
     }
 
     pub fn phrase_mode(&self) -> bool {
@@ -377,7 +378,7 @@ mod tests {
     #[test]
     fn phrase_grouping_advances_by_whole_phrases() {
         let mut r = Reader::new(Book::new("t", "She walked into the old house of the family, and waited."), 300);
-        r.set_phrase(Some(18));
+        r.set_phrase(Some(2));
         assert_eq!(r.shown(), 0..2);
         r.play(0);
         let mut now = 0;

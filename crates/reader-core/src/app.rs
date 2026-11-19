@@ -619,6 +619,11 @@ impl App {
         self.effect(Effect::SaveSettings);
     }
 
+    /// Phrase and Page modes group words the original e-reader's way.
+    pub fn groups_by_phrase(&self) -> bool {
+        matches!(self.settings.mode(), Mode::Phrase | Mode::Page)
+    }
+
     /// Groups words the way the current mode reads them.
     pub fn apply_mode(&mut self) {
         match self.settings.mode() {
@@ -888,7 +893,12 @@ impl App {
                 self.settings.wpm = self.reader.wpm();
             }
             PickKind::Words => {
-                self.settings.chunk = sel + 1;
+                // One "Words per flash" item: it sets the active mode's group size.
+                if self.groups_by_phrase() {
+                    self.settings.phrase = sel + 1;
+                } else {
+                    self.settings.chunk = sel + 1;
+                }
                 self.apply_mode();
             }
             PickKind::Skip => self.settings.skip = sel,
@@ -962,7 +972,7 @@ impl App {
     pub fn menu_value(&self, item: MenuItem) -> Option<String> {
         Some(match item {
             MenuItem::Speed => format!("{} wpm", self.reader.wpm()),
-            MenuItem::Words => format!("{}", self.reader.chunk()),
+            MenuItem::Words => format!("{}", if self.groups_by_phrase() { self.settings.phrase } else { self.settings.chunk }),
             MenuItem::Chapters => format!("{}", self.reader.book.chapters().len()),
             MenuItem::GoTo => format!("{}%", self.reader.permille() / 10),
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
@@ -987,7 +997,7 @@ impl App {
                 let w = self.reader.wpm();
                 SPEED_PRESETS.iter().enumerate().min_by_key(|(_, p)| p.abs_diff(w)).map_or(0, |(i, _)| i as u8)
             }
-            PickKind::Words => self.reader.chunk() - 1,
+            PickKind::Words => (if self.groups_by_phrase() { self.settings.phrase } else { self.settings.chunk }).clamp(1, 3) - 1,
             PickKind::Skip => self.settings.skip,
             PickKind::Chapter => self.reader.book.chapter_index(self.reader.pos()).unwrap_or(0) as u8,
             PickKind::GoTo => (self.reader.permille() / 100).min(9) as u8,
@@ -1241,6 +1251,20 @@ mod tests {
     }
 
     #[test]
+    fn words_per_flash_sets_the_active_modes_group_size() {
+        let mut a = app();
+        choose_mode(&mut a, Mode::Phrase);
+        assert_eq!(a.menu_value(MenuItem::Words).unwrap(), "3", "phrases default to 3, as on the original");
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Words) };
+        a.handle(Select, 0);
+        a.handle(Up, 0);
+        a.handle(Select, 0);
+        assert_eq!((a.settings.phrase, a.settings.chunk), (2, 1), "word mode keeps its own value");
+        choose_mode(&mut a, Mode::Word);
+        assert_eq!(a.menu_value(MenuItem::Words).unwrap(), "1");
+    }
+
+    #[test]
     fn wifi_toggle_asks_the_platform() {
         let mut a = app();
         a.screen = Screen::Menu { sel: menu_index(MenuItem::Wifi) };
@@ -1267,7 +1291,7 @@ mod tests {
         choose_mode(&mut a, Mode::Phrase);
         assert_eq!(a.screen, Screen::Reading);
         a.reader.seek(2, 0);
-        assert_eq!(a.reader.shown(), 2..6, "phrase: 'into the old house'");
+        assert_eq!(a.reader.shown(), 2..5, "phrases: 3 words, 'into the old'");
         choose_mode(&mut a, Mode::Ticker);
         assert_eq!(a.reader.shown(), 2..3, "ticker: one word at a time");
         a.handle(Select, 0);
