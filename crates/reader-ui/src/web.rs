@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use reader_core::app::{PickKind, BRIGHTNESS_NAMES, SIZE_NAMES};
-use reader_core::settings::{ALIGN_NAMES, FIELDS, MODE_NAMES, PARAGRAPH_NAMES, SKIP_NAMES, SPACING_NAMES};
+use reader_core::settings::{ALIGN_NAMES, FIELDS, MODE_NAMES, PAREN_NAMES, PARAGRAPH_NAMES, SKIP_NAMES, SPACING_NAMES};
 use reader_core::{App, Key, Screen};
 
 use crate::themes::theme;
@@ -60,6 +60,19 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
     let num = |name: &str| param(name).and_then(|v| v.parse::<usize>().ok());
     match (method, path) {
         ("GET", "/") | ("GET", "/index.html") => Response::ok("text/html; charset=utf-8", Body::Static(PAGE)),
+        // RFC 8908 captive-portal API (advertised through DHCP option 114).
+        ("GET", "/captive-portal-api") => Response::ok(
+            "application/captive+json",
+            Body::Static("{\"captive\":true,\"user-portal-url\":\"http://192.168.4.1/\"}"),
+        ),
+        // Phones and laptops probe these on a new Wi-Fi; answering with a
+        // redirect makes them pop the reader page up by themselves.
+        ("GET", p) if CAPTIVE_PROBES.contains(&p) => Response {
+            status: "302 Found",
+            ctype: "text/html; charset=utf-8",
+            extra_header: Some("Location: http://192.168.4.1/".into()),
+            body: Body::Static("<a href=\"http://192.168.4.1/\">Fast Reader</a>"),
+        },
         ("GET", "/book") => {
             let n = app.reader.book.len();
             let from = num("from").unwrap_or(0).min(n);
@@ -117,6 +130,81 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
     }
 }
 
+/// Most an uploaded book may weigh (it is held in RAM before being saved).
+pub const MAX_UPLOAD: usize = 3 * 1024 * 1024;
+
+/// Decodes a query parameter (`%XX` and `+`).
+pub fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                let hex = |c: u8| (c as char).to_digit(16);
+                match (hex(b[i + 1]), hex(b[i + 2])) {
+                    (Some(h), Some(l)) => {
+                        out.push((h * 16 + l) as u8);
+                        i += 2;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Connectivity-check URLs of Android, Apple, Windows, Firefox and others.
+const CAPTIVE_PROBES: [&str; 9] = [
+    "/generate_204",
+    "/gen_204",
+    "/hotspot-detect.html",
+    "/library/test/success.html",
+    "/connecttest.txt",
+    "/ncsi.txt",
+    "/redirect",
+    "/canonical.html",
+    "/success.txt",
+];
+
+/// Answers a DNS query with `ip` for every name (A records), so any address
+/// typed on the reader's Wi-Fi leads to the reader. Returns the reply length.
+pub fn captive_dns_reply(query: &[u8], ip: [u8; 4], out: &mut [u8]) -> Option<usize> {
+    if query.len() < 12 || query[2] & 0x80 != 0 || u16::from_be_bytes([query[4], query[5]]) == 0 {
+        return None; // not a query, or no question
+    }
+    // Walk the first question's name to find its type.
+    let mut i = 12;
+    while i < query.len() && query[i] != 0 {
+        if query[i] & 0xC0 != 0 {
+            return None; // compression in a question: not worth supporting
+        }
+        i += query[i] as usize + 1;
+    }
+    let end = i + 5; // zero byte + type + class
+    if end > query.len() || end + 16 > out.len() {
+        return None;
+    }
+    let qtype = u16::from_be_bytes([query[i + 1], query[i + 2]]);
+    let answer = qtype == 1 || qtype == 255;
+    out[..end].copy_from_slice(&query[..end]);
+    out[2] = 0x81 | (query[2] & 0x01); // response, keep "recursion desired"
+    out[3] = 0x80; // recursion available, no error
+    out[4..6].copy_from_slice(&1u16.to_be_bytes());
+    out[6..8].copy_from_slice(&(answer as u16).to_be_bytes());
+    out[8..12].fill(0);
+    if !answer {
+        return Some(end);
+    }
+    let rr = [0xC0, 0x0C, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, ip[0], ip[1], ip[2], ip[3]];
+    out[end..end + 16].copy_from_slice(&rr);
+    Some(end + 16)
+}
+
 /// Appends book HTML for words `from..min(from + BOOK_PIECE, to)`; returns
 /// where the next piece starts (== `to` when finished). Pieces end on
 /// paragraph boundaries so the HTML stays well formed.
@@ -153,7 +241,7 @@ fn json_list<'a>(items: impl Iterator<Item = &'a str>) -> String {
 
 pub fn state_json(a: &App) -> String {
     format!(
-        "{{\"pos\":{},\"len\":{},\"wpm\":{},\"playing\":{},\"permille\":{},\"theme\":{},\"book\":{},\"mode\":{},\"title\":{}}}",
+        "{{\"pos\":{},\"len\":{},\"wpm\":{},\"playing\":{},\"permille\":{},\"theme\":{},\"book\":{},\"mode\":{},\"library\":{},\"bookmarks\":{:?},\"title\":{}}}",
         a.reader.pos(),
         a.reader.book.len(),
         a.reader.wpm(),
@@ -162,6 +250,8 @@ pub fn state_json(a: &App) -> String {
         a.settings.theme,
         a.settings.book,
         a.settings.mode,
+        a.library.len(),
+        a.book_marks(),
         json_str(&a.reader.book.title)
     )
 }
@@ -173,7 +263,7 @@ pub fn settings_json(a: &App) -> String {
         .map(|(n, lo, hi)| format!("{}:{{\"value\":{},\"min\":{lo},\"max\":{hi}}}", json_str(n), a.settings.get(n).unwrap_or(0)))
         .collect();
     format!(
-        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{}}}",
+        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{},\"parens\":{}}}",
         fields.join(","),
         json_list(a.catalog.themes.iter().copied()),
         json_list(a.catalog.fonts.iter().copied()),
@@ -185,6 +275,7 @@ pub fn settings_json(a: &App) -> String {
         json_list(SPACING_NAMES.iter().copied()),
         json_list(PARAGRAPH_NAMES.iter().copied()),
         json_list(ALIGN_NAMES.iter().copied()),
+        json_list(PAREN_NAMES.iter().copied()),
     )
 }
 
@@ -215,6 +306,49 @@ mod tests {
             at = book_piece(&a, at, a.reader.book.len(), &mut pieces);
         }
         assert_eq!(pieces, whole);
+    }
+
+    #[test]
+    fn url_decoding() {
+        assert_eq!(url_decode("Differenza+e%20ripetizione"), "Differenza e ripetizione");
+        assert_eq!(url_decode("caf%C3%A9"), "café");
+        assert_eq!(url_decode("100%"), "100%");
+        assert_eq!(url_decode("%zz"), "%zz");
+    }
+
+    #[test]
+    fn dns_answers_every_name_with_the_reader() {
+        // Query for example.com, type A, id 0x1234, recursion desired.
+        let mut q = alloc::vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+        for label in ["example", "com"] {
+            q.push(label.len() as u8);
+            q.extend_from_slice(label.as_bytes());
+        }
+        q.extend_from_slice(&[0, 0, 1, 0, 1]);
+        let mut out = [0u8; 512];
+        let n = captive_dns_reply(&q, [192, 168, 4, 1], &mut out).unwrap();
+        assert_eq!(&out[..2], &[0x12, 0x34], "same id");
+        assert_eq!(out[2] & 0x80, 0x80, "is a response");
+        assert_eq!(u16::from_be_bytes([out[6], out[7]]), 1, "one answer");
+        assert_eq!(&out[n - 4..n], &[192, 168, 4, 1]);
+        // AAAA: answered with no records, so phones fall back to IPv4.
+        let len = q.len();
+        q[len - 3] = 28;
+        let n = captive_dns_reply(&q, [192, 168, 4, 1], &mut out).unwrap();
+        assert_eq!(u16::from_be_bytes([out[6], out[7]]), 0);
+        assert_eq!(n, q.len());
+        assert!(captive_dns_reply(&[0u8; 5], [0; 4], &mut out).is_none(), "garbage is ignored");
+    }
+
+    #[test]
+    fn connectivity_checks_redirect_to_the_reader() {
+        let mut a = app();
+        assert!(matches!(respond(&mut a, "GET", "/captive-portal-api", 0).body, Body::Static(s) if s.contains("\"captive\":true")));
+        for probe in ["/generate_204", "/hotspot-detect.html", "/connecttest.txt"] {
+            let r = respond(&mut a, "GET", probe, 0);
+            assert_eq!(r.status, "302 Found", "{probe}");
+            assert_eq!(r.extra_header.as_deref(), Some("Location: http://192.168.4.1/"));
+        }
     }
 
     #[test]

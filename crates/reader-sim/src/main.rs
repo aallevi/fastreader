@@ -62,7 +62,7 @@ pub fn load_book(path: &Path) -> Book {
 /// Every book in `books/` and `books/private/` (converted with tools/convert.py).
 fn library(first: Option<PathBuf>) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = first.into_iter().collect();
-    for dir in ["books", "books/private"] {
+    for dir in ["books", "books/private", UPLOADS] {
         let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
@@ -87,6 +87,13 @@ fn title_of(path: &Path) -> String {
         .and_then(|r| r.split_once("-->"))
         .map(|(t, _)| t.trim().to_string())
         .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or("Book").replace(['_', '-'], " "))
+}
+
+/// Where books sent from the browser land (like the device's flash area).
+pub const UPLOADS: &str = "books/uploaded";
+
+fn bookmarks_path() -> PathBuf {
+    PathBuf::from("target/sim-bookmarks.txt")
 }
 
 fn positions_path() -> PathBuf {
@@ -123,22 +130,30 @@ fn present(cv: &Canvas, out: &mut [u32], s: &Settings) {
 }
 
 fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
-    let books = library(first);
+    let books = Arc::new(Mutex::new(library(first)));
+    let first_count = books.lock().unwrap().len();
     let mut settings = std::fs::read(settings_path()).ok().and_then(|b| Settings::from_bytes(&b)).unwrap_or_default();
-    settings.book = settings.book.min(books.len().saturating_sub(1) as u8);
-    let mut app = App::new(load_book(&books[settings.book as usize]), CATALOG, settings);
-    app.library = books.iter().map(|p| title_of(p)).collect();
+    let list = books.lock().unwrap().clone();
+    settings.book = settings.book.min(list.len().saturating_sub(1) as u8);
+    let mut app = App::new(load_book(&list[settings.book as usize]), CATALOG, settings);
+    app.library = list.iter().map(|p| title_of(p)).collect();
     app.positions = std::fs::read_to_string(positions_path())
         .unwrap_or_default()
         .split_whitespace()
         .filter_map(|n| n.parse().ok())
         .collect();
-    app.positions.resize(books.len(), 0);
+    app.positions.resize(list.len(), 0);
+    app.bookmarks = std::fs::read_to_string(bookmarks_path())
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|e| e.split_once(':').and_then(|(b, w)| Some((b.parse().ok()?, w.parse().ok()?))))
+        .collect();
+    let _ = first_count;
     app.battery = Some(Battery { percent: 82, charging: false, millivolts: 4010 });
     app.device = sim_device();
     let app = Arc::new(Mutex::new(app));
     let start = Instant::now();
-    web::serve(app.clone(), "127.0.0.1:8080", start);
+    web::serve(app.clone(), books.clone(), "127.0.0.1:8080", start);
     println!("Web view: http://localhost:8080");
 
     let mut cv = Canvas::new(w, h);
@@ -204,9 +219,14 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
                         let _ = std::fs::write(settings_path(), a.settings.to_bytes());
                     }
                     Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+                    Effect::SaveBookmarks => {
+                        let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
+                        let _ = std::fs::write(bookmarks_path(), list.join(" "));
+                    }
                     Effect::Wifi(on) => println!("(web view {}: the simulator always serves http://localhost:8080)", if on { "on" } else { "off" }),
                     Effect::OpenBook(i) => {
-                        let book = load_book(&books[i as usize]);
+                        let path = books.lock().unwrap().get(i as usize).cloned().unwrap_or_default();
+                        let book = load_book(&path);
                         a.open_book(book, i);
                         let list: Vec<String> = a.positions.iter().map(|p| p.to_string()).collect();
                         let _ = std::fs::write(positions_path(), list.join(" "));

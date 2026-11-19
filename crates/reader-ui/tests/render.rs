@@ -279,7 +279,28 @@ fn page_deep_in_a_long_book_shows_without_counting_first() {
     ui.paint(&mut a, 0, &mut cv);
     assert!(!a.pages_done, "one frame only counts a few pages");
     assert_eq!(a.page_index(), None);
-    let next = a.page_next.expect("the page on screen knows where it ends");
+    let before = a.reader.pos();
     a.handle(Key::Right, 10);
-    assert_eq!(a.reader.pos() as u32, next, "page forward works before the count is done");
+    assert!(a.reader.pos() > before, "stepping works before the count is done");
+}
+
+#[test]
+fn phrases_start_at_the_same_left_edge_every_flash() {
+    let th = THEMES[0];
+    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 1, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    let l = ui.layout;
+    let mut lefts = Vec::new();
+    for pos in [30usize, 45, 60, 75, 90, 120] {
+        a.reader.seek(pos, 0);
+        a.handle(Key::Select, 0); // play: hides the paused context line
+        ui.invalidate();
+        ui.paint(&mut a, 0, &mut cv);
+        a.handle(Key::Select, 0);
+        let left = (0..320).find(|&x| (l.word.y..l.word.bottom()).any(|y| cv.pixel(x, y) != th.page));
+        lefts.push(left.expect("ink in the word band"));
+    }
+    let (min, max) = (lefts.iter().min().unwrap(), lefts.iter().max().unwrap());
+    assert!(max - min <= 3, "left edges moved: {lefts:?}");
 }

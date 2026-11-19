@@ -26,6 +26,9 @@
   span:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
   span.now { background: var(--accent); color: var(--accenttext); }
   span.read { color: var(--dim); }
+  /* Bookmarked words: a small dog-ear before the word. */
+  span.bm::before { content: ''; display: inline-block; width: .55em; height: .55em; margin-right: .15em;
+                    background: linear-gradient(225deg, transparent 50%, var(--accent) 50%); vertical-align: .35em; }
   nav { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px;
         padding: 6px; border-radius: 999px; background: linear-gradient(var(--bar), var(--bar2));
         box-shadow: 0 4px 16px rgba(0,0,0,.3); }
@@ -58,7 +61,13 @@
 </head>
 <body>
 <header><h1 id="title">Fast Reader</h1><span class="stat" id="wpm"></span><span class="stat" id="pct"></span><button id="gear" aria-controls="settings">Settings</button></header>
-<aside id="settings" aria-label="Reader settings"><button class="toggle close" id="closeSet">Close</button><div id="setBody">Loading…</div></aside>
+<aside id="settings" aria-label="Reader settings"><button class="toggle close" id="closeSet">Close</button>
+  <h3>Add a book</h3>
+  <div class="row"><label for="file">EPUB, Markdown or text<small>PDFs: convert on the computer first (tools/convert.py)</small></label></div>
+  <div class="row"><input type="file" id="file" accept=".epub,.md,.txt,text/plain"></div>
+  <div class="row"><button class="toggle" id="send" disabled>Send to the reader</button><small id="upmsg" role="status"></small></div>
+  <div class="row"><button class="toggle" id="clearBooks">Remove uploaded books</button></div>
+  <div id="setBody">Loading…</div></aside>
 <div class="bar"><div id="prog"></div></div>
 <div id="less" aria-hidden="true"></div>
 <main id="book">Loading…</main>
@@ -129,6 +138,8 @@ async function poll() {
     if (s.theme !== theme) { theme = s.theme; $('theme').href = '/theme.css?' + theme; }
     if (s.book !== book) { book = s.book; await loadAround(s.pos); }
     await mark(s.pos);
+    document.querySelectorAll('span.bm').forEach(e => e.classList.remove('bm'));
+    (s.bookmarks || []).forEach(i => { const w = word(i); if (w) w.classList.add('bm'); });
   } catch (e) {}
   setTimeout(poll, 300);
 }
@@ -144,7 +155,7 @@ document.querySelectorAll('nav button').forEach(b =>
 const X = v => (v / 10).toFixed(1) + '×';
 const GROUPS = [
   ['Reading', [
-    ['book', 'Book', 'books'], ['mode', 'Reading mode', 'modes'], ['wpm', 'Speed', 'step', 25, v => v + ' wpm'],
+    ['book', 'Book', 'books'], ['mode', 'Reading mode', 'modes'], ['wpm', 'Speed', 'step', 25, v => v + ' wpm'], ['true_pace', 'Speed means', 'toggle', ['Base rate', 'Real pace']],
     ['chunk', 'Words per flash (word mode)', 'step', 1, v => v], ['phrase', 'Words per group (phrase & page modes)', 'step', 1, v => v],
     ['skip', 'Skip buttons jump', 'skips'], ['context', 'Sentence under the word when paused', 'toggle', ['Off', 'On']]]],
   ['Pauses', [
@@ -152,7 +163,8 @@ const GROUPS = [
     ['paragraph', 'After a paragraph', 'step', 1, X], ['title', 'Chapter titles', 'step', 1, X],
     ['long_words', 'Extra time for long words', 'toggle', ['Off', 'On']], ['ramp', 'Ease in after play', 'toggle', ['Off', 'On']]]],
   ['Look', [
-    ['theme', 'Theme', 'themes'], ['font', 'Font', 'fonts'], ['size', 'Text size', 'sizes']]],
+    ['theme', 'Theme', 'themes'], ['font', 'Font', 'fonts'], ['size', 'Text size', 'sizes'],
+    ['parens', 'Parentheses (word & phrase modes)', 'parens']]],
   ['Page mode', [
     ['spacing', 'Line spacing', 'spacings'], ['indent', 'Paragraphs', 'paragraphs'], ['justify', 'Alignment', 'aligns'],
     ['highlight', 'Highlight the phrase when paused', 'toggle', ['Off', 'On']]]],
@@ -197,6 +209,98 @@ function renderSettings() {
 }
 $('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); $('settings').classList.add('open'); };
 $('closeSet').onclick = () => $('settings').classList.remove('open');
+
+// ---- add a book: EPUBs are converted here in the browser (unzip + XHTML →
+// the reader's markup), so a phone on the reader's Wi-Fi needs nothing else.
+async function unzip(buf) {
+  const v = new DataView(buf), files = {};
+  let e = buf.byteLength - 22;
+  while (e > 0 && v.getUint32(e, true) !== 0x06054b50) e--;
+  let p = v.getUint32(e + 16, true);
+  const n = v.getUint16(e + 10, true);
+  for (let i = 0; i < n; i++) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true);
+    const nl = v.getUint16(p + 28, true), xl = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true);
+    const local = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(new Uint8Array(buf, p + 46, nl));
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    const data = new Uint8Array(buf, start, size);
+    files[name] = method === 0 ? data
+      : new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    p += 46 + nl + xl + cl;
+  }
+  return files;
+}
+function toMarkup(doc) {
+  const out = [];
+  const walk = (node, b, i) => {
+    let t = '';
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3) {
+        const words = c.textContent.replace(/[*_]/g, '').split(/\s+/).filter(Boolean);
+        const m = b && i ? '***' : b ? '**' : i ? '*' : '';
+        t += (c.textContent.match(/^\s/) ? ' ' : '') + words.map(w => m + w + m).join(' ') + (c.textContent.match(/\s$/) ? ' ' : '');
+      } else if (c.nodeType === 1) {
+        const tag = c.localName;
+        if (['script', 'style', 'sup', 'img', 'svg'].includes(tag)) continue;
+        t += walk(c, b || tag === 'b' || tag === 'strong', i || tag === 'i' || tag === 'em' || tag === 'cite');
+      }
+    }
+    return t;
+  };
+  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote')) {
+    if (el.closest('p,li,blockquote') && el.closest('p,li,blockquote') !== el) continue;
+    const text = walk(el, false, false).replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    out.push(/^h[1-4]$/.test(el.localName) ? '# ' + text.replace(/\*/g, '') : text);
+  }
+  return out.join('\n\n');
+}
+async function epubToMarkup(file) {
+  const files = await unzip(await file.arrayBuffer());
+  const xml = s => new DOMParser().parseFromString(new TextDecoder().decode(s), 'application/xhtml+xml');
+  const opfPath = xml(files['META-INF/container.xml']).querySelector('rootfile').getAttribute('full-path');
+  const opf = xml(files[opfPath]), base = opfPath.includes('/') ? opfPath.replace(/[^/]*$/, '') : '';
+  const title = (opf.querySelector('title')?.textContent || file.name).trim();
+  const items = {};
+  opf.querySelectorAll('manifest item').forEach(it => items[it.getAttribute('id')] = it.getAttribute('href'));
+  const parts = [];
+  for (const ref of opf.querySelectorAll('spine itemref')) {
+    const href = decodeURIComponent(items[ref.getAttribute('idref')] || '');
+    const data = files[base + href];
+    if (data) parts.push(toMarkup(xml(data)));
+  }
+  return {title, text: parts.filter(Boolean).join('\n\n')};
+}
+let pending = null;
+$('file').onchange = async () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  $('send').disabled = true;
+  $('upmsg').textContent = 'Reading…';
+  try {
+    pending = f.name.toLowerCase().endsWith('.epub')
+      ? await epubToMarkup(f)
+      : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
+    const kb = Math.round(new Blob([pending.text]).size / 1024);
+    $('upmsg').textContent = `${pending.title}: ${kb} KB ready`;
+    $('send').disabled = false;
+  } catch (e) { $('upmsg').textContent = 'Could not read this file'; }
+};
+$('send').onclick = async () => {
+  if (!pending) return;
+  $('send').disabled = true;
+  $('upmsg').textContent = 'Sending…';
+  const body = `<!-- title: ${pending.title} -->\n` + pending.text;
+  const r = await fetch('/upload?title=' + encodeURIComponent(pending.title), {method: 'POST', body});
+  $('upmsg').textContent = r.ok ? 'Saved: it is in the Library on the reader' : 'Failed: ' + await r.text();
+  if (r.ok) setTimeout(async () => { S = await (await fetch('/settings')).json(); renderSettings(); }, 1500);
+};
+$('clearBooks').onclick = async () => {
+  if (!confirm('Remove every book uploaded from the browser? Books built into the reader stay.')) return;
+  await fetch('/books/clear', {method: 'POST'});
+  $('upmsg').textContent = 'Uploaded books removed';
+};
 poll();
 </script>
 </body>

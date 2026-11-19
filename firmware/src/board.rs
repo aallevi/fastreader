@@ -12,7 +12,10 @@ pub const SPI_MHZ: u32 = 60; // the vendor runs it at 60 MHz; drop to 40 on glit
 // Touch (FT6336G @ 0x38): SDA 16, SCL 15, INT 17, RST 18
 // SD (SDMMC 4-bit): CLK 38, CMD 40, D0 39, D1 41, D2 48, D3 47
 // Battery divider: GPIO 9 (ADC1)
-// Free: 2, 3, 14, 21 (+ BOOT on 0)
+// Optional buttons (each to GND, internal pull-ups):
+//   GPIO 2 = ▲ faster/up, GPIO 3 = ▼ slower/down,
+//   GPIO 14 = ◀ back (hold: scroll), GPIO 21 = ▶ forward (hold: scroll),
+//   BOOT (GPIO 0) = select (short) / menu (long).
 
 /// Touch reports portrait panel coordinates; turn them into the landscape
 /// screen. Measured: top-left tap ≈ raw (190, 15), bottom-right ≈ (40, 300).

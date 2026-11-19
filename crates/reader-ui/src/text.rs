@@ -28,6 +28,7 @@ faces!(
     "plexserif-r", "plexserif-b", "plexserif-i", "plexserif-bi",
     "crimson-r", "crimson-b", "crimson-i", "crimson-bi",
     "courier-r", "courier-b", "courier-i", "courier-bi",
+    "gelasio-r", "gelasio-b", "gelasio-i", "gelasio-bi",
     "plexmono-r", "plexmono-b",
     "selawik-r", "selawik-b",
 );
@@ -37,10 +38,10 @@ pub type Face = u8;
 
 pub const PLEX_SANS: Face = 8;
 pub const PLEX_SANS_BOLD: Face = 9;
-pub const MONO: Face = 24;
-pub const MONO_BOLD: Face = 25;
-pub const SELAWIK: Face = 26;
-pub const SELAWIK_BOLD: Face = 27;
+pub const MONO: Face = 28;
+pub const MONO_BOLD: Face = 29;
+pub const SELAWIK: Face = 30;
+pub const SELAWIK_BOLD: Face = 31;
 
 /// A reading family: regular, bold, italic, bold italic.
 pub struct Family {
@@ -54,22 +55,25 @@ impl Family {
     }
 }
 
-pub static FAMILIES: [Family; 6] = [
+pub static FAMILIES: [Family; 7] = [
     Family { name: "Atkinson Hyperlegible", faces: [0, 1, 2, 3] },
     Family { name: "Literata", faces: [4, 5, 6, 7] },
     Family { name: "Plex Sans", faces: [8, 9, 10, 11] },
     Family { name: "Plex Serif", faces: [12, 13, 14, 15] },
     Family { name: "Crimson", faces: [16, 17, 18, 19] },
     Family { name: "Courier Prime", faces: [20, 21, 22, 23] },
+    // The original e-reader's speed-reading face.
+    Family { name: "Gelasio", faces: [24, 25, 26, 27] },
 ];
 
-pub static FONT_NAMES: [&str; 6] = [
+pub static FONT_NAMES: [&str; 7] = [
     FAMILIES[0].name,
     FAMILIES[1].name,
     FAMILIES[2].name,
     FAMILIES[3].name,
     FAMILIES[4].name,
     FAMILIES[5].name,
+    FAMILIES[6].name,
 ];
 
 pub fn family(i: u8) -> &'static Family {

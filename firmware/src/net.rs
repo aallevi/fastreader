@@ -19,7 +19,16 @@ use esp_println::println;
 use esp_radio::wifi::ap::AccessPointConfig;
 use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController};
 use reader_core::App;
-use reader_ui::web::{book_piece, respond, Body};
+use reader_ui::web::{book_piece, respond, url_decode, Body, MAX_UPLOAD};
+
+/// Requests the web tasks hand to the screen loop, which owns the flash.
+#[derive(Default)]
+pub struct Inbox {
+    /// A book to store: (title, text).
+    pub upload: Option<(String, alloc::vec::Vec<u8>)>,
+    /// Remove every uploaded book.
+    pub clear: bool,
+}
 
 use crate::mk_static;
 
@@ -31,7 +40,7 @@ pub const ADDRESS: &str = "Wi-Fi FastReader → http://192.168.4.1";
 const HTTP_WORKERS: usize = 3;
 
 /// Brings up the access point and spawns the network tasks.
-pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, clock: Instant) {
+pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, clock: Instant) {
     let ap = Config::AccessPoint(AccessPointConfig::default().with_ssid(SSID.try_into().unwrap()));
     let device = Interface::access_point();
     let controller = match WifiController::new(wifi, ControllerConfig::default().with_initial_config(ap)) {
@@ -49,8 +58,9 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
     spawner.spawn(connection(controller).unwrap());
     spawner.spawn(net_task(runner).unwrap());
     spawner.spawn(dhcp(stack).unwrap());
+    spawner.spawn(dns(stack).unwrap());
     for _ in 0..HTTP_WORKERS {
-        spawner.spawn(http(stack, app, clock).unwrap());
+        spawner.spawn(http(stack, app, inbox, clock).unwrap());
     }
     println!("wifi: access point {} up, http://{}", SSID, IP);
 }
@@ -87,16 +97,46 @@ async fn dhcp(stack: Stack<'static>) {
         println!("dhcp: could not bind");
         return;
     };
+    let dns = [IP];
     loop {
-        let _ = io::server::run(&mut Server::<_, 16>::new_with_et(IP), &ServerOptions::new(IP, Some(&mut gw)), &mut socket, &mut buf).await;
+        // Advertise the reader as DNS server (so the captive DNS is used) and
+        // the RFC 8910 captive-portal API, which recent phones open directly.
+        let mut options = ServerOptions::new(IP, Some(&mut gw));
+        options.dns = &dns;
+        options.captive_url = Some("http://192.168.4.1/captive-portal-api");
+        let _ = io::server::run(&mut Server::<_, 16>::new_with_et(IP), &options, &mut socket, &mut buf).await;
         Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+/// Captive portal DNS: every name resolves to the reader, so a phone that
+/// joins FastReader opens the reader page by itself.
+#[embassy_executor::task]
+async fn dns(stack: Stack<'static>) {
+    use embassy_net::udp::{PacketMetadata, UdpSocket};
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx = [0u8; 1024];
+    let mut tx = [0u8; 1024];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx, &mut tx_meta, &mut tx);
+    if socket.bind(53).is_err() {
+        println!("dns: could not bind");
+        return;
+    }
+    let mut query = [0u8; 512];
+    let mut reply = [0u8; 512];
+    loop {
+        let Ok((n, meta)) = socket.recv_from(&mut query).await else { continue };
+        if let Some(len) = reader_ui::web::captive_dns_reply(&query[..n], IP.octets(), &mut reply) {
+            let _ = socket.send_to(&reply[..len], meta.endpoint).await;
+        }
     }
 }
 
 /// One HTTP/1.0-style worker: read the request line, answer through the
 /// shared handler, close. The app is borrowed only between awaits.
 #[embassy_executor::task(pool_size = 3)]
-async fn http(stack: Stack<'static>, app: &'static RefCell<App>, clock: Instant) {
+async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, clock: Instant) {
     let mut rx = [0u8; 1024];
     let mut tx = [0u8; 2048];
     loop {
@@ -118,10 +158,57 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, clock: Instant)
                 }
             }
         }
-        let line = core::str::from_utf8(&head[..n]).unwrap_or("").lines().next().unwrap_or("");
+        let head_text = core::str::from_utf8(&head[..n]).unwrap_or("");
+        let line = head_text.lines().next().unwrap_or("");
         let mut parts = line.split_whitespace();
         let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or("/"));
         let now = clock.elapsed().as_millis();
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+
+        // Uploads carry a body: read it here, let the screen loop store it.
+        if method == "POST" && path == "/upload" {
+            let length = head_text
+                .lines()
+                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
+                .unwrap_or(0);
+            let title = query.split('&').find_map(|kv| kv.strip_prefix("title=")).map(url_decode).unwrap_or_default();
+            let reply: &[u8] = if length == 0 || length > MAX_UPLOAD || title.is_empty() {
+                b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nneed a title and a book of at most 3 MB"
+            } else {
+                let start = head_text.find("\r\n\r\n").map_or(n, |p| p + 4);
+                let mut body = alloc::vec::Vec::with_capacity(length);
+                body.extend_from_slice(&head[start..n]);
+                let mut chunk = [0u8; 1024];
+                while body.len() < length {
+                    match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(k) => body.extend_from_slice(&chunk[..k.min(length - body.len())]),
+                    }
+                }
+                if body.len() == length {
+                    inbox.borrow_mut().upload = Some((title, body));
+                    b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nsaving"
+                } else {
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupload interrupted"
+                }
+            };
+            let _ = socket.write_all(reply).await;
+            let _ = socket.flush().await;
+            socket.close();
+            Timer::after(Duration::from_millis(20)).await;
+            socket.abort();
+            continue;
+        }
+        if method == "POST" && path == "/books/clear" {
+            inbox.borrow_mut().clear = true;
+            let _ = socket.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nremoving").await;
+            let _ = socket.flush().await;
+            socket.close();
+            Timer::after(Duration::from_millis(20)).await;
+            socket.abort();
+            continue;
+        }
+
         let r = respond(&mut app.borrow_mut(), method, target, now);
 
         let mut header = String::new();

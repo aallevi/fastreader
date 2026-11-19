@@ -18,6 +18,8 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 | ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | page back / forward | back / open |
 | ▶ ❚❚ | BOOT short press | play / pause | play / pause the moving highlight | choose |
 
+**Optional physical buttons:** wire momentary switches from these pins to GND (no resistors needed): GPIO 2 = ▲, GPIO 3 = ▼, GPIO 14 = ◀, GPIO 21 = ▶. They behave exactly like the on-screen buttons, including hold-to-repeat and hold-to-scroll; BOOT stays select (short) / menu (long).
+
 A tap acts on release, sliding off cancels, and there are no swipes or invisible zones. Every press lights its button and shows a short message in the title bar (amber means a limit, like the fastest speed). Info appears only while paused.
 
 ## Books
@@ -26,6 +28,21 @@ A tap acts on release, sliding off cancels, and there are no swipes or invisible
 python3 -m venv tools/.venv && tools/.venv/bin/pip install pymupdf
 tools/.venv/bin/python tools/convert.py book.epub paper.pdf notes.txt   # → books/private/*.md
 ```
+### Book format
+
+Plain text with a few marks:
+
+| Mark | Meaning |
+|---|---|
+| `# Title` | chapter title: bold, on screen longer (2× by default) |
+| `**bold**` `*italic*` | kept as bold / italic |
+| blank line | new paragraph (longer pause) |
+| `{pause}` / `{pause:3}` | an extra beat (or 3) after the previous word, for dramatic effect |
+| `{slow}` … `{/slow}` | that passage at 1.4× the time |
+| `{verse}` … `{/verse}` | poetry: each line break is kept on the page and gets a breath |
+
+The marks follow the spirit of SSML (the W3C speech-timing standard: `<break>`, `<prosody rate="slow">`) in a form that stays readable as plain text.
+
 The converter keeps chapters (table of contents, larger or all-bold lines, EPUB headings), bold and italic, and drops running headers, page numbers and hyphenation. `books/private/` is git-ignored. The firmware embeds every book in `books/` and `books/private/` at build time.
 
 ## Run

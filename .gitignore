@@ -5,3 +5,5 @@ books/private/
 backup/
 assets/fonts-src/
 **/target/
+reference/
+books/uploaded/

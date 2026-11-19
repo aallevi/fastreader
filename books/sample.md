@@ -12,4 +12,6 @@ Most people read around two hundred and fifty words per minute. With practice, *
 
 She learned to hold the left button to scroll back through a sentence she had missed, and to let go to carry on reading. Chapters announced themselves slowly, giving her time to breathe between them.
 
+Some sentences (like this one, with an aside) carry a thought inside brackets.
+
 By evening she had finished the whole book.

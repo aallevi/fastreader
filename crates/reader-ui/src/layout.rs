@@ -92,6 +92,29 @@ pub struct Label {
     pub small: String,
 }
 
+/// The paper the text sits on (Scrivener's column is narrower than the
+/// screen; Windows 98 has a sunken frame).
+pub fn paper(th: &crate::theme::Theme, l: &Layout) -> Rect {
+    use crate::theme::Chrome;
+    match th.chrome {
+        Chrome::Scrivener => {
+            let m = l.screen.w / 11;
+            Rect::new(m, l.stage.y, l.screen.w - 2 * m, l.stage.h)
+        }
+        Chrome::Win98 => l.stage.inset(4, 3),
+        _ => l.stage,
+    }
+}
+
+/// The page's top-right corner: tap to dog-ear (bookmark) the current place.
+/// `rect` is the drawn triangle's square; the touch area is larger.
+pub fn bookmark_corner(app: &App, l: &Layout) -> Button {
+    let p = paper(crate::themes::theme(app.settings.theme), l);
+    let size = l.i(28.0);
+    let rect = Rect::new(p.right() - size, p.y, size, size);
+    Button { rect, hit_rect: Rect::new(p.right() - l.i(48.0), p.y, l.i(48.0), l.i(40.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
+}
+
 /// The menu button, top-left in the title bar, on reading screens.
 pub fn menu_button(l: &Layout) -> Button {
     let h = l.header;
@@ -339,6 +362,9 @@ pub fn hit_test(app: &App, l: &Layout, x: i32, y: i32) -> Option<Hit> {
     }
     if app.screen == Screen::Page && highlight_button(l).hit_rect.contains(x, y) {
         return Some(Hit::Highlight);
+    }
+    if matches!(app.screen, Screen::Reading | Screen::Page) && bookmark_corner(app, l).hit_rect.contains(x, y) {
+        return Some(Hit::Bookmark);
     }
     toolbar(app, l).0.into_iter().find(|b| b.hit_rect.contains(x, y)).map(|b| b.hit)
 }

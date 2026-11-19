@@ -27,11 +27,13 @@ pub struct Reader {
     /// Reached the end by playing; the next play starts over.
     finished: bool,
     pacing: Pacing,
+    /// The wpm number is the real average pace, pauses included.
+    true_pace: bool,
 }
 
 impl Reader {
     pub fn new(book: Book, wpm: u16) -> Self {
-        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, pacing: Pacing::default() }
+        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, pacing: Pacing::default(), true_pace: false }
     }
 
     pub fn pos(&self) -> usize {
@@ -106,7 +108,7 @@ impl Reader {
         if self.book.is_empty() {
             return 0;
         }
-        let base = 60_000 * self.book.weight_of(self.shown()) as u64 / (self.wpm as u64 * 100);
+        let base = self.ms_for(self.book.weight_of(self.shown()) as u64);
         if self.ramp > 0 && self.pacing.ramp {
             base * (100 + 25 * self.ramp as u64) / 100
         } else {
@@ -115,7 +117,26 @@ impl Reader {
     }
 
     pub fn ms_left(&self) -> u64 {
-        60_000 * self.book.weight_from(self.pos) as u64 / (self.wpm as u64 * 100)
+        self.ms_for(self.book.weight_from(self.pos) as u64)
+    }
+
+    /// Make the wpm number mean the real average pace (pauses included)
+    /// instead of the base rate for a plain word.
+    pub fn set_true_pace(&mut self, on: bool) {
+        self.true_pace = on;
+    }
+
+    /// Milliseconds for `weight` (in % of a plain word). One "word" of the
+    /// wpm number is a plain word (100), or with real pace the book's
+    /// average word including its pauses (exact fraction, no rounding).
+    fn ms_for(&self, weight: u64) -> u64 {
+        let total = self.book.weight_from(0) as u64;
+        let n = self.book.len() as u64;
+        if self.true_pace && n > 0 && total > n * 100 {
+            60_000 * weight * n / (self.wpm as u64 * total)
+        } else {
+            60_000 * weight / (self.wpm as u64 * 100)
+        }
     }
 
     /// Progress through the book in 1/1000ths.
@@ -174,6 +195,40 @@ impl Reader {
         let moved = target != self.pos;
         self.seek(target, now);
         moved
+    }
+
+    /// The group starting at `i`, by this reader's grouping.
+    fn group_at(&self, i: usize) -> core::ops::Range<usize> {
+        if self.phrase > 0 { self.book.phrase(i, self.phrase) } else { self.book.group(i, self.chunk) }
+    }
+
+    /// One phrase (group) back or forward; groups are the same ones the
+    /// reader flashes, so stepping back and forth lands on the same groups.
+    pub fn step_phrase(&mut self, forward: bool, now: u64) -> bool {
+        let n = self.book.len();
+        let target = if forward {
+            let e = self.shown().end;
+            (e < n).then_some(e)
+        } else if self.pos == 0 {
+            None
+        } else {
+            // Walk the groups from the start of the sentence before us.
+            let mut s = self.book.sentence_start(self.pos - 1);
+            loop {
+                let e = self.group_at(s).end;
+                if e >= self.pos || e <= s {
+                    break Some(s);
+                }
+                s = e;
+            }
+        };
+        match target {
+            Some(t) => {
+                self.seek(t, now);
+                true
+            }
+            None => false,
+        }
     }
 
     /// One word back or forward. Returns false at either end.
@@ -363,6 +418,40 @@ mod tests {
         assert!(r.skip_back(Skip::Paragraph, 0));
         assert_eq!(r.pos(), 0, "then to the previous one");
         assert!(!r.skip_forward(Skip::Words(50), 0));
+    }
+
+    #[test]
+    fn true_pace_makes_the_number_the_real_speed() {
+        let text = "One, two. Three four, five six. Seven eight nine, ten.\n\nEleven twelve.";
+        let mut book = String::new();
+        for _ in 0..100 {
+            book.push_str(text);
+            book.push_str("\n\n");
+        }
+        let words = Book::new("t", &book).len() as u64;
+        let mut r = Reader::new(Book::new("t", &book), 300);
+        r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
+        let base = r.ms_left();
+        r.set_true_pace(true);
+        let real = r.ms_left();
+        assert!(base > words * 200, "with pauses, base 300 wpm takes longer than 300 words a minute");
+        assert!(real.abs_diff(words * 200) <= words / 2, "true pace: {real} ms for {words} words at 300 wpm");
+    }
+
+    #[test]
+    fn phrase_steps_go_group_by_group_both_ways() {
+        let mut r = Reader::new(Book::new("t", "She walked into the old house of the family, and waited. Then left."), 300);
+        r.set_phrase(Some(3));
+        let mut starts = alloc::vec![0];
+        while r.step_phrase(true, 0) {
+            starts.push(r.pos());
+        }
+        assert_eq!(starts, [0, 3, 6, 9, 11], "She walked into | the old house | of the family, | and waited. | Then left.");
+        for &s in starts.iter().rev().skip(1) {
+            assert!(r.step_phrase(false, 0));
+            assert_eq!(r.pos(), s);
+        }
+        assert!(!r.step_phrase(false, 0), "nothing before the first group");
     }
 
     #[test]

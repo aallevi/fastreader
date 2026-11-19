@@ -16,6 +16,8 @@ bench = false
 selftest = []
 # Start the Wi-Fi web view at boot regardless of the setting (testing).
 wifi-boot = []
+# Go to deep sleep 5 s after boot (testing the wake path).
+sleep-test = []
 
 [dependencies]
 reader-core = { path = "../crates/reader-core" }

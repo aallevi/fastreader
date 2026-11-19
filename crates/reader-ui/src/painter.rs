@@ -24,7 +24,7 @@ use crate::canvas::{Canvas, Paint};
 use crate::color::{mix, Rgb};
 use crate::geom::Rect;
 use crate::icons;
-use crate::layout::{self, highlight_button, hit_test, list_geom, menu_button, toolbar, Button, Icon, Layout, RowKind};
+use crate::layout::{self, bookmark_corner, paper, highlight_button, hit_test, list_geom, menu_button, toolbar, Button, Icon, Layout, RowKind};
 use crate::text::{family, Face, Fonts};
 use crate::theme::{ButtonStyle, Chrome, Theme};
 use crate::themes::theme;
@@ -57,6 +57,8 @@ struct View {
     context: Option<usize>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
+    /// The current place (word, or page in page view) has a bookmark.
+    corner: bool,
 }
 
 /// Everything that changes where pages break.
@@ -93,14 +95,6 @@ impl Ui {
     pub fn paint(&mut self, app: &mut App, now: u64, cv: &mut Canvas) -> Vec<Rect> {
         if app.screen == Screen::Page || app.settings.mode() == Mode::Page {
             self.paginate(app);
-            // Past the measured pages: lay out the page on screen to know where it ends.
-            app.page_next = None;
-            if app.page_index().is_none() && app.screen == Screen::Page {
-                let th = theme(app.settings.theme);
-                let start = page_start(app);
-                let (_, next) = layout_page(&mut self.fonts, app, page_area(th, &self.layout), start, &self.layout);
-                app.page_next = Some(next as u32);
-            }
         }
         let th = theme(app.settings.theme);
         cv.linear_text = th.light_on_dark;
@@ -129,9 +123,11 @@ impl Ui {
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some(app.reader.pos()),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
+            corner: place_bookmarked(app),
         };
         let old = self.last.take();
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame);
+        // A bookmark appearing or going is rare: repaint all, simply.
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -155,6 +151,7 @@ impl Ui {
             }
             draw_status(f, cv, &ctx);
             draw_toolbar(f, cv, &ctx);
+            draw_corner(cv, &ctx, view.corner);
             damage.push(l.screen);
         } else if let Some(o) = &old {
             if o.header != view.header {
@@ -167,6 +164,9 @@ impl Ui {
                     // Same page, highlight moved: redraw only the lines it left and entered.
                     let partial = self.page_drawn.as_ref().filter(|d| d.0 == now_drawn.0).map(|d| d.1.clone());
                     damage.extend(draw_page(f, cv, &ctx, partial));
+                    // A redrawn first line may have run under the corner.
+                    draw_corner(cv, &ctx, view.corner);
+                    damage.push(bookmark_corner(app, &l).rect);
                     self.page_drawn = Some(now_drawn);
                 }
                 if o.status != view.status {
@@ -256,19 +256,6 @@ fn up(th: &Theme, s: &str) -> String {
     if th.upper { s.to_uppercase() } else { s.to_string() }
 }
 
-/// The paper the text sits on.
-fn paper(th: &Theme, l: &Layout) -> Rect {
-    match th.chrome {
-        Chrome::Scrivener => {
-            let m = l.screen.w / 11;
-            Rect::new(m, l.stage.y, l.screen.w - 2 * m, l.stage.h)
-        }
-        // A sunken white document inside the grey window.
-        Chrome::Win98 => l.stage.inset(4, 3),
-        _ => l.stage,
-    }
-}
-
 /// Repaints the background under `r` inside the stage (including frames).
 fn clear(cv: &mut Canvas, th: &Theme, l: &Layout, r: Rect) {
     let p = paper(th, l);
@@ -291,6 +278,54 @@ fn clear(cv: &mut Canvas, th: &Theme, l: &Layout, r: Rect) {
         _ => {}
     }
     cv.fill(r.intersect(&p), th.page);
+}
+
+/// Whether the place on screen has a bookmark: the word(s) shown, or in
+/// page view anything on the page.
+fn place_bookmarked(app: &App) -> bool {
+    match app.screen {
+        Screen::Page => {
+            let start = page_start(app);
+            let end = app.page_index().and_then(|i| app.pages.get(i + 1)).map_or(app.reader.shown().end, |&e| e as usize);
+            app.bookmarked(start..end.max(start + 1))
+        }
+        Screen::Reading | Screen::Line { .. } => app.bookmarked(app.reader.shown()),
+        _ => false,
+    }
+}
+
+/// The page's top-right corner. Bookmarked: dog-eared, the flap folded down
+/// over the page with a soft shadow. Otherwise a faint fold line hints that
+/// the corner can be folded.
+fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    if !matches!(app.screen, Screen::Reading | Screen::Page | Screen::Line { .. }) {
+        return;
+    }
+    let r = bookmark_corner(app, l).rect;
+    let (x0, y0, s) = (r.x as f32, r.y as f32, r.w as f32);
+    if !marked {
+        cv.line((x0 + s * 0.35, y0 + 1.0), (x0 + s - 1.0, y0 + s * 0.65), l.px(1.0), mix(th.page, th.text, 45));
+        return;
+    }
+    // What lies behind the page shows where the corner was.
+    let behind = match th.chrome {
+        Chrome::Scrivener => th.desktop[0].1,
+        _ => mix(th.page, BLACK, 95),
+    };
+    cv.polygon(&[(x0, y0), (x0 + s, y0), (x0 + s, y0 + s)], behind);
+    // Soft shadow under the flap, then the flap itself (the paper's back side).
+    cv.clip(Rect::new(r.x - l.i(10.0), r.y, r.w + l.i(10.0), r.h + l.i(10.0)));
+    cv.glow(x0 + s * 0.3, y0 + s * 0.78, s * 0.8, s * 0.55, BLACK, 110);
+    cv.unclip();
+    let flap = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 38) };
+    cv.polygon(&[(x0, y0), (x0 + s, y0 + s), (x0, y0 + s)], flap);
+    // The crease catches the light.
+    cv.line((x0 + 0.5, y0 + 0.5), (x0 + s - 0.5, y0 + s - 0.5), l.px(1.0), mix(th.page, WHITE, 120));
+    if th.chrome == Chrome::Ink {
+        cv.line((x0, y0), (x0, y0 + s), 1.0, th.text);
+        cv.line((x0, y0 + s), (x0 + s, y0 + s), 1.0, th.text);
+    }
 }
 
 /// Windows 98 two-pixel bevel around `r` (raised, or sunken when `pressed`).
@@ -536,26 +571,52 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         return band;
     }
     let fam = family(app.settings.font);
-    let words: Vec<(&str, Face, bool)> = app
+    // Parentheses as side marks: brackets leave the words and sit at the
+    // screen's edges while the reader is inside ( … ).
+    let side_marks = app.settings.parens && app.reader.shown().any(|i| book.word(i).is_some_and(|w| w.style.paren()));
+    let words: Vec<(String, Face, bool)> = app
         .reader
         .shown()
         .map(|i| {
             let w = book.word(i).unwrap();
-            (book.text_of(w), fam.face(w.style), w.style.heading())
+            let t = book.text_of(w);
+            let t = if side_marks { t.replace(['(', ')'], "") } else { String::from(t) };
+            (t, fam.face(w.style), w.style.heading())
         })
+        .filter(|(t, _, _)| !t.is_empty())
         .collect();
+    if words.is_empty() {
+        return l.word.intersect(&p);
+    }
     let heading = words.iter().any(|w| w.2);
     // Phrases are set a little smaller so a whole group fits on one line.
     let phrase = mode == Mode::Phrase;
     let mut px = word_px(c) * if phrase { PHRASE_SCALE } else { 1.0 };
     let left = p.x as f32 + phrase_left(l, p);
-    let avail = if phrase { p.right() as f32 - l.px(14.0) - left } else { (p.w as f32 - l.px(28.0)).max(10.0) };
+    // The original keeps 30 px of 792 (about 4%) clear on the right.
+    let avail = if phrase { p.right() as f32 - p.w as f32 * 0.038 - left } else { (p.w as f32 - l.px(28.0)).max(10.0) };
     let measure = |f: &mut Fonts, px: f32| -> f32 {
         let space = f.measure(words[0].1, px, " ");
         words.iter().map(|(s, face, _)| f.measure(*face, px, s)).sum::<f32>() + space * (words.len() - 1) as f32
     };
     let mut total = measure(f, px);
-    if total > avail {
+    let mut shift_left = 0.0;
+    if phrase {
+        // As on the original: one working size so letters don't change from
+        // flash to flash; only a group that would run past the right edge
+        // steps down (−15% per step, two steps), and as a last resort it
+        // starts further left.
+        for step in [0.85, 0.85] {
+            if total <= avail {
+                break;
+            }
+            px *= step;
+            total = measure(f, px);
+        }
+        if total > avail {
+            shift_left = (total - avail).min(left - p.x as f32 - l.px(10.0));
+        }
+    } else if total > avail {
         // Long words shrink to fit instead of being cut off.
         px *= (avail / total).max(0.5);
         total = measure(f, px);
@@ -566,28 +627,42 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     // Word mode centres; Phrase mode starts every group at the same left
     // point, so the eye returns to one spot and only the right edge moves
     // (as on the original e-reader).
-    let x0 = if phrase { left } else { p.cx() - total.min(avail) / 2.0 };
+    let x0 = if phrase { left - shift_left } else { p.cx() - total.min(avail) / 2.0 };
     let mut x = x0;
     cv.clip(l.word.intersect(&p));
     let space = f.measure(words[0].1, px, " ");
     for (s, face, _) in &words {
         x += f.draw(cv, *face, px, s, x, base, colour) + space;
     }
+    if side_marks {
+        let face = fam.face(Style::PLAIN);
+        let bpx = word_px(c) * 1.15;
+        let inset = l.px(5.0);
+        f.draw(cv, face, bpx, "(", p.x as f32 + inset, base, th.dim);
+        let rw = f.measure(face, bpx, ")");
+        f.draw(cv, face, bpx, ")", p.right() as f32 - inset - rw, base, th.dim);
+    }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
     let top = base - m.ascent - l.px(3.0);
     let pad = l.px(3.0);
-    Rect::new((x0 - pad) as i32, top as i32, (total.min(avail) + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
+    if side_marks {
+        // The marks sit at the edges: the whole strip is this frame's box.
+        let tall = word_px(c) * 1.15;
+        return Rect::new(p.x, (base - tall) as i32, p.w, (tall * 1.4) as i32).intersect(&l.word.intersect(&p));
+    }
+    let shown_w = if phrase { total } else { total.min(avail) };
+    Rect::new((x0 - pad) as i32, top as i32, (shown_w + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
         .intersect(&l.word.intersect(&p))
 }
 
 /// Phrase and ticker text size relative to the single-word size.
 const PHRASE_SCALE: f32 = 0.72;
 
-/// Where Phrase-mode groups start: a tenth of the way in, like the
-/// original's fixed left edge.
+/// Where Phrase-mode groups start: the original's left edge (90 px of a
+/// 792 px panel, about 11%), so the eye returns to one spot every flash.
 fn phrase_left(l: &Layout, p: Rect) -> f32 {
-    (p.w as f32 * 0.10).max(l.px(18.0))
+    (p.w as f32 * 0.114).max(l.px(18.0))
 }
 
 /// The horizontal strip the ticker's text covers.
@@ -870,6 +945,11 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Highlight(false) => "Highlight off".into(),
         Msg::Wifi(true) => "Web view on: join Wi-Fi FastReader".into(),
         Msg::Wifi(false) => "Web view off".into(),
+        Msg::BookAdded => "Book added to the library".into(),
+        Msg::Bookmarked => "Bookmarked".into(),
+        Msg::BookmarkRemoved => "Bookmark removed".into(),
+        Msg::NoBookmarks => "No bookmarks yet: tap the page corner".into(),
+        Msg::BooksRemoved => "Uploaded books removed".into(),
         Msg::Shown => String::new(),
     }
 }
@@ -1002,6 +1082,14 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
                 return (out, next);
             }
             gap_before = if st.indent && !heading { 0.0 } else { base_px * 0.6 };
+            x = 0.0;
+        } else if w.style.line_end() {
+            // Verse: the poem's own line break (never justified).
+            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, true, f) {
+                let next = next_of(&out);
+                return (out, next);
+            }
+            gap_before = 0.0;
             x = 0.0;
         }
     }

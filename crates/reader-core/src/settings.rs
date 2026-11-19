@@ -33,6 +33,8 @@ pub const MODE_NAMES: [&str; 4] = ["Word by word", "Phrases", "Ticker", "Page"];
 pub const SPACING_NAMES: [&str; 3] = ["Tight", "Normal", "Airy"];
 pub const PARAGRAPH_NAMES: [&str; 2] = ["Spaced", "Indented"];
 pub const ALIGN_NAMES: [&str; 2] = ["Ragged right", "Justified"];
+pub const PAREN_NAMES: [&str; 2] = ["In the text", "As side marks"];
+pub const PACE_NAMES: [&str; 2] = ["Base rate", "Real pace (pauses included)"];
 
 pub const SKIP_NAMES: [&str; 6] = ["1 sentence", "5 words", "10 words", "25 words", "50 words", "1 paragraph"];
 
@@ -83,6 +85,10 @@ pub struct Settings {
     pub highlight: bool,
     /// Web view over Wi-Fi (off by default: the radio costs battery).
     pub wifi: bool,
+    /// The wpm number means the real average pace, pauses included.
+    pub true_pace: bool,
+    /// Word and Phrase modes: show ( … ) as marks at the screen's sides.
+    pub parens: bool,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -111,6 +117,8 @@ impl Default for Settings {
             justify: false,
             highlight: true,
             wifi: false,
+            true_pace: false,
+            parens: true,
             skip: 0,
             context: true,
             book: 0,
@@ -121,12 +129,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 8;
+const VERSION: u8 = 10;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 23] = [
+pub const FIELDS: [(&str, u16, u16); 25] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -150,6 +158,8 @@ pub const FIELDS: [(&str, u16, u16); 23] = [
     ("justify", 0, 1),
     ("highlight", 0, 1),
     ("wifi", 0, 1),
+    ("true_pace", 0, 1),
+    ("parens", 0, 1),
 ];
 
 impl Settings {
@@ -178,6 +188,8 @@ impl Settings {
             "justify" => self.justify as u16,
             "highlight" => self.highlight as u16,
             "wifi" => self.wifi as u16,
+            "true_pace" => self.true_pace as u16,
+            "parens" => self.parens as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -212,6 +224,8 @@ impl Settings {
             "justify" => self.justify = v != 0,
             "highlight" => self.highlight = v != 0,
             "wifi" => self.wifi = v != 0,
+            "true_pace" => self.true_pace = v != 0,
+            "parens" => self.parens = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,

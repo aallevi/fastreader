@@ -13,6 +13,7 @@
 extern crate alloc;
 
 mod board;
+mod library;
 mod net;
 
 use core::cell::RefCell;
@@ -57,6 +58,8 @@ include!(concat!(env!("OUT_DIR"), "/books.rs"));
 /// Settings and per-book positions live in the NVS partition (otherwise unused).
 const SETTINGS_ADDR: u32 = 0x9000;
 const POSITIONS_ADDR: u32 = 0xA000;
+const BOOKMARKS_ADDR: u32 = 0xB000;
+const MAX_BOOKMARKS: usize = 800;
 const MAX_BOOKS: usize = 64;
 
 const TOUCH_ADDR: u8 = 0x38;
@@ -73,10 +76,9 @@ macro_rules! mk_static {
 #[esp_hal::main]
 async fn main(spawner: Spawner) -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
-    // Internal RAM: the Wi-Fi driver needs it (DMA); reclaimed = bootloader's RAM.
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
-    esp_alloc::heap_allocator!(size: 96 * 1024);
-    // Book text, the 300 KB canvas and the glyph cache live in PSRAM.
+    // PSRAM is registered first, so ordinary allocations (books, canvas,
+    // glyphs) land there and the internal RAM stays free for the Wi-Fi
+    // driver, which asks for internal memory explicitly.
     // The ES3C28P has 8 MB of octal PSRAM; say so instead of auto-detecting,
     // and run it at 80 MHz (the default 40 MHz halves every pixel operation).
     esp_alloc::psram_allocator!(
@@ -89,6 +91,9 @@ async fn main(spawner: Spawner) -> ! {
             ..Default::default()
         }
     );
+    // Internal RAM: the Wi-Fi driver needs it (DMA); reclaimed = bootloader's RAM.
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 96 * 1024);
     let timg0 = TimerGroup::new(p.TIMG0);
     esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
     let mut wifi_peripheral = Some(p.WIFI);
@@ -131,7 +136,22 @@ async fn main(spawner: Spawner) -> ! {
     delay.delay_millis(300);
     let mut i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400))).unwrap().with_sda(p.GPIO16).with_scl(p.GPIO15);
     let touch_ok = i2c.write(TOUCH_ADDR, &[]).is_ok();
-    let boot = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
+    let mut boot = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
+    // The touch chip pulls its interrupt line low on a touch: a second way to wake.
+    let mut touch_int = Input::new(p.GPIO17, InputConfig::default().with_pull(Pull::Up));
+    let mut low_power = esp_hal::rtc_cntl::sleep::LowPower::new(p.LPWR);
+    // Optional physical buttons, each between the pin and GND (internal
+    // pull-ups; an unwired pin simply reads "not pressed"). See board.rs.
+    let up = Input::new(p.GPIO2, InputConfig::default().with_pull(Pull::Up));
+    let down = Input::new(p.GPIO3, InputConfig::default().with_pull(Pull::Up));
+    let left = Input::new(p.GPIO14, InputConfig::default().with_pull(Pull::Up));
+    let right = Input::new(p.GPIO21, InputConfig::default().with_pull(Pull::Up));
+    let mut keys = [
+        reader_core::gestures::HeldKey::new(reader_core::Key::Up),
+        reader_core::gestures::HeldKey::new(reader_core::Key::Down),
+        reader_core::gestures::HeldKey::new(reader_core::Key::Left),
+        reader_core::gestures::HeldKey::new(reader_core::Key::Right),
+    ];
 
     // --- Battery.
     let mut adc_cfg = AdcConfig::new();
@@ -146,12 +166,21 @@ async fn main(spawner: Spawner) -> ! {
 
     // --- App.
     let mut settings = settings;
-    settings.book = settings.book.min(BOOKS.len().saturating_sub(1) as u8);
-    let open = |i: u8| {
-        let (title, text) = BOOKS[i as usize];
-        Book::parse(text, title)
+    settings.book = settings.book.min((BOOKS.len() + library::scan(&mut flash).len()).saturating_sub(1) as u8);
+    // Library = books built into the firmware, then books uploaded over Wi-Fi.
+    let mut uploads = library::scan(&mut flash);
+    let open_book = |i: u8, flash: &mut FlashStorage, uploads: &[library::Stored]| -> Book {
+        let i = i as usize;
+        if i < BOOKS.len() {
+            let (title, text) = BOOKS[i];
+            return Book::parse(text, title);
+        }
+        match uploads.get(i - BOOKS.len()).and_then(|s| library::read(flash, s).map(|t| (s.title.clone(), t))) {
+            Some((title, text)) => Book::parse(&text, &title),
+            None => Book::new("Missing book", "# Missing book\nThis uploaded book could not be read."),
+        }
     };
-    let mut app = App::new(open(settings.book), CATALOG, settings);
+    let mut app = App::new(open_book(settings.book, &mut flash, &uploads), CATALOG, settings);
     app.library = BOOKS
         .iter()
         .map(|(t, text)| {
@@ -162,9 +191,11 @@ async fn main(spawner: Spawner) -> ! {
             }
             Book::parse(&text[..cut], t).title
         })
+        .chain(uploads.iter().map(|s| s.title.clone()))
         .collect();
     app.positions = load_positions(&mut flash);
-    app.positions.resize(BOOKS.len(), 0);
+    app.positions.resize(app.library.len(), 0);
+    app.bookmarks = load_bookmarks(&mut flash);
     app.device = DeviceInfo {
         board: board::NAME.into(),
         firmware: format!("fastreader {}", env!("CARGO_PKG_VERSION")),
@@ -211,7 +242,7 @@ async fn main(spawner: Spawner) -> ! {
     for i in 0..BOOKS.len() as u8 {
         let t0 = Instant::now();
         app.park_book();
-        app.open_book(open(i), i);
+        app.open_book(open_book(i, &mut flash, &uploads), i);
         let load = t0.elapsed().as_millis();
         let t1 = Instant::now();
         app.settings.mode = 3;
@@ -241,7 +272,7 @@ async fn main(spawner: Spawner) -> ! {
     #[cfg(feature = "selftest")]
     for mode in 0..4u16 {
         app.park_book();
-        app.open_book(open(1), 1);
+        app.open_book(open_book(1, &mut flash, &uploads), 1);
         let _ = app.set_setting("mode", mode);
         app.screen = if mode == 3 { reader_core::Screen::Page } else { reader_core::Screen::Reading };
         ui.invalidate();
@@ -276,9 +307,10 @@ async fn main(spawner: Spawner) -> ! {
 
     // From here the app is shared with the web tasks.
     let app_cell: &'static RefCell<App> = mk_static!(RefCell<App>, RefCell::new(app));
+    let inbox: &'static RefCell<net::Inbox> = mk_static!(RefCell<net::Inbox>, RefCell::new(net::Inbox::default()));
     if app_cell.borrow().settings.wifi || cfg!(feature = "wifi-boot") {
         if let Some(w) = wifi_peripheral.take() {
-            net::start(spawner, w, app_cell, start);
+            net::start(spawner, w, app_cell, inbox, start);
             app_cell.borrow_mut().device.web = net::ADDRESS.into();
         }
     }
@@ -314,7 +346,15 @@ async fn main(spawner: Spawner) -> ! {
         } else {
             None
         };
-        let events = [touch.update(finger, now), button.update(boot.is_low(), now)];
+        let levels = [up.is_low(), down.is_low(), left.is_low(), right.is_low()];
+        let events = [
+            touch.update(finger, now),
+            button.update(boot.is_low(), now),
+            keys[0].update(levels[0], now),
+            keys[1].update(levels[1], now),
+            keys[2].update(levels[2], now),
+            keys[3].update(levels[3], now),
+        ];
         for ev in events.into_iter().flatten() {
             if asleep {
                 // The first touch or press only wakes the screen.
@@ -342,7 +382,30 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
+        // Books sent from the browser: store them (this loop owns the flash).
+        let request = core::mem::take(&mut *inbox.borrow_mut());
+        if let Some((title, text)) = request.upload {
+            match library::append(&mut flash, &title, &text) {
+                Ok(stored) => {
+                    println!("library: stored {:?} ({} bytes)", stored.title, stored.len);
+                    uploads.push(stored);
+                    app.book_added(title, now);
+                }
+                Err(e) => println!("library: {}", e),
+            }
+        }
+        if request.clear {
+            library::clear(&mut flash);
+            uploads.clear();
+            app.books_removed(BOOKS.len(), now); // reopens book 0 if needed (Effect::OpenBook)
+        }
+
         app.tick(now);
+        #[cfg(feature = "sleep-test")]
+        if now > 5_000 && now < 5_100 {
+            app.screen = reader_core::Screen::Menu { sel: reader_core::app::menu_index(reader_core::app::MenuItem::Sleep) };
+            app.handle(reader_core::Key::Select, now);
+        }
         while let Some(e) = app.take_effect() {
             match e {
                 Effect::SaveSettings => {}
@@ -352,18 +415,42 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 Effect::OpenBook(i) => {
                     app.park_book(); // free the old book first: memory is tight
-                    app.open_book(open(i), i);
+                    app.open_book(open_book(i, &mut flash, &uploads), i);
                     save_positions(&mut flash, &app.positions);
                     ui.invalidate();
                 }
                 Effect::Sleep => {
+                    // Real deep sleep (~10 µA for the chip): save everything, screen
+                    // off, then wake on BOOT or a touch; the reader restarts where it was.
+                    let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
+                    app.positions.resize(app.library.len().max(1), 0);
+                    let book = app.settings.book as usize;
+                    app.positions[book] = app.reader.pos() as u32;
+                    save_positions(&mut flash, &app.positions);
+                    let damage = ui.paint(app, now, &mut cv);
+                    flush!(damage);
+                    delay.delay_millis(800); // let "Going to sleep" be read
                     let _ = backlight.set_duty(0);
                     let _ = lcd.sleep(&mut delay);
-                    asleep = true;
+                    // Don't fall asleep while the finger or button is still down.
+                    while boot.is_low() || touch_int.is_low() {
+                        delay.delay_millis(20);
+                    }
+                    delay.delay_millis(150);
+                    let wake = esp_hal::gpio::WakeupConfig::default().with_low_power_path(true);
+                    boot.listen(esp_hal::gpio::Event::LowLevel);
+                    let _ = boot.apply_wakeup_config(&wake);
+                    if touch_ok {
+                        touch_int.listen(esp_hal::gpio::Event::LowLevel);
+                        let _ = touch_int.apply_wakeup_config(&wake);
+                    }
+                    println!("fastreader: deep sleep");
+                    low_power.sleep_deep(esp_hal::rtc_cntl::sleep::RtcSleepConfig::deep());
                 }
+                Effect::SaveBookmarks => save_bookmarks(&mut flash, &app.bookmarks),
                 Effect::Wifi(true) => {
                     if let Some(w) = wifi_peripheral.take() {
-                        net::start(spawner, w, app_cell, start);
+                        net::start(spawner, w, app_cell, inbox, start);
                     }
                     app.device.web = net::ADDRESS.into();
                 }
@@ -430,6 +517,31 @@ fn save_positions(flash: &mut FlashStorage, pos: &[u32]) {
         raw.extend_from_slice(&p.to_le_bytes());
     }
     let _ = flash.write(POSITIONS_ADDR, &raw);
+}
+
+/// Bookmarks: "BM" + count (u16) + (book u8, word u32) each.
+fn load_bookmarks(flash: &mut FlashStorage) -> alloc::vec::Vec<(u8, u32)> {
+    let mut head = [0u8; 4];
+    if flash.read(BOOKMARKS_ADDR, &mut head).is_err() || &head[..2] != b"BM" {
+        return alloc::vec::Vec::new();
+    }
+    let n = (u16::from_le_bytes([head[2], head[3]]) as usize).min(MAX_BOOKMARKS);
+    let mut raw = alloc::vec![0u8; n * 5];
+    if flash.read(BOOKMARKS_ADDR + 4, &mut raw).is_err() {
+        return alloc::vec::Vec::new();
+    }
+    raw.chunks(5).map(|c| (c[0], u32::from_le_bytes([c[1], c[2], c[3], c[4]]))).collect()
+}
+
+fn save_bookmarks(flash: &mut FlashStorage, marks: &[(u8, u32)]) {
+    let n = marks.len().min(MAX_BOOKMARKS);
+    let mut raw = alloc::vec![b'B', b'M'];
+    raw.extend_from_slice(&(n as u16).to_le_bytes());
+    for (b, w) in &marks[..n] {
+        raw.push(*b);
+        raw.extend_from_slice(&w.to_le_bytes());
+    }
+    let _ = flash.write(BOOKMARKS_ADDR, &raw);
 }
 
 fn apply_display<'a, DI, M, RST, CH>(lcd: &mut mipidsi::Display<DI, M, RST>, delay: &mut Delay, bl: &mut CH, s: &Settings)

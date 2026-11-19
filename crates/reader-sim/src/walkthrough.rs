@@ -194,6 +194,33 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Menu);
     r.tap_row("Reading mode");
     r.tap_row("Word by word");
+    // Bookmark: tap the page corner (dog-ear), in reading and page view.
+    let corner = reader_ui::layout::bookmark_corner(&r.app, &r.ui.layout);
+    let hit = r.ui.hit(&r.app, corner.rect.cx() as i32, corner.rect.cy() as i32).expect("corner");
+    r.app.tap(hit, r.now);
+    r.shot("bookmarked-page-corner");
+    r.wait(1_500);
+    // Parentheses as side marks.
+    let paren = (0..r.app.reader.book.len()).find(|&i| r.app.reader.book.word(i).unwrap().style.paren()).unwrap();
+    r.app.reader.seek(paren + 2, r.now);
+    r.app.set_setting("mode", 0).unwrap();
+    r.app.screen = Screen::Reading;
+    r.shot("parentheses-side-marks");
+    r.app.set_setting("mode", 1).unwrap();
+    r.shot("parentheses-side-marks-phrases");
+    r.app.set_setting("mode", 3).unwrap();
+    r.app.screen = Screen::Page;
+    r.app.reader.seek(paren, r.now);
+    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Close);
+    r.wait(1_500);
+    r.shot("page-with-parentheses");
+    r.app.set_setting("mode", 0).unwrap();
+    r.app.screen = Screen::Reading;
+    r.tap_icon(Icon::Menu);
+    r.tap_row("Bookmarks");
+    r.shot("bookmarks-list");
+    r.tap_icon(Icon::Close);
     r.tap_icon(Icon::Menu);
     r.tap_row("Chapters");
     r.shot("chapters-list");

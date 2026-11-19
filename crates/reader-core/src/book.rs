@@ -49,6 +49,12 @@ impl Style {
     pub const BOLD: Style = Style(1);
     pub const ITALIC: Style = Style(2);
     pub const HEADING: Style = Style(4);
+    /// Inside `{slow}…{/slow}`: shown 1.4× longer.
+    pub const SLOW: Style = Style(8);
+    /// Last word of a verse line (`{verse}`): a line break on the page.
+    pub const LINE_END: Style = Style(16);
+    /// Inside ( … ): speed modes can show side marks instead of the brackets.
+    pub const PAREN: Style = Style(128);
 
     pub const fn bold(self) -> bool {
         self.0 & (Self::BOLD.0 | Self::HEADING.0) != 0
@@ -61,6 +67,24 @@ impl Style {
     }
     pub const fn with(self, other: Style, on: bool) -> Style {
         if on { Style(self.0 | other.0) } else { Style(self.0 & !other.0) }
+    }
+    pub const fn slow(self) -> bool {
+        self.0 & Self::SLOW.0 != 0
+    }
+    pub const fn line_end(self) -> bool {
+        self.0 & Self::LINE_END.0 != 0
+    }
+    pub const fn paren(self) -> bool {
+        self.0 & Self::PAREN.0 != 0
+    }
+    /// Extra beats after this word from `{pause}` / `{pause:N}` (0–3), each
+    /// as long as a plain word.
+    pub const fn beats(self) -> u32 {
+        ((self.0 >> 5) & 0x3) as u32
+    }
+    pub const fn with_beats(self, n: u32) -> Style {
+        let n = if n > 3 { 3 } else { n };
+        Style(self.0 & 0x9F | (n as u8) << 5)
     }
 }
 
@@ -81,7 +105,9 @@ impl Word {
         let long_bonus = if long_bonus > 60 { 60 } else { long_bonus };
         let w = self.pause.weight(p) + long_bonus;
         // Titles are the signposts of a book: they stay longer (2× by default).
-        if self.style.heading() { w * p.title as u32 / 10 } else { w }
+        let w = if self.style.heading() { w * p.title as u32 / 10 } else { w };
+        let w = if self.style.slow() { w * 14 / 10 } else { w };
+        w + self.style.beats() * 100
     }
 }
 
@@ -318,6 +344,8 @@ impl Book {
             if w.pause == Pause::Paragraph || heading_ends {
                 out.write_str(if w.style.heading() { "</h2>\n" } else { "</p>\n" })?;
                 open = false;
+            } else if w.style.line_end() {
+                out.write_str("<br>\n")?;
             } else {
                 out.write_char(' ')?;
             }
@@ -346,6 +374,9 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
     let mut words: Chunked<Word> = Chunked::new();
     let mut style = Style::PLAIN;
     let mut scratch = String::new();
+    let mut verse = false;
+    // How many ( … ) we are inside; reset at paragraph ends (unbalanced text).
+    let mut depth = 0u32;
 
     for line in source.lines() {
         let mut tokens = line.split_whitespace().peekable();
@@ -354,6 +385,7 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
             if let Some(last) = words.last_mut() {
                 last.pause = Pause::Paragraph;
             }
+            depth = 0;
             continue;
         };
         let heading = (1..=6).contains(&first.len()) && first.bytes().all(|b| b == b'#') && line.trim_start().len() > first.len();
@@ -363,6 +395,24 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
         let first_word = words.len();
 
         for tok in tokens {
+            // Timing marks (SSML-like): they shape pauses, they aren't words.
+            match tok {
+                "{slow}" | "{/slow}" => {
+                    style = style.with(Style::SLOW, tok == "{slow}");
+                    continue;
+                }
+                "{verse}" | "{/verse}" => {
+                    verse = tok == "{verse}";
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(n) = tok.strip_prefix("{pause").and_then(|r| r.strip_suffix('}')).and_then(|r| if r.is_empty() { Some(1) } else { r.strip_prefix(':')?.parse::<u32>().ok() }) {
+                if let Some(last) = words.last_mut() {
+                    last.style = last.style.with_beats(last.style.beats() + n);
+                }
+                continue;
+            }
             let (lead, core, trail_markers, punct) = split_markers(tok);
             if core.is_empty() && punct.is_empty() {
                 continue; // a lone `*` bullet or `---` rule: not a word, not a toggle
@@ -379,18 +429,28 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                 cut -= 1;
             }
             let shown = &scratch[..cut];
+            let opens = shown.chars().filter(|&c| c == '(').count() as u32;
+            let closes = shown.chars().filter(|&c| c == ')').count() as u32;
+            let inside = depth > 0 || opens > 0;
             words.push(Word {
                 start: text.push(shown),
                 len: shown.len() as u16,
                 pause: classify(shown),
-                style: style.with(Style::HEADING, heading),
+                style: style.with(Style::HEADING, heading).with(Style::PAREN, inside),
             });
+            depth = (depth + opens).saturating_sub(closes);
             for m in trail_markers {
                 style = toggle(style, m);
             }
         }
         if heading && words.len() > first_word {
             words.last_mut().unwrap().pause = Pause::Paragraph;
+        }
+        // In verse, every line break is a break on the page and a breath.
+        if verse && !heading && words.len() > first_word {
+            let last = words.last_mut().unwrap();
+            last.style = last.style.with(Style::LINE_END, true);
+            last.pause = last.pause.max(Pause::Clause);
         }
     }
     if let Some(last) = words.last_mut() {
@@ -617,6 +677,52 @@ mod tests {
             b.write_html_range(r, &mut parts).unwrap();
         }
         assert_eq!(parts, whole, "pieces join into the same document");
+    }
+
+    #[test]
+    fn words_inside_parentheses_are_flagged() {
+        let b = Book::new("t", "Before (inside one, inside (two) three) after (x).");
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        assert_eq!(p, [false, true, true, true, true, true, false, true]);
+        assert_eq!(words(&b)[1], "(inside", "the text itself is unchanged");
+        let b = Book::new("t", "Open (never closed\n\nnext paragraph");
+        assert!(!b.word(3).unwrap().style.paren(), "a paragraph ends an unclosed bracket");
+    }
+
+    #[test]
+    fn pause_marks_add_beats_and_are_not_words() {
+        let p = Pacing::default();
+        let b = Book::new("t", "Wait {pause} for it {pause:3} now");
+        assert_eq!(words(&b), ["Wait", "for", "it", "now"]);
+        assert_eq!(b.word(0).unwrap().weight(&p), 200, "one extra beat");
+        assert_eq!(b.word(2).unwrap().weight(&p), 400, "three extra beats");
+        assert_eq!(b.word(3).unwrap().style.beats(), 0);
+    }
+
+    #[test]
+    fn slow_passages_stay_longer() {
+        let p = Pacing::default();
+        let b = Book::new("t", "fast {slow} slow words {/slow} fast");
+        assert_eq!(words(&b), ["fast", "slow", "words", "fast"]);
+        assert_eq!(b.word(1).unwrap().weight(&p), 140);
+        assert_eq!(b.word(3).unwrap().weight(&p), Pause::Paragraph.weight(&p), "slow ended");
+    }
+
+    #[test]
+    fn verse_lines_break_and_breathe() {
+        let b = Book::new("t", "{verse}\nriverrun past Eve\nand Adam's from\n{/verse}\nprose line\nstill prose");
+        let w = |i| b.word(i).unwrap();
+        assert!(w(2).style.line_end() && w(2).pause >= Pause::Clause, "end of a verse line");
+        assert!(w(5).style.line_end(), "end of the second verse line (from)");
+        assert!(!w(7).style.line_end(), "prose lines don't break (line)");
+        let mut html = String::new();
+        b.write_html(&mut html).unwrap();
+        assert!(html.contains("Eve</span><br>"), "{html}");
+    }
+
+    #[test]
+    fn unknown_braces_are_ordinary_words() {
+        assert_eq!(words(&Book::new("t", "a {curly} b {pause:x}")), ["a", "{curly}", "b", "{pause:x}"]);
     }
 
     #[test]
