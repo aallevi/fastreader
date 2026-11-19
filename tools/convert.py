@@ -19,6 +19,7 @@ import collections
 import html
 import posixpath
 import re
+import struct
 import sys
 import unicodedata
 import zipfile
@@ -49,9 +50,9 @@ def wrap(text: str, bold: bool, italic: bool) -> str:
 class XhtmlText(HTMLParser):
     BLOCK = {"p", "div", "li", "blockquote", "br", "tr", "section", "article", "dd", "dt"}
     HEAD = {"h1", "h2", "h3", "h4"}
-    SKIP = {"script", "style", "head", "sup", "img", "svg", "figure", "title"}
+    SKIP = {"script", "style", "head", "sup", "svg", "title"}
 
-    def __init__(self, bold_classes, italic_classes):
+    def __init__(self, bold_classes, italic_classes, picture=None):
         super().__init__(convert_charrefs=True)
         self.out = []
         self.line = []
@@ -59,6 +60,8 @@ class XhtmlText(HTMLParser):
         self.skip = 0
         self.heading = False
         self.bold_classes, self.italic_classes = bold_classes, italic_classes
+        # picture(src) -> "{image:N}" or "" for an <img>/<image>.
+        self.picture = picture
 
     def style(self):
         b = any(t in ("b", "strong") or c & self.bold_classes for t, c in self.stack)
@@ -76,6 +79,13 @@ class XhtmlText(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         classes = set((dict(attrs).get("class") or "").split())
+        if tag in ("img", "image") and self.picture and not self.skip:
+            a = dict(attrs)
+            mark = self.picture(a.get("src") or a.get("xlink:href") or a.get("href") or "")
+            if mark:
+                self.flush()
+                self.out.append(mark)
+            return
         if tag in self.SKIP:
             self.skip += tag not in ("br", "img")
             return
@@ -105,6 +115,72 @@ class XhtmlText(HTMLParser):
         self.line.append(wrap(clean(data), b, i))
 
 
+# ---------------------------------------------------------------- images
+# Pictures go after the text as RGB565, scaled to fit the reader's stage.
+# The text refers to them as {image:N}. A budget keeps books small enough
+# to upload and to hold in the reader's memory.
+
+IMG_W, IMG_H = 300, 190
+IMG_BUDGET = 2_000_000  # bytes of pixels per book
+IMG_MIN = 48  # smaller pictures are decoration (rules, bullets, icons)
+IMAGES_MAGIC = b"\n\0FRIMG1"
+
+
+class Images:
+    def __init__(self):
+        self.items = []
+        self.used = 0
+
+    def add_pixmap(self, pm):
+        """Adds a pymupdf Pixmap; returns the {image:N} mark or ""."""
+        import pymupdf
+        if pm.width < IMG_MIN or pm.height < IMG_MIN:
+            return ""
+        if pm.n - pm.alpha != 3:
+            pm = pymupdf.Pixmap(pymupdf.csRGB, pm)
+        if pm.alpha:
+            pm = pymupdf.Pixmap(pm, 0)
+        scale = min(IMG_W / pm.width, IMG_H / pm.height, 1.0)
+        w, h = max(1, int(pm.width * scale)), max(1, int(pm.height * scale))
+        if self.used + w * h * 2 > IMG_BUDGET:
+            return ""
+        if (w, h) != (pm.width, pm.height):
+            # Area-average downscale (pymupdf's shrink halves; finish with nearest).
+            while pm.width >= 2 * w and pm.height >= 2 * h:
+                pm.shrink(1)
+        src, sw, sh, n = pm.samples, pm.width, pm.height, pm.n
+        out = bytearray(w * h * 2)
+        k = 0
+        for y in range(h):
+            row = (y * sh // h) * pm.stride
+            for x in range(w):
+                i = row + (x * sw // w) * n
+                r, g, b = src[i], src[i + 1], src[i + 2]
+                v = (r >> 3) << 11 | (g >> 2) << 5 | b >> 3
+                out[k] = v & 0xFF
+                out[k + 1] = v >> 8
+                k += 2
+        self.items.append((w, h, bytes(out)))
+        self.used += w * h * 2
+        return f"{{image:{len(self.items) - 1}}}"
+
+    def add_bytes(self, data: bytes):
+        import pymupdf
+        try:
+            return self.add_pixmap(pymupdf.Pixmap(data))
+        except Exception:
+            return ""
+
+    def section(self) -> bytes:
+        if not self.items:
+            return b""
+        out = bytearray(IMAGES_MAGIC)
+        out += struct.pack("<H", len(self.items))
+        for w, h, px in self.items:
+            out += struct.pack("<HH", w, h) + px
+        return bytes(out)
+
+
 def css_classes(css: str):
     bold, italic = set(), set()
     for sel, body in re.findall(r"([^{}]+)\{([^}]*)\}", css):
@@ -116,7 +192,7 @@ def css_classes(css: str):
     return bold, italic
 
 
-def epub(path: Path):
+def epub(path: Path, images: Images):
     z = zipfile.ZipFile(path)
     ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container", "o": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
     opf_path = ET.fromstring(z.read("META-INF/container.xml")).find(".//c:rootfile", ns).get("full-path")
@@ -136,8 +212,16 @@ def epub(path: Path):
         href = items.get(ref.get("idref"), "")
         if not href.endswith((".xhtml", ".html", ".htm")):
             continue
-        p = XhtmlText(bold, italic)
-        p.feed(z.read(posixpath.join(base, html.unescape(href))).decode("utf-8", "replace"))
+        doc = posixpath.join(base, html.unescape(href))
+
+        def picture(src, doc=doc):
+            name = posixpath.normpath(posixpath.join(posixpath.dirname(doc), html.unescape(src).split("#")[0]))
+            try:
+                return images.add_bytes(z.read(name))
+            except KeyError:
+                return ""
+        p = XhtmlText(bold, italic, picture)
+        p.feed(z.read(doc).decode("utf-8", "replace"))
         p.flush()
         parts.extend(p.out)
     return title, "\n\n".join(parts)
@@ -145,7 +229,7 @@ def epub(path: Path):
 
 # ---------------------------------------------------------------- PDF
 
-def pdf(path: Path):
+def pdf(path: Path, images: Images):
     import pymupdf
 
     d = pymupdf.open(path)
@@ -155,7 +239,11 @@ def pdf(path: Path):
     lines_by_page = []
     for pg in d:
         page_lines = []
-        for b in pg.get_text("dict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+        pictures = []
+        for b in pg.get_text("dict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_PRESERVE_IMAGES)["blocks"]:
+            if b.get("type") == 1:
+                pictures.append((b["bbox"], ("image", b.get("image"))))
+                continue
             for ln in b.get("lines", []):
                 spans = [s for s in ln["spans"] if s["text"].strip()]
                 if not spans:
@@ -163,15 +251,30 @@ def pdf(path: Path):
                 for s in spans:
                     sizes[round(s["size"])] += len(s["text"])
                 page_lines.append((b["number"], ln["bbox"], spans))
-        lines_by_page.append((pg.rect.height, page_lines))
+        # Charts and diagrams drawn as vectors: render each cluster as a picture.
+        try:
+            clusters = pg.cluster_drawings()
+        except Exception:
+            clusters = []
+        for r in clusters:
+            if r.width > pg.rect.width * 0.2 and r.height > pg.rect.height * 0.08:
+                pictures.append((tuple(r), ("drawing", r)))
+        # Each picture goes before the first text line below its top; text
+        # keeps its own (column-aware) order.
+        for bbox, pic in sorted(pictures, key=lambda e: e[0][1]):
+            at = next((k for k, e in enumerate(page_lines) if not isinstance(e[2], tuple) and e[1][1] >= bbox[1]), len(page_lines))
+            page_lines.insert(at, (-1, bbox, pic))
+        lines_by_page.append((pg.rect.height, page_lines, pg))
     body = sizes.most_common(1)[0][0] if sizes else 11
 
     # Lines that repeat on many pages (running heads/feet) are noise.
     def norm(t):
         return re.sub(r"\d+", "#", t.strip().lower())
     repeats = collections.Counter()
-    for h, page_lines in lines_by_page:
+    for h, page_lines, _ in lines_by_page:
         for _, bbox, spans in page_lines:
+            if isinstance(spans, tuple):
+                continue
             if bbox[1] < h * 0.1 or bbox[3] > h * 0.9:
                 repeats[norm("".join(s["text"] for s in spans))] += 1
     noise = {k for k, n in repeats.items() if n >= 3}
@@ -189,8 +292,19 @@ def pdf(path: Path):
                 out.append(text)
             para.clear()
 
-    for pno, (h, page_lines) in enumerate(lines_by_page):
+    for pno, (h, page_lines, pg) in enumerate(lines_by_page):
         for block, bbox, spans in page_lines:
+            if isinstance(spans, tuple):
+                kind, what = spans
+                if kind == "image" and what:
+                    mark = images.add_bytes(what)
+                else:
+                    mark = images.add_pixmap(pg.get_pixmap(clip=what, dpi=150)) if kind == "drawing" else ""
+                if mark:
+                    end_para()
+                    out.append(mark)
+                    last_block = None
+                continue
             raw = "".join(s["text"] for s in spans)
             t = raw.strip()
             if not t or re.fullmatch(r"[\divxlcIVXLC\s.\-–—]{1,8}", t) and (bbox[1] < h * 0.1 or bbox[3] > h * 0.9):
@@ -231,10 +345,11 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     for f in a.files:
         ext = f.suffix.lower()
+        images = Images()
         if ext == ".epub":
-            title, text = epub(f)
+            title, text = epub(f, images)
         elif ext == ".pdf":
-            title, text = pdf(f)
+            title, text = pdf(f, images)
         else:
             title, text = f.stem, clean(f.read_text(errors="replace"))
         # A short paragraph set entirely in bold (not italic) is a heading too,
@@ -248,10 +363,11 @@ def main():
         # Collapse 3+ blank lines; first line carries the title for the library.
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         dest = a.out / f"{slug(title)}.md"
-        dest.write_text(f"<!-- title: {title} -->\n{text}")
+        dest.write_bytes(f"<!-- title: {title} -->\n{text}".encode() + images.section())
         words = len(text.split())
         heads = text.count("\n# ") + text.startswith("# ")
-        print(f"{dest}  {words} words, {heads} headings  ({title})")
+        pics = f", {len(images.items)} pictures ({images.used // 1024} KB)" if images.items else ""
+        print(f"{dest}  {words} words, {heads} headings{pics}  ({title})")
 
 
 if __name__ == "__main__":

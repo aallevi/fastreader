@@ -14,9 +14,9 @@ fn main() {
             books.push((stem, fs::canonicalize(&p).unwrap()));
         }
     }
-    let mut out = String::from("/// (fallback title, text) for every embedded book.\npub static BOOKS: &[(&str, &str)] = &[\n");
+    let mut out = String::from("/// (fallback title, file bytes: text then optional images) for every embedded book.\npub static BOOKS: &[(&str, &[u8])] = &[\n");
     for (stem, path) in &books {
-        out += &format!("    ({stem:?}, include_str!({:?})),\n", path.display().to_string());
+        out += &format!("    ({stem:?}, include_bytes!({:?})),\n", path.display().to_string());
     }
     out += "];\n";
     fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join("books.rs"), out).unwrap();

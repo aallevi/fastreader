@@ -251,6 +251,26 @@ impl Canvas {
         }
     }
 
+    /// Draws an RGB565 picture scaled to fit inside `r` (keeping its shape,
+    /// never enlarged more than 2×), centred. Returns the area covered.
+    pub fn image(&mut self, r: Rect, w: u16, h: u16, px: &[u16]) -> Rect {
+        if w == 0 || h == 0 || px.len() < w as usize * h as usize || r.is_empty() {
+            return Rect::default();
+        }
+        let scale = (r.w as f32 / w as f32).min(r.h as f32 / h as f32).min(2.0);
+        let (dw, dh) = ((w as f32 * scale) as i32, (h as f32 * scale) as i32);
+        let dst = r.centered(dw.max(1), dh.max(1));
+        for y in dst.y.max(self.clip.y)..dst.bottom().min(self.clip.bottom()) {
+            let sy = (((y - dst.y) as f32 / scale) as usize).min(h as usize - 1);
+            for x in dst.x.max(self.clip.x)..dst.right().min(self.clip.right()) {
+                let sx = (((x - dst.x) as f32 / scale) as usize).min(w as usize - 1);
+                self.px[(y * self.w + x) as usize] = crate::color::from565(px[sy * w as usize + sx]);
+            }
+        }
+        self.writes += (dw * dh).max(0) as u64;
+        dst
+    }
+
     /// Pixels of `r` in RGB565 (big-endian order is up to the display),
     /// with 4×4 ordered dithering to hide gradient banding.
     pub fn rgb565(&self, r: Rect) -> impl Iterator<Item = u16> + '_ {

@@ -280,6 +280,12 @@ fn clear(cv: &mut Canvas, th: &Theme, l: &Layout, r: Rect) {
     cv.fill(r.intersect(&p), th.page);
 }
 
+/// A word's text for running text (ticker, context, line view): pictures
+/// show as a short placeholder there.
+fn running_text(book: &reader_core::Book, w: reader_core::Word) -> &str {
+    if book.is_image(w) { "[figure]" } else { book.text_of(w) }
+}
+
 /// Whether the place on screen has a bookmark: the word(s) shown, or in
 /// page view anything on the page.
 fn place_bookmarked(app: &App) -> bool {
@@ -308,23 +314,75 @@ fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
         cv.line((x0 + s * 0.35, y0 + 1.0), (x0 + s - 1.0, y0 + s * 0.65), l.px(1.0), mix(th.page, th.text, 45));
         return;
     }
-    // What lies behind the page shows where the corner was.
+    if th.chrome == Chrome::Win98 {
+        draw_corner_98(cv, th, r);
+        return;
+    }
+    // The corner folds down over the page along the diagonal: the cut-off
+    // triangle shows what lies behind, the flap (the paper's back) lies on
+    // the page and casts a soft shadow; light catches it along the crease.
     let behind = match th.chrome {
         Chrome::Scrivener => th.desktop[0].1,
         _ => mix(th.page, BLACK, 95),
     };
     cv.polygon(&[(x0, y0), (x0 + s, y0), (x0 + s, y0 + s)], behind);
-    // Soft shadow under the flap, then the flap itself (the paper's back side).
-    cv.clip(Rect::new(r.x - l.i(10.0), r.y, r.w + l.i(10.0), r.h + l.i(10.0)));
-    cv.glow(x0 + s * 0.3, y0 + s * 0.78, s * 0.8, s * 0.55, BLACK, 110);
+    let (a, b, tip) = ((x0, y0), (x0 + s, y0 + s), (x0, y0 + s));
+    // Shadow: under the flap, spilling down-left onto the page.
+    cv.clip(Rect::new(r.x - l.i(14.0), r.y, r.w + l.i(14.0), r.h + l.i(14.0)));
+    cv.glow(x0 + s * 0.25, y0 + s * 0.8, s * 0.85, s * 0.6, BLACK, 120);
     cv.unclip();
-    let flap = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 38) };
-    cv.polygon(&[(x0, y0), (x0 + s, y0 + s), (x0, y0 + s)], flap);
-    // The crease catches the light.
-    cv.line((x0 + 0.5, y0 + 0.5), (x0 + s - 0.5, y0 + s - 0.5), l.px(1.0), mix(th.page, WHITE, 120));
+    // Flap: a little darker at the tip, brightening toward the crease.
+    let back = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 30) };
+    let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    for k in 0..6 {
+        let t = 1.0 - k as f32 * 0.16;
+        let p3 = (mid.0 + (tip.0 - mid.0) * t, mid.1 + (tip.1 - mid.1) * t);
+        cv.polygon(&[a, b, p3], mix(back, WHITE, (k * 22) as u8));
+    }
+    // The glare: a thin bright line right on the fold.
+    cv.line((a.0 + 0.5, a.1 + 0.5), (b.0 - 0.5, b.1 - 0.5), l.px(1.0), mix(th.page, WHITE, 170));
     if th.chrome == Chrome::Ink {
-        cv.line((x0, y0), (x0, y0 + s), 1.0, th.text);
-        cv.line((x0, y0 + s), (x0 + s, y0 + s), 1.0, th.text);
+        cv.line(a, tip, 1.0, th.text);
+        cv.line(tip, b, 1.0, th.text);
+    }
+}
+
+/// The dog-ear the Windows 98 way: whole pixels, no blur. The desktop teal
+/// shows through the cut, the flap is button grey with the classic bevel
+/// (white on the lit fold, dark grey and black on the edges away from the
+/// light) and its shadow is a hard 50% checkerboard, as 98 drew shadows.
+fn draw_corner_98(cv: &mut Canvas, th: &Theme, r: Rect) {
+    let n = r.w;
+    let (x0, y0) = (r.x, r.y);
+    let px = |cv: &mut Canvas, x: i32, y: i32, c: Rgb| cv.fill(Rect::new(x, y, 1, 1), c);
+    let face = 0xC0C0C0;
+    for j in 0..n {
+        for i in 0..n {
+            let (x, y) = (x0 + i, y0 + j);
+            if i > j {
+                px(cv, x, y, th.desktop[0].1); // cut away: the desktop behind
+            } else {
+                px(cv, x, y, face); // the flap
+            }
+        }
+    }
+    // Shadow: dithered, one pixel down-left of the flap's outer edges.
+    for k in 0..n + 2 {
+        for (x, y) in [(x0 - 2, y0 + k), (x0 - 1 + k - 2, y0 + n + 1), (x0 - 1, y0 + k + 1), (x0 + k - 2, y0 + n)] {
+            if (x + y) % 2 == 0 && y > y0 && x < x0 + n {
+                px(cv, x, y, 0x000000);
+            }
+        }
+    }
+    // Bevel: the fold catches the light; the outer edges are in shade.
+    for k in 0..n {
+        px(cv, x0 + k, y0 + k, 0xFFFFFF);
+        if k + 1 < n {
+            px(cv, x0 + k + 1, y0 + k, 0x808080);
+        }
+        px(cv, x0, y0 + k, 0x808080);
+        px(cv, x0 + k, y0 + n - 1, 0x000000);
+        px(cv, x0 - 1, y0 + k, 0x000000);
     }
 }
 
@@ -563,6 +621,23 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         return l.word.intersect(&p);
     }
     let mode = app.settings.mode();
+    let shown = app.reader.shown();
+    if mode != Mode::Ticker && shown.len() == 1 && book.is_image(book.word(shown.start).unwrap()) {
+        // A picture: it gets the whole stage (word and context areas).
+        let area = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
+        clear(cv, th, l, area);
+        match book.image_of(book.word(shown.start).unwrap()) {
+            Some(img) => {
+                cv.image(area.inset(l.i(10.0), l.i(4.0)), img.w, img.h, &img.px);
+            }
+            None => {
+                let msg = up(th, "[figure missing]");
+                let w = f.measure(th.ui.0, l.px(13.0), &msg);
+                f.draw(cv, th.ui.0, l.px(13.0), &msg, area.cx() - w / 2.0, area.cy(), th.dim);
+            }
+        }
+        return area;
+    }
     if mode == Mode::Ticker {
         // Only the strip the line of text occupies is redrawn each frame.
         let band = ticker_band(f, c).intersect(&l.word.intersect(&p));
@@ -580,7 +655,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         .map(|i| {
             let w = book.word(i).unwrap();
             let t = book.text_of(w);
-            let t = if side_marks { t.replace(['(', ')'], "") } else { String::from(t) };
+            let t = if side_marks { t.replace(reader_core::book::OPENERS, "").replace(reader_core::book::CLOSERS, "") } else { String::from(t) };
             (t, fam.face(w.style), w.style.heading())
         })
         .filter(|(t, _, _)| !t.is_empty())
@@ -589,45 +664,45 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         return l.word.intersect(&p);
     }
     let heading = words.iter().any(|w| w.2);
-    // Phrases are set a little smaller so a whole group fits on one line.
+    // One size per mode, never changing from flash to flash (Spritz,
+    // OpenSpritz and Jetzt never resize; resizing reads as jumping).
     let phrase = mode == Mode::Phrase;
     let mut px = word_px(c) * if phrase { PHRASE_SCALE } else { 1.0 };
-    let left = p.x as f32 + phrase_left(l, p);
-    // The original keeps 30 px of 792 (about 4%) clear on the right.
-    let avail = if phrase { p.right() as f32 - p.w as f32 * 0.038 - left } else { (p.w as f32 - l.px(28.0)).max(10.0) };
     let measure = |f: &mut Fonts, px: f32| -> f32 {
         let space = f.measure(words[0].1, px, " ");
         words.iter().map(|(s, face, _)| f.measure(*face, px, s)).sum::<f32>() + space * (words.len() - 1) as f32
     };
     let mut total = measure(f, px);
-    let mut shift_left = 0.0;
-    if phrase {
-        // As on the original: one working size so letters don't change from
-        // flash to flash; only a group that would run past the right edge
-        // steps down (−15% per step, two steps), and as a last resort it
-        // starts further left.
-        for step in [0.85, 0.85] {
-            if total <= avail {
-                break;
-            }
-            px *= step;
-            total = measure(f, px);
-        }
-        if total > avail {
-            shift_left = (total - avail).min(left - p.x as f32 - l.px(10.0));
-        }
-    } else if total > avail {
-        // Long words shrink to fit instead of being cut off.
-        px *= (avail / total).max(0.5);
+    // Side marks take the edges; words stay clear of them.
+    let margin = if side_marks { word_px(c) * 0.75 } else { l.px(8.0) };
+    let room = p.w as f32 - 2.0 * margin;
+    if total > room {
+        // Only a word or group wider than the whole page shrinks.
+        px *= room / total;
         total = measure(f, px);
     }
+    let fix = fixation_x(p);
+    let x0 = if !phrase && words.len() == 1 {
+        // A single word: its optimal recognition letter sits on the fixation
+        // point (Spritz patent US9483109: 2nd letter of 2–5, 3rd of 6–9,
+        // 4th of 10–13), so the eye never moves.
+        let (s, face, _) = &words[0];
+        let k = reader_core::book::orp_index(s);
+        let before: String = s.chars().take(k).collect();
+        let letter: String = s.chars().skip(k).take(1).collect();
+        fix - f.measure(*face, px, &before) - f.measure(*face, px, &letter) / 2.0
+    } else {
+        // A group starts a fixed few letters before the fixation point: the
+        // eye takes in ~4 letters left of where it rests and ~15 right
+        // (McConkie & Rayner), so the group's start never jumps (the
+        // original e-reader's reason for a fixed left edge).
+        fix - f.measure(words[0].1, px, "abcd") * 0.875
+    };
+    // Rarely a long group runs past the right edge: it starts further left.
+    let x0 = x0.min(p.right() as f32 - margin - total).max(p.x as f32 + margin);
     let base = word_baseline(f, c);
     let m = f.line(fam.face(Style::PLAIN), px);
     let colour = if heading { th.heading } else { th.text };
-    // Word mode centres; Phrase mode starts every group at the same left
-    // point, so the eye returns to one spot and only the right edge moves
-    // (as on the original e-reader).
-    let x0 = if phrase { left - shift_left } else { p.cx() - total.min(avail) / 2.0 };
     let mut x = x0;
     cv.clip(l.word.intersect(&p));
     let space = f.measure(words[0].1, px, " ");
@@ -638,9 +713,10 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         let face = fam.face(Style::PLAIN);
         let bpx = word_px(c) * 1.15;
         let inset = l.px(5.0);
-        f.draw(cv, face, bpx, "(", p.x as f32 + inset, base, th.dim);
-        let rw = f.measure(face, bpx, ")");
-        f.draw(cv, face, bpx, ")", p.right() as f32 - inset - rw, base, th.dim);
+        let (open, close) = reader_core::book::bracket_pair(book, app.reader.pos());
+        f.draw(cv, face, bpx, open, p.x as f32 + inset, base, th.dim);
+        let rw = f.measure(face, bpx, close);
+        f.draw(cv, face, bpx, close, p.right() as f32 - inset - rw, base, th.dim);
     }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
@@ -651,18 +727,17 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         let tall = word_px(c) * 1.15;
         return Rect::new(p.x, (base - tall) as i32, p.w, (tall * 1.4) as i32).intersect(&l.word.intersect(&p));
     }
-    let shown_w = if phrase { total } else { total.min(avail) };
-    Rect::new((x0 - pad) as i32, top as i32, (shown_w + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
+    Rect::new((x0 - pad) as i32, top as i32, (total + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
         .intersect(&l.word.intersect(&p))
 }
 
 /// Phrase and ticker text size relative to the single-word size.
-const PHRASE_SCALE: f32 = 0.72;
+const PHRASE_SCALE: f32 = 0.62;
 
-/// Where Phrase-mode groups start: the original's left edge (90 px of a
-/// 792 px panel, about 11%), so the eye returns to one spot every flash.
-fn phrase_left(l: &Layout, p: Rect) -> f32 {
-    (p.w as f32 * 0.114).max(l.px(18.0))
+/// Where the eye rests in Word and Phrase modes: a little left of centre,
+/// as the Spritz reticle, so long words and groups have room on the right.
+fn fixation_x(p: Rect) -> f32 {
+    p.x as f32 + p.w as f32 * 0.37
 }
 
 /// The horizontal strip the ticker's text covers.
@@ -691,9 +766,13 @@ fn draw_ticker(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let space = f.measure(fam.face(Style::PLAIN), px, " ");
     let word = |i: usize| book.word(i).unwrap();
     let cur = word(pos);
-    let cw = f.measure(fam.face(cur.style), px, book.text_of(cur));
+    let cw = f.measure(fam.face(cur.style), px, running_text(book, cur));
+    // Typewriter: the line jumps one word per step and stands still in
+    // between (a glide is tiring for the eye). The new word types in at the
+    // anchor; the words read move to the left in steps.
+    let _ = cw;
     let anchor = p.x as f32 + p.w as f32 * 0.32;
-    let x_cur = anchor - app.reader.progress(c.now) * (cw + space);
+    let x_cur = anchor;
     cv.clip(l.word.intersect(&p));
     let colour = |w: reader_core::Word, past: bool| {
         if past { th.dim } else if w.style.heading() { th.heading } else { th.text }
@@ -702,7 +781,7 @@ fn draw_ticker(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let mut i = pos;
     while x < p.right() as f32 && i < book.len() {
         let w = word(i);
-        x += f.draw(cv, fam.face(w.style), px, book.text_of(w), x, base, colour(w, false)) + space;
+        x += f.draw(cv, fam.face(w.style), px, running_text(book, w), x, base, colour(w, false)) + space;
         i += 1;
     }
     let mut x = x_cur - space;
@@ -710,7 +789,7 @@ fn draw_ticker(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     while x > p.x as f32 && i > 0 {
         i -= 1;
         let w = word(i);
-        let s = book.text_of(w);
+        let s = running_text(book, w);
         let ww = f.measure(fam.face(w.style), px, s);
         f.draw(cv, fam.face(w.style), px, s, x - ww, base, colour(w, true));
         x -= ww + space;
@@ -731,7 +810,7 @@ fn draw_line(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let space = f.measure(fam.face(Style::PLAIN), px, " ");
     let word = |i: usize| book.word(i).unwrap();
     let cur = word(pos);
-    let cur_s = book.text_of(cur);
+    let cur_s = running_text(book, cur);
     let cw = f.measure(fam.face(cur.style), px, cur_s);
     let x0 = p.cx() - cw / 2.0;
     cv.clip(l.word.intersect(&p));
@@ -743,7 +822,7 @@ fn draw_line(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let mut i = pos + 1;
     while x < p.right() as f32 && i < book.len() {
         let w = word(i);
-        x += f.draw(cv, fam.face(w.style), px, book.text_of(w), x, base, th.text) + space;
+        x += f.draw(cv, fam.face(w.style), px, running_text(book, w), x, base, th.text) + space;
         i += 1;
     }
     let mut x = x0 - space;
@@ -751,7 +830,7 @@ fn draw_line(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     while x > p.x as f32 && i > 0 {
         i -= 1;
         let w = word(i);
-        let s = book.text_of(w);
+        let s = running_text(book, w);
         let ww = f.measure(fam.face(w.style), px, s);
         f.draw(cv, fam.face(w.style), px, s, x - ww, base, th.dim);
         x -= ww + space;
@@ -763,6 +842,13 @@ fn draw_line(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
 /// weakness is that you can't glance back; this restores the glance).
 fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let (th, l, app) = (c.th, c.l, c.app);
+    let on_picture = matches!(app.screen, Screen::Reading)
+        && app.settings.mode() != Mode::Ticker
+        && app.reader.shown().len() == 1
+        && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w));
+    if on_picture {
+        return; // the picture covers this area
+    }
     clear(cv, th, l, l.context);
     let p = paper(th, l);
     let r = l.context.intersect(&p);
@@ -774,6 +860,9 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     }
     if app.screen != Screen::Reading || app.reader.is_playing() || app.reader.book.is_empty() || !app.settings.context {
         return;
+    }
+    if app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w)) {
+        return; // a picture fills the stage; no sentence under it
     }
     let book = &app.reader.book;
     let fam = family(app.settings.font);
@@ -788,7 +877,7 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let mut i = start;
     while i < book.len() {
         let w = book.word(i).unwrap();
-        let ww = f.measure(fam.face(w.style), px, book.text_of(w));
+        let ww = f.measure(fam.face(w.style), px, running_text(book, w));
         if lw + ww > max_w && !lines.last().unwrap().is_empty() {
             if lines.len() == 2 {
                 break;
@@ -826,7 +915,7 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         for &(idx, ww) in line {
             let w = book.word(idx).unwrap();
             let here = shown.contains(&idx);
-            f.draw(cv, fam.face(w.style), px, book.text_of(w), x, y, if here { th.mark_text } else { th.dim });
+            f.draw(cv, fam.face(w.style), px, running_text(book, w), x, y, if here { th.mark_text } else { th.dim });
             x += ww + space;
         }
     }
@@ -998,6 +1087,8 @@ struct Placed {
     w: f32,
     face: Face,
     px: f32,
+    /// A picture's drawn height (0 for words); `base` is then its bottom.
+    img_h: f32,
 }
 
 /// Lays out one page starting at word `start`; returns the words and where
@@ -1051,6 +1142,27 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
 
     while i < book.len() {
         let w = book.word(i).unwrap();
+        if book.is_image(w) {
+            // A picture is a block of its own, scaled to the column.
+            if !flush(&mut line, &mut out, &mut y, line_heading, gap_before, true, f) {
+                let next = next_of(&out);
+                return (out, next);
+            }
+            x = 0.0;
+            let (iw, ih) = book.image_of(w).map_or((area.w as f32, base_px * 2.0), |m| (m.w as f32, m.h as f32));
+            let scale = (area.w as f32 / iw).min(area.h as f32 / ih).min(2.0);
+            let (dw, dh) = (iw * scale, ih * scale);
+            let gap = base_px * 0.5;
+            if y + gap + dh > area.bottom() as f32 && !out.is_empty() {
+                return (out, i); // the picture starts the next page
+            }
+            y += gap;
+            out.push(Placed { idx: i, x: area.x as f32 + (area.w as f32 - dw) / 2.0, base: y + dh, w: dw, face: fam.face(w.style), px: base_px, img_h: dh });
+            y += dh + gap;
+            gap_before = 0.0;
+            i += 1;
+            continue;
+        }
         let heading = w.style.heading();
         let px = if heading { base_px * 1.3 } else { base_px };
         let face = fam.face(w.style);
@@ -1073,7 +1185,7 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
                 x = indent;
             }
         }
-        line.push(Placed { idx: i, x: area.x as f32 + x, base: 0.0, w: ww, face, px });
+        line.push(Placed { idx: i, x: area.x as f32 + x, base: 0.0, w: ww, face, px, img_h: 0.0 });
         x += ww + space;
         i += 1;
         if w.pause == Pause::Paragraph {
@@ -1137,6 +1249,9 @@ fn draw_page(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, moved_from: Option<core::o
     }
     let line_rect = |f: &mut Fonts, a: usize| {
         let p = &placed[a];
+        if p.img_h > 0.0 {
+            return Rect::new(text_area.x, (p.base - p.img_h) as i32 - 1, text_area.w, p.img_h as i32 + 2);
+        }
         let m = f.line(p.face, p.px);
         Rect::new(text_area.x, (p.base - m.ascent - l.px(2.0)) as i32, text_area.w, (m.ascent + m.descent + l.px(4.0)) as i32)
     };
@@ -1164,7 +1279,7 @@ fn draw_page(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, moved_from: Option<core::o
         }
         // The phrase being read: one highlight shape per line.
         if show {
-            let lit: Vec<usize> = (a..=z).filter(|&k| phrase.contains(&placed[k].idx)).collect();
+            let lit: Vec<usize> = (a..=z).filter(|&k| placed[k].img_h == 0.0 && phrase.contains(&placed[k].idx)).collect();
             if let (Some(&first), Some(&last)) = (lit.first(), lit.last()) {
                 let (p0, p1) = (&placed[first], &placed[last]);
                 let m = f.line(p0.face, p0.px);
@@ -1175,6 +1290,22 @@ fn draw_page(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, moved_from: Option<core::o
         }
         for p in &placed[a..=z] {
             let w = book.word(p.idx).unwrap();
+            if p.img_h > 0.0 {
+                let r = Rect::new(p.x as i32, (p.base - p.img_h) as i32, p.w as i32 + 1, p.img_h as i32 + 1);
+                match book.image_of(w) {
+                    Some(img) => {
+                        cv.image(r, img.w, img.h, &img.px);
+                    }
+                    None => {
+                        cv.rrect_stroke(r, 2.0, th.dim);
+                    }
+                }
+                if show && phrase.contains(&p.idx) {
+                    // The picture being "read": a frame instead of a highlight.
+                    cv.rrect_stroke(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), 3.0, th.fill);
+                }
+                continue;
+            }
             let lit = show && phrase.contains(&p.idx);
             let colour = if lit { th.mark_text } else if w.style.heading() { th.heading } else { th.text };
             if !show && p.idx == pos && pos != start {

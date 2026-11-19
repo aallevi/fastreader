@@ -107,12 +107,56 @@ impl Word {
         // Titles are the signposts of a book: they stay longer (2× by default).
         let w = if self.style.heading() { w * p.title as u32 / 10 } else { w };
         let w = if self.style.slow() { w * 14 / 10 } else { w };
+        // An aside in brackets has its own speed (pauses keep their length).
+        let pause_extra = self.pause.weight(p).saturating_sub(100);
+        let w = if self.style.paren() { (w - pause_extra) * p.aside as u32 / 10 + pause_extra } else { w };
         w + self.style.beats() * 100
     }
 }
 
+/// A picture, ready for the screen: RGB565 pixels, row by row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Image {
+    pub w: u16,
+    pub h: u16,
+    pub px: Vec<u16>,
+}
+
+/// Marks an image word's text; the rest of the text is its index.
+const IMAGE_MARK: char = '\u{FFFC}';
+/// Separates text from the image section in a book file.
+pub const IMAGES_MAGIC: &[u8] = b"\n\0FRIMG1";
+
+/// Reads the image section: count (u16), then width, height (u16) and
+/// width × height RGB565 pixels (little endian) per image.
+pub fn parse_images(mut b: &[u8]) -> Vec<Image> {
+    let mut out = Vec::new();
+    let u16_at = |b: &[u8], i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
+    if b.len() < 2 {
+        return out;
+    }
+    let n = u16_at(b, 0);
+    b = &b[2..];
+    for _ in 0..n {
+        if b.len() < 4 {
+            break;
+        }
+        let (w, h) = (u16_at(b, 0), u16_at(b, 2));
+        let len = w as usize * h as usize * 2;
+        if b.len() < 4 + len {
+            break;
+        }
+        let px = b[4..4 + len].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        out.push(Image { w, h, px });
+        b = &b[4 + len..];
+    }
+    out
+}
+
 pub struct Book {
     pub title: String,
+    /// Pictures referenced by `{image:N}` marks in the text.
+    pub images: Vec<Image>,
     /// All words, cleaned of markup, in 64 KB blocks.
     text: ChunkedText,
     words: Chunked<Word>,
@@ -149,9 +193,34 @@ impl Book {
                 i += 1;
             }
         }
-        let mut b = Book { title: title.into(), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), images: Vec::new(), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
+    }
+
+    /// Builds a book from a file's bytes: text, then optionally the image
+    /// section (see [`IMAGES_MAGIC`]).
+    pub fn from_bytes(bytes: &[u8], fallback: &str) -> Self {
+        let split = bytes.windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC);
+        let (text, images) = match split {
+            Some(i) => (&bytes[..i], parse_images(&bytes[i + IMAGES_MAGIC.len()..])),
+            None => (bytes, Vec::new()),
+        };
+        let mut book = Book::parse(&String::from_utf8_lossy(text), fallback);
+        book.images = images;
+        book
+    }
+
+    /// The picture a word stands for, if it is an image word.
+    pub fn image_of(&self, w: Word) -> Option<&Image> {
+        let t = self.text_of(w);
+        let n: usize = t.strip_prefix(IMAGE_MARK)?.parse().ok()?;
+        self.images.get(n)
+    }
+
+    /// Whether a word is an image (even if its picture is missing).
+    pub fn is_image(&self, w: Word) -> bool {
+        self.text_of(w).starts_with(IMAGE_MARK)
     }
 
     /// Builds a book from converter output: an optional first line
@@ -332,6 +401,13 @@ impl Book {
                 open = true;
             }
             let (b, it) = (w.style.bold() && !w.style.heading(), w.style.italic());
+            if self.is_image(w) {
+                let n = &self.text_of(w)[IMAGE_MARK.len_utf8()..];
+                write!(out, "<span id=\"w{i}\"><img src=\"/img/{n}\" alt=\"\"></span>")?;
+                out.write_str(if open { "</p>\n" } else { "\n" })?;
+                open = false;
+                continue;
+            }
             write!(out, "<span id=\"w{i}\">")?;
             if b { out.write_str("<b>")?; }
             if it { out.write_str("<i>")?; }
@@ -407,6 +483,17 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                 }
                 _ => {}
             }
+            if let Some(n) = tok.strip_prefix("{image:").and_then(|r| r.strip_suffix('}')).and_then(|r| r.parse::<u32>().ok()) {
+                // A picture is its own paragraph, shown 4× a plain word (paragraph + 1 beat).
+                if let Some(last) = words.last_mut() {
+                    last.pause = Pause::Paragraph;
+                }
+                scratch.clear();
+                scratch.push(IMAGE_MARK);
+                let _ = core::fmt::Write::write_fmt(&mut scratch, format_args!("{n}"));
+                words.push(Word { start: text.push(&scratch), len: scratch.len() as u16, pause: Pause::Paragraph, style: Style::PLAIN.with_beats(1) });
+                continue;
+            }
             if let Some(n) = tok.strip_prefix("{pause").and_then(|r| r.strip_suffix('}')).and_then(|r| if r.is_empty() { Some(1) } else { r.strip_prefix(':')?.parse::<u32>().ok() }) {
                 if let Some(last) = words.last_mut() {
                     last.style = last.style.with_beats(last.style.beats() + n);
@@ -429,8 +516,8 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                 cut -= 1;
             }
             let shown = &scratch[..cut];
-            let opens = shown.chars().filter(|&c| c == '(').count() as u32;
-            let closes = shown.chars().filter(|&c| c == ')').count() as u32;
+            let opens = shown.chars().filter(|c| OPENERS.contains(c)).count() as u32;
+            let closes = shown.chars().filter(|c| CLOSERS.contains(c)).count() as u32;
             let inside = depth > 0 || opens > 0;
             words.push(Word {
                 start: text.push(shown),
@@ -439,6 +526,21 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                 style: style.with(Style::HEADING, heading).with(Style::PAREN, inside),
             });
             depth = (depth + opens).saturating_sub(closes);
+            // Brackets are punctuation: a breath as the aside opens and closes.
+            if shown.starts_with(OPENERS) && words.len() >= 2 {
+                let n = words.len();
+                let before = words.get(n - 2).unwrap();
+                if before.pause < Pause::Clause {
+                    words.set(n - 2, Word { pause: Pause::Clause, ..before });
+                }
+            }
+            if closes > 0 && shown.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\'', '”', '’']).ends_with(CLOSERS) {
+                let n = words.len();
+                let me = words.get(n - 1).unwrap();
+                if me.pause < Pause::Clause {
+                    words.set(n - 1, Word { pause: Pause::Clause, ..me });
+                }
+            }
             for m in trail_markers {
                 style = toggle(style, m);
             }
@@ -507,9 +609,45 @@ impl Iterator for MarkerIter<'_> {
     }
 }
 
+/// Brackets that open and close an aside: ( ), < > (also << >>), « », ‹ ›.
+pub const OPENERS: [char; 4] = ['(', '<', '«', '‹'];
+pub const CLOSERS: [char; 4] = [')', '>', '»', '›'];
+
+/// The bracket pair the aside around word `i` uses, found by walking back
+/// to its opener (doubled ASCII << >> shows as « »).
+pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
+    let mut depth = 0i32;
+    let mut j = i + 1;
+    while j > 0 && i + 1 - j < 400 {
+        j -= 1;
+        let Some(w) = book.word(j) else { break };
+        if !w.style.paren() && j != i {
+            break;
+        }
+        let t = book.text_of(w);
+        for c in t.chars().rev() {
+            if CLOSERS.contains(&c) && j != i {
+                depth += 1;
+            } else if OPENERS.contains(&c) {
+                if depth == 0 {
+                    return match c {
+                        '<' if t.contains("<<") => ("«", "»"),
+                        '<' => ("<", ">"),
+                        '«' => ("«", "»"),
+                        '‹' => ("‹", "›"),
+                        _ => ("(", ")"),
+                    };
+                }
+                depth -= 1;
+            }
+        }
+    }
+    ("(", ")")
+}
+
 fn classify(word: &str) -> Pause {
     // Look past closing quotes/brackets: `end."` still ends a sentence.
-    let tail = word.trim_end_matches(['"', '\'', ')', ']', '»', '”', '’']);
+    let tail = word.trim_end_matches(['"', '\'', ')', ']', '>', '»', '›', '”', '’']);
     match tail.chars().last() {
         Some('.' | '!' | '?' | '…') => Pause::Sentence,
         Some(',' | ';' | ':' | '—' | '–') => Pause::Clause,
@@ -677,6 +815,77 @@ mod tests {
             b.write_html_range(r, &mut parts).unwrap();
         }
         assert_eq!(parts, whole, "pieces join into the same document");
+    }
+
+    fn image_bytes(images: &[(u16, u16)]) -> Vec<u8> {
+        let mut b = IMAGES_MAGIC.to_vec();
+        b.extend_from_slice(&(images.len() as u16).to_le_bytes());
+        for &(w, h) in images {
+            b.extend_from_slice(&w.to_le_bytes());
+            b.extend_from_slice(&h.to_le_bytes());
+            for k in 0..(w as u32 * h as u32) {
+                b.extend_from_slice(&(k as u16).to_le_bytes());
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn images_are_words_of_their_own_with_pictures() {
+        let mut file = b"Before the figure.\n\n{image:1}\n\n{image:0}\nAfter.".to_vec();
+        file.extend(image_bytes(&[(2, 3), (4, 1)]));
+        let b = Book::from_bytes(&file, "t");
+        assert_eq!(b.len(), 6);
+        let img = b.image_of(b.word(3).unwrap()).unwrap();
+        assert_eq!((img.w, img.h, img.px.len()), (4, 1, 4), "{{image:1}} is the second picture");
+        assert_eq!(b.image_of(b.word(4).unwrap()).unwrap().w, 2);
+        let p = Pacing::default();
+        assert_eq!(b.word(3).unwrap().weight(&p), 400, "an image stays 4× a plain word");
+        assert_eq!(b.word(2).unwrap().pause, Pause::Paragraph, "the word before ends its paragraph");
+        assert_eq!(b.group(2, 3), 2..3, "an image is never grouped with words");
+        assert_eq!(b.phrase(3, 3), 3..4);
+        let mut html = String::new();
+        b.write_html(&mut html).unwrap();
+        assert!(html.contains("<img src=\"/img/1\""), "{html}");
+    }
+
+    #[test]
+    fn missing_or_broken_images_are_safe() {
+        let b = Book::from_bytes(b"{image:5} text", "t");
+        assert!(b.is_image(b.word(0).unwrap()) && b.image_of(b.word(0).unwrap()).is_none());
+        let mut file = b"x".to_vec();
+        file.extend_from_slice(IMAGES_MAGIC);
+        file.extend_from_slice(&[1, 0, 200, 0, 200]); // truncated image
+        assert!(Book::from_bytes(&file, "t").images.is_empty());
+    }
+
+    #[test]
+    fn brackets_pause_like_commas_and_asides_have_their_own_speed() {
+        let b = Book::new("t", "She said (quietly, almost to herself) nothing more");
+        let pauses: Vec<Pause> = (0..b.len()).map(|i| b.word(i).unwrap().pause).collect();
+        assert_eq!(pauses[1], Pause::Clause, "a breath before the aside opens");
+        assert_eq!(pauses[5], Pause::Clause, "and as it closes");
+        assert_eq!(pauses[6], Pause::Normal);
+        let p = Pacing { long_words: false, ..Pacing::default() };
+        assert_eq!(b.word(3).unwrap().weight(&p), 100 * p.aside as u32 / 10, "aside words go at the aside speed");
+        assert_eq!(b.word(6).unwrap().weight(&p), 100);
+        let even = Pacing { aside: 10, ..p };
+        assert_eq!(b.word(3).unwrap().weight(&even), 100);
+        let clause = Pause::Clause.weight(&p);
+        assert_eq!(b.word(5).unwrap().weight(&p), 100 * p.aside as u32 / 10 + clause - 100, "the closing pause keeps its length");
+    }
+
+    #[test]
+    fn angle_brackets_and_guillemets_are_asides_too() {
+        let b = Book::new("t", "He said «come here» and <<then>> left <x y> ok");
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        assert_eq!(p, [false, false, true, true, false, true, false, true, true, false]);
+        assert_eq!(bracket_pair(&b, 3), ("«", "»"));
+        assert_eq!(bracket_pair(&b, 5), ("«", "»"), "<< >> shows as « »");
+        assert_eq!(bracket_pair(&b, 8), ("<", ">"));
+        assert_eq!(b.word(1).unwrap().pause, Pause::Clause, "a breath before the aside");
+        let b = Book::new("t", "a (b [c] d) e");
+        assert_eq!(bracket_pair(&b, 3), ("(", ")"));
     }
 
     #[test]

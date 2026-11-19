@@ -51,12 +51,13 @@ fn main() {
 }
 
 pub fn load_book(path: &Path) -> Book {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| {
         eprintln!("could not read {}: {e}; using a placeholder", path.display());
-        String::from("# No book\nPass a .md or .txt file as the first argument.")
+        b"# No book\nPass a .md or .txt file as the first argument.".to_vec()
     });
     let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Book").replace(['_', '-'], " ");
-    Book::parse(&text, &title)
+    // Text, then optionally the image section (converter / upload output).
+    Book::from_bytes(&bytes, &title)
 }
 
 /// Every book in `books/` and `books/private/` (converted with tools/convert.py).
@@ -81,7 +82,8 @@ fn library(first: Option<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn title_of(path: &Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let bytes = std::fs::read(path).unwrap_or_default();
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(400)]).into_owned();
     let head: String = text.chars().take(300).collect();
     head.strip_prefix("<!-- title:")
         .and_then(|r| r.split_once("-->"))

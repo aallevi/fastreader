@@ -172,24 +172,21 @@ async fn main(spawner: Spawner) -> ! {
     let open_book = |i: u8, flash: &mut FlashStorage, uploads: &[library::Stored]| -> Book {
         let i = i as usize;
         if i < BOOKS.len() {
-            let (title, text) = BOOKS[i];
-            return Book::parse(text, title);
+            let (title, bytes) = BOOKS[i];
+            return Book::from_bytes(bytes, title);
         }
         match uploads.get(i - BOOKS.len()).and_then(|s| library::read(flash, s).map(|t| (s.title.clone(), t))) {
-            Some((title, text)) => Book::parse(&text, &title),
+            Some((title, bytes)) => Book::from_bytes(&bytes, &title),
             None => Book::new("Missing book", "# Missing book\nThis uploaded book could not be read."),
         }
     };
     let mut app = App::new(open_book(settings.book, &mut flash, &uploads), CATALOG, settings);
     app.library = BOOKS
         .iter()
-        .map(|(t, text)| {
-            // Only the head is needed for the title; cut on a character boundary.
-            let mut cut = text.len().min(200);
-            while !text.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            Book::parse(&text[..cut], t).title
+        .map(|(t, bytes)| {
+            // Only the head is needed for the title.
+            let head = alloc::string::String::from_utf8_lossy(&bytes[..bytes.len().min(200)]);
+            Book::parse(&head, t).title
         })
         .chain(uploads.iter().map(|s| s.title.clone()))
         .collect();

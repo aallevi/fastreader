@@ -41,6 +41,12 @@ impl<T: Copy> Chunked<T> {
         (i < self.len).then(|| self.blocks[i / BLOCK][i % BLOCK])
     }
 
+    pub fn set(&mut self, i: usize, v: T) {
+        if i < self.len {
+            self.blocks[i / BLOCK][i % BLOCK] = v;
+        }
+    }
+
     pub fn last_mut(&mut self) -> Option<&mut T> {
         self.blocks.last_mut().and_then(|b| b.last_mut())
     }

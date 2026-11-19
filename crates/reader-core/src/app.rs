@@ -614,15 +614,16 @@ impl App {
 
     /// When the platform needs to call `tick` next (sleep until then).
     pub fn next_wake(&self) -> Option<u64> {
-        // The ticker glides between words: ask for ~30 frames a second.
+        // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
         [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame].into_iter().flatten().min()
     }
 
-    /// True while something moves between words (the ticker), so the screen
-    /// must be redrawn every frame rather than once per word.
+    /// True while something moves between words, so the screen must be
+    /// redrawn every frame rather than once per word. Nothing glides any more (the ticker steps like a typewriter): frames
+    /// are needed only when the word changes.
     pub fn animating(&self) -> bool {
-        self.screen == Screen::Reading && self.settings.mode() == Mode::Ticker && self.reader.is_playing()
+        false
     }
 
     fn save(&mut self) {
@@ -1391,8 +1392,7 @@ mod tests {
         assert_eq!(a.reader.shown(), 2..3, "ticker: one word at a time");
         a.handle(Select, 0);
         a.tick(100);
-        assert!(a.animating());
-        assert!(a.next_wake().unwrap() <= 133, "about 30 frames a second while gliding");
+        assert!(!a.animating(), "the ticker steps word by word: no in-between frames");
     }
 
     #[test]

@@ -240,12 +240,57 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.wait(3_000);
     r.shot("finished");
 
+    // Alignment: a short, a medium and a long word, then phrases.
+    r.app.open_book(reader_core::Book::new("Align", "Io contemporaneamente leggevo (un libro «strano» davvero) la differenza tra parole lunghissime e brevi."), 0);
+    r.app.set_setting("mode", 0).unwrap();
+    r.app.screen = Screen::Reading;
+    r.app.settings.context = false;
+    for (i, name) in [(0, "align-short-word"), (1, "align-long-word"), (2, "align-medium-word"), (5, "align-guillemets")] {
+        r.app.reader.seek(i, r.now);
+        r.shot(name);
+    }
+    r.app.set_setting("mode", 1).unwrap();
+    for (i, name) in [(0, "align-phrase-1"), (3, "align-phrase-2"), (8, "align-phrase-3")] {
+        r.app.reader.seek(i, r.now);
+        r.shot(name);
+    }
+    r.app.settings.context = true;
+
+    // Pictures: a book with a chart, in word view and page view.
+    let mut file = b"# Figures\n\nThe chart below shows reading speed by week.\n\n{image:0}\n\nAfter the chart the text goes on as usual.".to_vec();
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    let (pw, ph) = (240u16, 150u16);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&pw.to_le_bytes());
+    file.extend_from_slice(&ph.to_le_bytes());
+    for y in 0..ph {
+        for x in 0..pw {
+            let bar = x / 40;
+            let top = 140 - [40, 70, 55, 95, 80, 120][bar.min(5) as usize];
+            let v: u16 = if y >= 140 || x < 4 { 0x2104 } else if y > top && x % 40 > 8 && x % 40 < 34 { 0x3B7F } else { 0xFFFF };
+            file.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    r.app.open_book(reader_core::Book::from_bytes(&file, "Figures"), 0);
+    r.app.set_setting("mode", 0).unwrap();
+    r.app.screen = Screen::Reading;
+    r.app.reader.seek(r.app.reader.book.len() - 10, r.now);
+    r.shot("picture-word-view");
+    r.app.set_setting("mode", 3).unwrap();
+    r.app.screen = Screen::Page;
+    r.app.reader.seek(0, r.now);
+    r.shot("picture-page-view");
+
     // 2. The same key screens in every theme.
     for theme in 0..CATALOG.themes.len() as u8 {
         let slug = CATALOG.themes[theme as usize].to_lowercase().replace(' ', "-");
         let mut r = Run { app: new_app(&text, Settings { theme, ..Settings::default() }), ui: Ui::new(w, h), cv: Canvas::new(w, h), now: 0, n: 0, dir, prefix: format!("{slug}-") };
         r.app.reader.seek(30, 0);
         r.shot("paused");
+        r.app.tap(reader_core::app::Hit::Bookmark, r.now);
+        r.wait(1600);
+        r.shot("bookmarked");
+        r.app.tap(reader_core::app::Hit::Bookmark, r.now);
         r.tap_icon(Icon::Play);
         r.wait(1600);
         r.shot("playing");

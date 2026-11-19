@@ -209,7 +209,7 @@ fn airy_spacing_needs_more_pages_than_tight() {
 }
 
 #[test]
-fn ticker_redraws_only_the_text_band_each_frame() {
+fn ticker_steps_like_a_typewriter() {
     let mut a = app_with(&TEXT.repeat(20), Settings { mode: 2, ..Settings::default() });
     let mut cv = Canvas::new(320, 240);
     let mut ui = Ui::new(320, 240);
@@ -219,7 +219,8 @@ fn ticker_redraws_only_the_text_band_each_frame() {
     a.tick(1990);
     ui.paint(&mut a, 1990, &mut cv);
     let mut frames = 0;
-    for t in (2000..3000).step_by(33) {
+    let start = a.reader.pos();
+    for t in (2000..6000).step_by(33) {
         a.tick(t);
         let dmg = ui.paint(&mut a, t, &mut cv);
         if !dmg.is_empty() {
@@ -228,7 +229,9 @@ fn ticker_redraws_only_the_text_band_each_frame() {
             assert!(area * 100 / (320 * 240) <= 45, "frame pushed {area} px: {dmg:?}");
         }
     }
-    assert!(frames >= 25, "the ticker moves every frame ({frames} of 30)");
+    let words = a.reader.pos() - start;
+    assert!(words >= 4, "it kept reading ({words} words)");
+    assert!(frames <= words + 1, "one jump per word, still in between ({frames} frames for {words} words)");
 }
 
 #[test]

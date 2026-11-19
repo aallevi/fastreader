@@ -109,17 +109,19 @@ pub fn paper(th: &crate::theme::Theme, l: &Layout) -> Rect {
 /// The page's top-right corner: tap to dog-ear (bookmark) the current place.
 /// `rect` is the drawn triangle's square; the touch area is larger.
 pub fn bookmark_corner(app: &App, l: &Layout) -> Button {
+    // Right in the paper's corner, small, so the page stays free.
     let p = paper(crate::themes::theme(app.settings.theme), l);
-    let size = l.i(28.0);
+    let size = l.i(22.0);
     let rect = Rect::new(p.right() - size, p.y, size, size);
-    Button { rect, hit_rect: Rect::new(p.right() - l.i(48.0), p.y, l.i(48.0), l.i(40.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
+    Button { rect, hit_rect: Rect::new(p.right() - l.i(36.0), p.y, l.i(36.0), l.i(32.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
 }
 
 /// The menu button, top-left in the title bar, on reading screens.
 pub fn menu_button(l: &Layout) -> Button {
     let h = l.header;
     let rect = Rect::new(l.i(4.0), h.y + l.i(3.0), l.i(34.0), h.h - l.i(6.0));
-    Button { rect, hit_rect: Rect::new(0, h.y, l.i(48.0), h.h), hit: Hit::Key(Key::Menu), icon: Icon::Menu, primary: false }
+    // The touch area reaches a little below the bar: easier for a thumb.
+    Button { rect, hit_rect: Rect::new(0, h.y, l.i(52.0), h.h + l.i(12.0)), hit: Hit::Key(Key::Menu), icon: Icon::Menu, primary: false }
 }
 
 /// The small highlight dot, top-right in Page mode (left of the battery).

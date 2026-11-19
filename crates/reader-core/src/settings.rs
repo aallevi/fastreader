@@ -50,11 +50,14 @@ pub struct Pacing {
     pub long_words: bool,
     /// Ease in over the first words after pressing play.
     pub ramp: bool,
+    /// Words inside ( … ) take this many tenths of their time: 7 = asides
+    /// go by faster, 10 = like the rest, 13 = slower.
+    pub aside: u8,
 }
 
 impl Default for Pacing {
     fn default() -> Self {
-        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true }
+        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, aside: 8 }
     }
 }
 
@@ -129,12 +132,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 10;
+const VERSION: u8 = 11;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 25] = [
+pub const FIELDS: [(&str, u16, u16); 26] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -151,6 +154,7 @@ pub const FIELDS: [(&str, u16, u16); 25] = [
     ("title", 10, 40),
     ("long_words", 0, 1),
     ("ramp", 0, 1),
+    ("aside", 5, 20),
     ("book", 0, 255),
     ("phrase", 1, 3),
     ("spacing", 0, 2),
@@ -198,6 +202,7 @@ impl Settings {
             "title" => p.title as u16,
             "long_words" => p.long_words as u16,
             "ramp" => p.ramp as u16,
+            "aside" => p.aside as u16,
             "book" => self.book as u16,
             _ => return None,
         })
@@ -234,6 +239,7 @@ impl Settings {
             "title" => p.title = b,
             "long_words" => p.long_words = v != 0,
             "ramp" => p.ramp = v != 0,
+            "aside" => p.aside = b,
             "book" => self.book = b,
             _ => unreachable!("FIELDS and set() list the same names"),
         }

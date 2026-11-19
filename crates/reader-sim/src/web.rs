@@ -79,6 +79,7 @@ fn handle(mut stream: TcpStream, app: &Mutex<App>, books: &Mutex<Vec<PathBuf>>, 
     match r.body {
         Body::Static(s) => stream.write_all(s.as_bytes()),
         Body::Text(s) => stream.write_all(s.as_bytes()),
+        Body::Bytes(b) => stream.write_all(&b),
         Body::Book { from, to } => {
             // In pieces, releasing the lock between them (as the device must).
             let mut at = from;

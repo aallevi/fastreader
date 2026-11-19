@@ -91,11 +91,11 @@ pub fn append(flash: &mut FlashStorage, title: &str, text: &[u8]) -> Result<Stor
     Ok(Stored { title: String::from_utf8_lossy(title).into_owned(), text_at: at + HEADER + title.len() as u32, len: text.len() as u32 })
 }
 
-/// A stored book's text (copied into RAM: PSRAM).
-pub fn read(flash: &mut FlashStorage, s: &Stored) -> Option<String> {
+/// A stored book's file bytes (text, then optional images), into PSRAM.
+pub fn read(flash: &mut FlashStorage, s: &Stored) -> Option<Vec<u8>> {
     let mut v = vec![0u8; s.len as usize];
     flash.read(s.text_at, &mut v).ok()?;
-    String::from_utf8(v).ok()
+    Some(v)
 }
 
 /// Removes every uploaded book.

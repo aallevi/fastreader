@@ -35,6 +35,7 @@ pub enum Body {
     Text(String),
     /// Book words `from..to` as HTML; write it with [`book_piece`] in steps.
     Book { from: usize, to: usize },
+    Bytes(Vec<u8>),
 }
 
 pub struct Response {
@@ -85,6 +86,10 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
                 body: Body::Book { from: r.start, to: r.end },
             }
         }
+        ("GET", p) if p.starts_with("/img/") => match p[5..].parse::<usize>().ok().and_then(|n| app.reader.book.images.get(n)) {
+            Some(img) => Response::ok("image/bmp", Body::Bytes(bmp(img))),
+            None => Response::text("404 Not Found", "no such image"),
+        },
         ("GET", "/state") => Response::ok("application/json", Body::Text(state_json(app))),
         ("GET", "/theme.css") => Response::ok("text/css", Body::Text(theme(app.settings.theme).css_vars())),
         ("GET", "/settings") => Response::ok("application/json", Body::Text(settings_json(app))),
@@ -128,6 +133,34 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
         }
         _ => Response::text("404 Not Found", "not found"),
     }
+}
+
+/// A picture as a 16-bit BMP (RGB565 bit fields): no compression code needed.
+pub fn bmp(img: &reader_core::book::Image) -> Vec<u8> {
+    let (w, h) = (img.w as u32, img.h as u32);
+    let row = (w * 2).div_ceil(4) * 4;
+    let data = row * h;
+    let offset = 14 + 40 + 12;
+    let mut b = Vec::with_capacity((offset + data) as usize);
+    b.extend_from_slice(b"BM");
+    for v in [offset + data, 0, offset] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [40u32, w, (-(h as i32)) as u32] {
+        b.extend_from_slice(&v.to_le_bytes()); // negative height: rows top to bottom
+    }
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    for v in [3u32, data, 2835, 2835, 0, 0, 0xF800, 0x07E0, 0x001F] {
+        b.extend_from_slice(&v.to_le_bytes()); // BI_BITFIELDS + RGB565 masks
+    }
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            b.extend_from_slice(&img.px[y * w as usize + x].to_le_bytes());
+        }
+        b.resize(b.len() + (row - w * 2) as usize, 0);
+    }
+    b
 }
 
 /// Most an uploaded book may weigh (it is held in RAM before being saved).
@@ -306,6 +339,21 @@ mod tests {
             at = book_piece(&a, at, a.reader.book.len(), &mut pieces);
         }
         assert_eq!(pieces, whole);
+    }
+
+    #[test]
+    fn images_are_served_as_bmp() {
+        let mut file = b"A picture:\n\n{image:0}".to_vec();
+        file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+        file.extend_from_slice(&[1, 0, 3, 0, 2, 0]);
+        file.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07, 0x1F, 0x00, 0xFF, 0xFF, 0, 0, 0x00, 0xF8]);
+        let mut a = App::new(reader_core::Book::from_bytes(&file, "t"), crate::CATALOG, Settings::default());
+        let r = respond(&mut a, "GET", "/img/0", 0);
+        assert_eq!(r.ctype, "image/bmp");
+        let Body::Bytes(b) = r.body else { panic!() };
+        assert_eq!(&b[..2], b"BM");
+        assert_eq!(b.len(), 66 + 8 * 2, "3 px rows padded to 8 bytes, 2 rows");
+        assert_eq!(respond(&mut a, "GET", "/img/9", 0).status, "404 Not Found");
     }
 
     #[test]

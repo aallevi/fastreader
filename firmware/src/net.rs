@@ -221,6 +221,7 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
         match r.body {
             Body::Static(s) => ok &= socket.write_all(s.as_bytes()).await.is_ok(),
             Body::Text(s) => ok &= socket.write_all(s.as_bytes()).await.is_ok(),
+            Body::Bytes(b) => ok &= socket.write_all(&b).await.is_ok(),
             Body::Book { from, to } => {
                 let mut at = from;
                 while ok && at < to {

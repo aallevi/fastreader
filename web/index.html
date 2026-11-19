@@ -161,7 +161,8 @@ const GROUPS = [
   ['Pauses', [
     ['comma', 'After , ; :', 'step', 1, X], ['sentence', 'After . ! ?', 'step', 1, X],
     ['paragraph', 'After a paragraph', 'step', 1, X], ['title', 'Chapter titles', 'step', 1, X],
-    ['long_words', 'Extra time for long words', 'toggle', ['Off', 'On']], ['ramp', 'Ease in after play', 'toggle', ['Off', 'On']]]],
+    ['long_words', 'Extra time for long words', 'toggle', ['Off', 'On']], ['ramp', 'Ease in after play', 'toggle', ['Off', 'On']],
+    ['aside', 'Speed inside ( … ), tenths of normal time: 8 = a little faster', 'range']]],
   ['Look', [
     ['theme', 'Theme', 'themes'], ['font', 'Font', 'fonts'], ['size', 'Text size', 'sizes'],
     ['parens', 'Parentheses (word & phrase modes)', 'parens']]],
@@ -231,8 +232,16 @@ async function unzip(buf) {
   }
   return files;
 }
-function toMarkup(doc) {
+function toMarkup(doc, docPath) {
   const out = [];
+  const dir = docPath.includes('/') ? docPath.replace(/[^/]*$/, '') : '';
+  const resolve = src => {
+    const parts = [];
+    for (const seg of (dir + decodeURIComponent(src.split('#')[0])).split('/')) {
+      if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg);
+    }
+    return parts.join('/');
+  };
   const walk = (node, b, i) => {
     let t = '';
     for (const c of node.childNodes) {
@@ -248,7 +257,12 @@ function toMarkup(doc) {
     }
     return t;
   };
-  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote')) {
+  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,img,image')) {
+    if (el.localName === 'img' || el.localName === 'image') {
+      const src = el.getAttribute('src') || el.getAttribute('xlink:href') || el.getAttribute('href');
+      if (src) out.push('\u0000IMG:' + resolve(src) + '\u0000');
+      continue;
+    }
     if (el.closest('p,li,blockquote') && el.closest('p,li,blockquote') !== el) continue;
     const text = walk(el, false, false).replace(/\s+/g, ' ').trim();
     if (!text) continue;
@@ -268,9 +282,45 @@ async function epubToMarkup(file) {
   for (const ref of opf.querySelectorAll('spine itemref')) {
     const href = decodeURIComponent(items[ref.getAttribute('idref')] || '');
     const data = files[base + href];
-    if (data) parts.push(toMarkup(xml(data)));
+    if (data) parts.push(toMarkup(xml(data), base + href));
   }
-  return {title, text: parts.filter(Boolean).join('\n\n')};
+  let text = parts.filter(Boolean).join('\n\n');
+  // Pictures: scaled to the reader's stage, RGB565, after the text.
+  const pics = [], ids = {};
+  let used = 0;
+  for (const m of [...text.matchAll(/\u0000IMG:([^\u0000]*)\u0000/g)]) {
+    const path = m[1];
+    if (path in ids) continue;
+    ids[path] = '';
+    const data = files[path];
+    if (!data || used > 2e6) continue;
+    try {
+      const bmp = await createImageBitmap(new Blob([data]));
+      if (bmp.width < 48 || bmp.height < 48) continue;
+      const k = Math.min(300 / bmp.width, 190 / bmp.height, 1);
+      const w = Math.max(1, Math.round(bmp.width * k)), h = Math.max(1, Math.round(bmp.height * k));
+      if (used + w * h * 2 > 2e6) continue;
+      const cv = new OffscreenCanvas(w, h), g = cv.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+      g.drawImage(bmp, 0, 0, w, h);
+      const rgba = g.getImageData(0, 0, w, h).data, px = new Uint8Array(4 + w * h * 2);
+      new DataView(px.buffer).setUint16(0, w, true); new DataView(px.buffer).setUint16(2, h, true);
+      for (let i = 0, o = 4; i < rgba.length; i += 4, o += 2) {
+        const v = (rgba[i] >> 3) << 11 | (rgba[i + 1] >> 2) << 5 | rgba[i + 2] >> 3;
+        px[o] = v & 255; px[o + 1] = v >> 8;
+      }
+      ids[path] = `{image:${pics.length}}`;
+      pics.push(px);
+      used += w * h * 2;
+    } catch (e) { /* not a picture the browser can read */ }
+  }
+  text = text.replace(/\u0000IMG:([^\u0000]*)\u0000/g, (_, p) => ids[p] || '').replace(/\n{3,}/g, '\n\n');
+  let images = null;
+  if (pics.length) {
+    // "\n\0FRIMG1", count, then (w, h, pixels) per picture.
+    images = new Blob([new Uint8Array([10, 0, 70, 82, 73, 77, 71, 49]), new Uint16Array([pics.length]), ...pics]);
+  }
+  return {title, text, images, pictures: pics.length};
 }
 let pending = null;
 $('file').onchange = async () => {
@@ -282,8 +332,9 @@ $('file').onchange = async () => {
     pending = f.name.toLowerCase().endsWith('.epub')
       ? await epubToMarkup(f)
       : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
-    const kb = Math.round(new Blob([pending.text]).size / 1024);
-    $('upmsg').textContent = `${pending.title}: ${kb} KB ready`;
+    const kb = Math.round((new Blob([pending.text]).size + (pending.images?.size || 0)) / 1024);
+    const pics = pending.pictures ? `, ${pending.pictures} pictures` : '';
+    $('upmsg').textContent = `${pending.title}: ${kb} KB${pics} ready`;
     $('send').disabled = false;
   } catch (e) { $('upmsg').textContent = 'Could not read this file'; }
 };
@@ -291,7 +342,7 @@ $('send').onclick = async () => {
   if (!pending) return;
   $('send').disabled = true;
   $('upmsg').textContent = 'Sending…';
-  const body = `<!-- title: ${pending.title} -->\n` + pending.text;
+  const body = new Blob([`<!-- title: ${pending.title} -->\n` + pending.text, ...(pending.images ? [pending.images] : [])]);
   const r = await fetch('/upload?title=' + encodeURIComponent(pending.title), {method: 'POST', body});
   $('upmsg').textContent = r.ok ? 'Saved: it is in the Library on the reader' : 'Failed: ' + await r.text();
   if (r.ok) setTimeout(async () => { S = await (await fetch('/settings')).json(); renderSettings(); }, 1500);

@@ -13,6 +13,9 @@ pub const WPM_STEP: u16 = 25;
 /// Words shown at reduced speed after (re)starting, so the eye can lock on.
 const RAMP_WORDS: usize = 4;
 
+/// A second ◀ within this long of the first goes one unit further back.
+pub const BACK_AGAIN_MS: u64 = 2_500;
+
 pub struct Reader {
     pub book: Book,
     pos: usize,
@@ -26,6 +29,10 @@ pub struct Reader {
     phrase: u8,
     /// Reached the end by playing; the next play starts over.
     finished: bool,
+    /// The last backward jump: (when, where it landed). A press soon after
+    /// counts from there, so pressing ◀ twice goes two units back even while
+    /// playing moved on a word or two (as a music player's ⏮).
+    last_back: Option<(u64, usize)>,
     pacing: Pacing,
     /// The wpm number is the real average pace, pauses included.
     true_pace: bool,
@@ -33,7 +40,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(book: Book, wpm: u16) -> Self {
-        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, pacing: Pacing::default(), true_pace: false }
+        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, last_back: None, pacing: Pacing::default(), true_pace: false }
     }
 
     pub fn pos(&self) -> usize {
@@ -190,11 +197,23 @@ impl Reader {
     /// Back to the start of this sentence, or the previous one if already
     /// there. Returns false at the very beginning.
     pub fn sentence_back(&mut self, now: u64) -> bool {
+        self.resume_last_back(now);
         let here = self.book.sentence_start(self.pos);
         let target = if here == self.pos && here > 0 { self.book.sentence_start(here - 1) } else { here };
         let moved = target != self.pos;
         self.seek(target, now);
+        self.last_back = Some((now, target));
         moved
+    }
+
+    /// Within [`BACK_AGAIN_MS`] of the last backward jump, and not moved
+    /// back past it by hand: count from where that jump landed.
+    fn resume_last_back(&mut self, now: u64) {
+        if let Some((t, at)) = self.last_back {
+            if now.saturating_sub(t) < BACK_AGAIN_MS && at <= self.pos && self.book.sentence_start(self.pos) <= at {
+                self.pos = at;
+            }
+        }
     }
 
     /// The group starting at `i`, by this reader's grouping.
@@ -209,9 +228,11 @@ impl Reader {
         let target = if forward {
             let e = self.shown().end;
             (e < n).then_some(e)
-        } else if self.pos == 0 {
-            None
         } else {
+            self.resume_last_back(now);
+            if self.pos == 0 {
+                return false;
+            }
             // Walk the groups from the start of the sentence before us.
             let mut s = self.book.sentence_start(self.pos - 1);
             loop {
@@ -225,6 +246,9 @@ impl Reader {
         match target {
             Some(t) => {
                 self.seek(t, now);
+                if !forward {
+                    self.last_back = Some((now, t));
+                }
                 true
             }
             None => false,
@@ -243,6 +267,13 @@ impl Reader {
 
     /// ◀◀ by the chosen amount. Returns false at the very beginning.
     pub fn skip_back(&mut self, skip: Skip, now: u64) -> bool {
+        if skip == Skip::Paragraph {
+            if let Some((t, at)) = self.last_back {
+                if now.saturating_sub(t) < BACK_AGAIN_MS && at <= self.pos && self.book.paragraph_start(self.pos) <= at {
+                    self.pos = at;
+                }
+            }
+        }
         let target = match skip {
             Skip::Sentence => return self.sentence_back(now),
             Skip::Words(n) => self.pos.saturating_sub(n as usize),
@@ -253,6 +284,7 @@ impl Reader {
         };
         let moved = target != self.pos;
         self.seek(target, now);
+        self.last_back = Some((now, target));
         moved
     }
 
@@ -378,6 +410,39 @@ mod tests {
         assert!(r.sentence_back(0));
         assert_eq!(r.pos(), 0);
         assert!(!r.sentence_back(0));
+    }
+
+    #[test]
+    fn pressing_back_again_soon_goes_further_even_while_playing() {
+        let mut r = Reader::new(Book::new("t", "One two three. Four five six. Seven eight nine ten eleven twelve."), 300);
+        r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
+        r.seek(9, 0);
+        r.play(0);
+        assert!(r.sentence_back(1000));
+        assert_eq!(r.pos(), 6);
+        for t in (1000..1900).step_by(10) {
+            r.tick(t);
+        }
+        assert!(r.pos() > 6, "playing moved on");
+        assert!(r.sentence_back(1900));
+        assert_eq!(r.pos(), 3, "second press within the window: the sentence before");
+        r.tick(5000);
+        let at = r.pos();
+        assert!(r.sentence_back(9000));
+        assert_eq!(r.pos(), 3.min(at), "later on, a press restarts the current sentence");
+    }
+
+    #[test]
+    fn phrase_back_twice_while_playing() {
+        let mut r = Reader::new(Book::new("t", "She walked into the old house of the family, and waited. Then left."), 300);
+        r.set_phrase(Some(3));
+        r.set_pacing(Pacing { ramp: false, ..Pacing::default() });
+        r.seek(6, 0);
+        assert!(r.step_phrase(false, 100));
+        assert_eq!(r.pos(), 3);
+        r.seek(4, 600); // as if playing moved on a word
+        assert!(r.step_phrase(false, 700));
+        assert_eq!(r.pos(), 0, "counted from the last jump");
     }
 
     #[test]

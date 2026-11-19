@@ -10,9 +10,11 @@
 - Reading modes: Word, Phrases (meaning-based groups, fixed left start), Ticker (smooth glide), Page (typography options, moving phrase highlight, highlight dot).
 - Web view on the device: Wi-Fi access point "FastReader" → http://192.168.4.1 (Menu → Web view), books stream in pieces, every setting editable.
 
+- Bookmarks (dog-ear corner), positions per book in flash, page view steps phrase by phrase, uploads from the phone (EPUB converted in the browser, pictures included), captive portal, deep sleep, pictures and vector charts, brackets as punctuation with aside speed and optional side marks, typewriter ticker.
+
 ## Next
 1. Wi-Fi: captive portal (phone opens the page automatically on joining), then home network + `fastreader.local`.
-2. **Upload books from the browser** into flash (no SD card needed); then microSD library (4-bit SDMMC on this board).
+2. PDF upload from the phone (pdf.js in the browser); microSD library (4-bit SDMMC on this board).
 3. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
 4. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
 5. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
