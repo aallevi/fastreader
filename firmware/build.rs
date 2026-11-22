@@ -1,23 +1,14 @@
-//! Embeds every book in ../books and ../books/private (converted with
-//! tools/convert.py) into flash, as a `BOOKS: &[(&str, &str)]` table.
+//! Books live on the SD card (and in the books partition for uploads without
+//! a card); none are built in any more. Only the short welcome text in
+//! ../books/sample.md is embedded, shown when there is no book at all.
 use std::{env, fs, path::Path};
 
 fn main() {
-    let mut books = Vec::new();
-    for dir in ["../books", "../books/private"] {
-        println!("cargo:rerun-if-changed={dir}");
-        let mut found: Vec<_> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "md" || e == "txt")).collect();
-        found.sort();
-        for p in found {
-            println!("cargo:rerun-if-changed={}", p.display());
-            let stem = p.file_stem().unwrap().to_string_lossy().replace(['-', '_'], " ");
-            books.push((stem, fs::canonicalize(&p).unwrap()));
-        }
-    }
-    let mut out = String::from("/// (fallback title, file bytes: text then optional images) for every embedded book.\npub static BOOKS: &[(&str, &[u8])] = &[\n");
-    for (stem, path) in &books {
-        out += &format!("    ({stem:?}, include_bytes!({:?})),\n", path.display().to_string());
-    }
-    out += "];\n";
+    let sample = fs::canonicalize("../books/sample.md").unwrap();
+    println!("cargo:rerun-if-changed={}", sample.display());
+    let out = format!(
+        "/// No built-in library: books come from the SD card and uploads.\npub static BOOKS: &[(&str, &[u8])] = &[];\n/// Shown when there is no book at all.\npub static WELCOME: &[u8] = include_bytes!({:?});\n",
+        sample.display().to_string()
+    );
     fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join("books.rs"), out).unwrap();
 }

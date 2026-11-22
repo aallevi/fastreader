@@ -53,7 +53,7 @@ use board::{HEIGHT, SPI_MHZ, WIDTH};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-// Books are built into flash (see build.rs) until the SD card library lands.
+// Books come from the SD card and uploads; only a welcome text is built in (build.rs).
 include!(concat!(env!("OUT_DIR"), "/books.rs"));
 
 /// Settings and per-book positions live in the NVS partition (otherwise unused).
@@ -198,6 +198,10 @@ async fn main(spawner: Spawner) -> ! {
             };
         }
         let Some(s) = card_books.get(i - BOOKS.len() - uploads.len()) else {
+            if uploads.is_empty() && card_books.is_empty() {
+                // No books anywhere: the welcome text says how to add some.
+                return Book::from_bytes(WELCOME, "Welcome");
+            }
             return Book::new("Missing book", "# Missing book\nThe SD card with this book is not in the reader.");
         };
         // Card book: only the text comes into memory; pictures stay on the card.
@@ -225,6 +229,7 @@ async fn main(spawner: Spawner) -> ! {
         .chain(card_books.iter().map(|s| s.title.clone()))
         .collect();
     app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+    println!("library: {} books ({} uploaded to flash, {} on the card)", app.library.len(), uploads.len(), card_books.len());
     app.positions = load_positions(&mut flash);
     app.positions.resize(app.library.len(), 0);
     app.bookmarks = load_bookmarks(&mut flash);
@@ -565,10 +570,12 @@ fn orientation(flipped: bool) -> Orientation {
     o.flip_vertical()
 }
 
-/// Per-book positions: "FP" + count + u32 each.
+/// Per-book positions: "F2" + count + u32 each.
 fn load_positions(flash: &mut FlashStorage) -> alloc::vec::Vec<u32> {
     let mut head = [0u8; 3];
-    if flash.read(POSITIONS_ADDR, &mut head).is_err() || &head[..2] != b"FP" {
+    // "F2": positions of the card-based library (older ones belonged to the
+    // built-in books and are left behind).
+    if flash.read(POSITIONS_ADDR, &mut head).is_err() || &head[..2] != b"F2" {
         return alloc::vec::Vec::new();
     }
     let n = (head[2] as usize).min(MAX_BOOKS);
@@ -581,17 +588,17 @@ fn load_positions(flash: &mut FlashStorage) -> alloc::vec::Vec<u32> {
 
 fn save_positions(flash: &mut FlashStorage, pos: &[u32]) {
     let n = pos.len().min(MAX_BOOKS);
-    let mut raw = alloc::vec![b'F', b'P', n as u8];
+    let mut raw = alloc::vec![b'F', b'2', n as u8];
     for p in &pos[..n] {
         raw.extend_from_slice(&p.to_le_bytes());
     }
     let _ = flash.write(POSITIONS_ADDR, &raw);
 }
 
-/// Bookmarks: "BM" + count (u16) + (book u8, word u32) each.
+/// Bookmarks: "B2" + count (u16) + (book u8, word u32) each.
 fn load_bookmarks(flash: &mut FlashStorage) -> alloc::vec::Vec<(u8, u32)> {
     let mut head = [0u8; 4];
-    if flash.read(BOOKMARKS_ADDR, &mut head).is_err() || &head[..2] != b"BM" {
+    if flash.read(BOOKMARKS_ADDR, &mut head).is_err() || &head[..2] != b"B2" {
         return alloc::vec::Vec::new();
     }
     let n = (u16::from_le_bytes([head[2], head[3]]) as usize).min(MAX_BOOKMARKS);
@@ -604,7 +611,7 @@ fn load_bookmarks(flash: &mut FlashStorage) -> alloc::vec::Vec<(u8, u32)> {
 
 fn save_bookmarks(flash: &mut FlashStorage, marks: &[(u8, u32)]) {
     let n = marks.len().min(MAX_BOOKMARKS);
-    let mut raw = alloc::vec![b'B', b'M'];
+    let mut raw = alloc::vec![b'B', b'2'];
     raw.extend_from_slice(&(n as u16).to_le_bytes());
     for (b, w) in &marks[..n] {
         raw.push(*b);

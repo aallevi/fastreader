@@ -58,7 +58,7 @@ Plain text with a few marks:
 
 The marks follow the spirit of SSML (the W3C speech-timing standard: `<break>`, `<prosody rate="slow">`) in a form that stays readable as plain text.
 
-The converter keeps chapters (table of contents, larger or all-bold lines, EPUB headings), bold and italic, and drops running headers, page numbers and hyphenation. `books/private/` is git-ignored. The firmware embeds every book in `books/` and `books/private/` at build time.
+The converter keeps chapters (table of contents, larger or all-bold lines, EPUB headings), bold and italic, and drops running headers, page numbers and hyphenation. `books/private/` is git-ignored. Books live on the SD card (or, without a card, in the reader's flash when uploaded); none are built into the firmware any more. Only a short welcome text is, shown when there is no book at all.
 
 ## Run
 

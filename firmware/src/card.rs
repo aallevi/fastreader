@@ -63,9 +63,8 @@ pub type Shared = &'static RefCell<Option<Card>>;
 pub fn init(spi: Spi<'static, Blocking>, cs: Output<'static>) -> Option<Card> {
     let dev = SdCard::new(ExclusiveDevice::new(spi, cs, Delay::new()).ok()?, Delay::new());
     let bytes = dev.num_bytes().ok()?;
-    dev.spi(|s| {
-        let _ = s.bus_mut().apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20)));
-    });
+    let fast = dev.spi(|s| s.bus_mut().apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20))));
+    esp_println::println!("card: 20 MHz {}", if fast.is_ok() { "ok" } else { "refused" });
     let mut card = Card { state: State::Unformatted(dev), total_mb: (bytes >> 20) as u32 };
     card.mount();
     Some(card)
@@ -177,38 +176,60 @@ impl Card {
     /// A book's text (everything before the pictures) and, if it has
     /// version-2 pictures, where they start and their table.
     pub fn open_text(&mut self, book: &Stored) -> Option<(Vec<u8>, Option<(u32, Vec<(u16, u16, u32)>)>)> {
+        let t0 = esp_hal::time::Instant::now();
+        let r = self.open_text_inner(book);
+        let n = r.as_ref().map_or(0, |(t, _)| t.len());
+        esp_println::println!("card: opened {:?}: {} KB of text in {} ms", book.title, n / 1024, t0.elapsed().as_millis());
+        r
+    }
+
+    fn open_text_inner(&mut self, book: &Stored) -> Option<(Vec<u8>, Option<(u32, Vec<(u16, u16, u32)>)>)> {
+        // One open file read straight through: reopening and seeking for
+        // every piece walked the file's cluster chain again each time (~64 KB/s).
+        let State::Mounted { vm, dir, .. } = &self.state else { return None };
+        let f = vm.open_file_in_dir(*dir, book.file.as_str(), Mode::ReadOnly).ok()?;
         let mut text = Vec::new();
-        let mut chunk = alloc::vec![0u8; 8192];
-        let mut at = 0u32;
-        while at < book.len {
-            let n = self.read_at(&book.file, at, &mut chunk)?;
-            if n == 0 {
-                break;
-            }
+        let mut chunk = alloc::vec![0u8; 32 * 1024];
+        let mut pictures = None;
+        loop {
+            let n = match vm.read(f, &mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
             text.extend_from_slice(&chunk[..n]);
-            at += n as u32;
             // Stop at the picture section: the pixels stay on the card.
             let from = text.len().saturating_sub(n + IMAGES_MAGIC2.len());
             if let Some(p) = text[from..].windows(IMAGES_MAGIC2.len()).position(|w| w == IMAGES_MAGIC2) {
                 let magic = from + p;
                 let base = (magic + IMAGES_MAGIC2.len()) as u32;
+                // The table follows the magic; it may run past what was read.
+                let count = {
+                    let have = &text[base as usize..];
+                    if have.len() >= 2 { u16::from_le_bytes([have[0], have[1]]) as usize } else { 0 }
+                };
+                let need = base as usize + 4 + 8 * count;
+                while text.len() < need {
+                    match vm.read(f, &mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => text.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let table = image_table(&text[base as usize..need.min(text.len())]);
                 text.truncate(magic);
-                let mut head = [0u8; 4];
-                self.read_at(&book.file, base, &mut head)?;
-                let count = u16::from_le_bytes([head[0], head[1]]) as usize;
-                let mut table = alloc::vec![0u8; 4 + 8 * count];
-                self.read_at(&book.file, base, &mut table)?;
-                return Some((text, Some((base, image_table(&table)))));
+                pictures = Some((base, table));
+                break;
             }
             // An old-format (version 1) section can't be read piecewise:
-            // keep it in memory only if the book is small.
-            if text.windows(IMAGES_MAGIC.len()).any(|w| w == IMAGES_MAGIC) && book.len > 3 * 1024 * 1024 {
-                let p = text.windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC).unwrap();
-                text.truncate(p);
-                return Some((text, None));
+            // a big book keeps only its text.
+            if book.len > 3 * 1024 * 1024 {
+                if let Some(p) = text.windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC) {
+                    text.truncate(p);
+                    break;
+                }
             }
         }
-        Some((text, None))
+        let _ = vm.close_file(f);
+        Some((text, pictures))
     }
 
     /// One picture's pixels.
