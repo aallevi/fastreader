@@ -386,7 +386,14 @@ pub enum Msg {
     Paused,
     Speed(u16),
     /// Jumped by the skip setting.
-    Skipped { forward: bool, skip: Skip },
+    /// Jumped with ⏮/⏭. `net` adds up the jumps made while the message is
+    /// still showing (4 forward and 1 back: +3), so it tells where you are
+    /// relative to where you started.
+    Skipped { net: i16, skip: Skip },
+    /// Page turns in page view, added up the same way.
+    Turned { net: i16 },
+    /// Single-word steps (‹ ›), added up the same way.
+    Stepped { net: i16 },
     PageBack,
     PageForward,
     AtStart,
@@ -708,7 +715,8 @@ impl App {
                 self.reader.pause();
                 let fb = if self.reader.step_word(forward, now) {
                     self.settings.pos = self.reader.pos() as u32;
-                    Feedback::ok(Msg::Shown)
+                    let prev = self.prev_net(now, |m| if let Msg::Stepped { net } = m { Some(net) } else { None });
+                    Feedback::ok(Msg::Stepped { net: prev + if forward { 1 } else { -1 } })
                 } else {
                     Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart })
                 };
@@ -742,6 +750,12 @@ impl App {
             // A stale target from a screen that just changed: ignore quietly.
             _ => Feedback::ok(Msg::Shown),
         }
+    }
+
+    /// The running total of the jump message still on screen, if `f` says
+    /// it's the same kind of jump; 0 when there is none (a fresh count).
+    fn prev_net(&self, now: u64, f: impl Fn(Msg) -> Option<i16>) -> i16 {
+        self.toast.filter(|t| now < t.until).and_then(|t| f(t.feedback.msg)).unwrap_or(0)
     }
 
     fn feedback(&mut self, fb: Feedback, now: u64) -> Feedback {
@@ -1062,7 +1076,11 @@ impl App {
                 let skip = self.settings.skip();
                 let moved = if forward { self.reader.skip_forward(skip, now) } else { self.reader.skip_back(skip, now) };
                 if moved {
-                    Feedback::ok(Msg::Skipped { forward, skip })
+                    let prev = self.prev_net(now, |m| match m {
+                        Msg::Skipped { net, skip: s } if s == skip => Some(net),
+                        _ => None,
+                    });
+                    Feedback::ok(Msg::Skipped { net: prev + if forward { 1 } else { -1 }, skip })
                 } else {
                     Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart })
                 }
@@ -1070,7 +1088,8 @@ impl App {
             (_, Action::WordBack | Action::WordForward) => {
                 let fwd = action == Action::WordForward;
                 if self.reader.step_word(fwd, now) {
-                    Feedback::ok(Msg::Shown)
+                    let prev = self.prev_net(now, |m| if let Msg::Stepped { net } = m { Some(net) } else { None });
+                    Feedback::ok(Msg::Stepped { net: prev + if fwd { 1 } else { -1 } })
                 } else {
                     Feedback::limit(if fwd { Msg::AtEnd } else { Msg::AtStart })
                 }
@@ -1081,8 +1100,8 @@ impl App {
                     Some(target) => {
                         self.reader.seek(target, now);
                         self.settings.pos = target as u32;
-                        // The page turning is the feedback (the phone's view follows).
-                        Feedback::ok(Msg::Shown)
+                        let prev = self.prev_net(now, |m| if let Msg::Turned { net } = m { Some(net) } else { None });
+                        Feedback::ok(Msg::Turned { net: prev + if forward { 1 } else { -1 } })
                     }
                     None => Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart }),
                 }
@@ -1717,7 +1736,7 @@ mod tests {
         // As the renderer measured them: pages start at words 0, 4 and 8.
         a.pages = alloc::vec![0, 4, 8];
         a.pages_done = true;
-        assert_eq!(a.handle(Right, 0).msg, Msg::Shown);
+        assert_eq!(a.handle(Right, 0).msg, Msg::Turned { net: 1 });
         assert_eq!(a.reader.pos(), 4, "next page");
         a.handle(Right, 0);
         assert_eq!(a.reader.pos(), 8);
@@ -1859,7 +1878,7 @@ mod tests {
         a.handle(Right, 0);
         assert_eq!(a.reader.pos(), 0, "one sentence: nowhere to go");
         a.set_setting("skip", 2).unwrap();
-        assert_eq!(a.handle(Right, 0).msg, Msg::Skipped { forward: true, skip: Skip::Words(10) });
+        assert_eq!(a.handle(Right, 0).msg, Msg::Skipped { net: 1, skip: Skip::Words(10) });
         assert_eq!(a.reader.pos(), 10);
     }
 
@@ -1967,11 +1986,24 @@ mod tests {
     }
 
     #[test]
+    fn jumps_add_up_while_the_message_shows() {
+        let mut a = App::new(Book::new("t", "A b. C d. E f. G h. I j. K l. M n."), CAT, base());
+        let t = [0, 300, 600, 900];
+        for (k, &now) in t.iter().enumerate() {
+            assert_eq!(a.handle(Right, now).msg, Msg::Skipped { net: k as i16 + 1, skip: Skip::Sentence });
+        }
+        assert_eq!(a.handle(Left, 1200).msg, Msg::Skipped { net: 3, skip: Skip::Sentence }, "4 forward, 1 back: 3 forward");
+        assert_eq!(a.handle(Right, 1200 + TOAST_MS + 1).msg, Msg::Skipped { net: 1, skip: Skip::Sentence }, "after the message is gone the count starts fresh");
+        a.tap(Hit::StepWord { forward: true }, 9_000);
+        assert_eq!(a.tap(Hit::StepWord { forward: true }, 9_100).msg, Msg::Stepped { net: 2 }, "words count on their own");
+    }
+
+    #[test]
     fn thin_arrows_step_one_word_and_pause() {
         let mut a = app();
         a.reader.seek(3, 0);
         a.reader.play(0);
-        assert_eq!(a.tap(Hit::StepWord { forward: true }, 10).msg, Msg::Shown);
+        assert_eq!(a.tap(Hit::StepWord { forward: true }, 10).msg, Msg::Stepped { net: 1 });
         assert_eq!(a.reader.pos(), 4);
         assert!(!a.reader.is_playing(), "stepping pauses, to place things exactly");
         a.tap(Hit::StepWord { forward: false }, 20);

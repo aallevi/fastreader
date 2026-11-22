@@ -52,6 +52,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Deleting books on the reader
 - [ ] 📖 Book → Delete a book… → pick one → "Keep it" is chosen first; ◀ goes back to the list; "Delete «title»" removes it and the Library updates.
 
+## Jump counts
+- [ ] Press ⏭ four times and ⏮ once quickly: the message counts 1, 2, 3, 4 and ends on "3 sentences forward"; after it disappears the count starts again. The same for page turns and the thin ‹ ›.
+
 ## Word steps
 - [ ] The thin ‹ › beside play move exactly one word and pause (reading and page view): use them to place the highlight or a bookmark.
 

@@ -143,6 +143,12 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Pause);
     r.wait(1500);
     r.shot("paused-with-sentence-context");
+    for _ in 0..4 {
+        r.key(Key::Right);
+    }
+    r.key(Key::Left);
+    r.shot("jumps-add-up");
+    r.wait(3_000);
     r.tap_icon(Icon::Book);
     r.shot("menu-book");
     r.app.library = vec!["The Quiet Machine".into(), "La storia dell'arte".into()];

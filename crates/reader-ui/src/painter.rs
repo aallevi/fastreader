@@ -345,6 +345,15 @@ fn running_text(book: &reader_core::Book, w: reader_core::Word) -> &str {
     if book.is_image(w) { "[figure]" } else { book.text_of(w) }
 }
 
+/// "3 sentences forward", "1 page back", or "Back where you started".
+fn moved(net: i16, one: &str, many: &str, per: i32) -> String {
+    let n = net.unsigned_abs() as i32 * per;
+    if n == 0 {
+        return "Back where you started".into();
+    }
+    format!("{n} {} {}", if n == 1 { one } else { many }, if net > 0 { "forward" } else { "back" })
+}
+
 /// Whether the place on screen has a bookmark: the word(s) shown, or in
 /// page view anything on the page.
 fn place_bookmarked(app: &App) -> bool {
@@ -588,10 +597,11 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     }
     let x = hb[3].rect.right() as f32 + l.px(8.0);
     let base = r.cy() + l.px(4.5);
-    // Battery, top-right.
+    // Battery, top-right; a message showing takes its place for a moment.
     let mut right = r.w as f32 - l.px(8.0);
     let small = l.px(11.0);
     match app.battery {
+        _ if app.toast().is_some() => {}
         Some(b) => {
             let bw = l.px(20.0);
             let bh = l.px(10.0);
@@ -1173,14 +1183,14 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Speed(n) if limit && n <= reader_core::reader::MIN_WPM => format!("Slowest: {n} wpm"),
         Msg::Speed(n) if limit => format!("Fastest: {n} wpm"),
         Msg::Speed(n) => format!("{n} words per minute"),
-        Msg::Skipped { forward, skip } => {
-            let what = match skip {
-                Skip::Sentence => "1 sentence".to_string(),
-                Skip::Words(n) => format!("{n} words"),
-                Skip::Paragraph => "1 paragraph".to_string(),
-            };
-            format!("{} {what}", if forward { "Forward" } else { "Back" })
-        }
+        // Jumps say where you are from where you started: "3 sentences forward".
+        Msg::Skipped { net, skip } => match skip {
+            Skip::Sentence => moved(net, "sentence", "sentences", 1),
+            Skip::Paragraph => moved(net, "paragraph", "paragraphs", 1),
+            Skip::Words(n) => moved(net, "word", "words", n as i32),
+        },
+        Msg::Turned { net } => moved(net, "page", "pages", 1),
+        Msg::Stepped { net } => moved(net, "word", "words", 1),
         Msg::PageBack => "Previous page".into(),
         Msg::PageForward => "Next page".into(),
         Msg::AtStart => "Start of book".into(),
