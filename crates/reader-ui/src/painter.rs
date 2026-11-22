@@ -1107,12 +1107,14 @@ fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let pad = l.i(12.0);
     let bar = Rect::new(p.x + pad, l.status.bottom() - l.i(8.0), p.w - 2 * pad, l.i(3.0).max(2));
     let rad = (bar.h as f32 / 2.0).min(th.radius.max(0.5));
-    cv.rrect(bar, rad, Paint::Solid(th.track));
-    let filled = (app.reader.permille() as i32 * bar.w) / 1000;
-    if filled > 0 {
-        cv.rrect(Rect::new(bar.x, bar.y, filled.max(bar.h), bar.h), rad, Paint::Solid(th.fill));
+    if app.settings.progress_bar {
+        cv.rrect(bar, rad, Paint::Solid(th.track));
+        let filled = (app.reader.permille() as i32 * bar.w) / 1000;
+        if filled > 0 {
+            cv.rrect(Rect::new(bar.x, bar.y, filled.max(bar.h), bar.h), rad, Paint::Solid(th.fill));
+        }
     }
-    if app.reader.is_playing() {
+    if app.reader.is_playing() || !app.settings.book_info {
         return;
     }
     let base = bar.y as f32 - l.px(4.0);
@@ -1155,20 +1157,22 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     };
     let x = l.stage.x;
     let w = l.stage.w;
-    let bar_h = l.i(9.0);
+    let bar_h = bar_h_98(c);
     let bar = Rect::new(x, l.stage.bottom() - bar_h, w, bar_h);
     let info = Rect::new(x, bar.y - l.i(16.0), w, l.i(16.0));
-    // Progress: blocks with a pixel between, the classic 98 look.
-    cv.fill(bar, W98_FACE);
-    sunken(cv, bar);
-    let inner = bar.inset(2, 2);
-    let filled = (app.reader.permille() as i32 * inner.w) / 1000;
-    let block = l.i(6.0);
-    let mut bx = inner.x;
-    while bx < inner.x + filled {
-        let bw = block.min(inner.x + filled - bx);
-        cv.fill(Rect::new(bx, inner.y, bw, inner.h), th.fill);
-        bx += block + 1;
+    // Progress: whole blocks with a pixel between, the classic 98 look.
+    // A block appears all at once when its share of the book is read: the
+    // bar fills block by block, never a block growing.
+    if app.settings.progress_bar {
+        cv.fill(bar, W98_FACE);
+        sunken(cv, bar);
+        let inner = bar.inset(2, 2);
+        let step = l.i(6.0) + 1;
+        let slots = (inner.w + 1) / step;
+        let lit = app.reader.permille() as i32 * slots / 1000;
+        for k in 0..lit {
+            cv.fill(Rect::new(inner.x + k * step, inner.y, step - 1, inner.h), th.fill);
+        }
     }
     if app.reader.is_playing() {
         return;
@@ -1178,6 +1182,9 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         let _ = draw_context(f, cv, c);
         return;
     }
+    if !app.settings.book_info {
+        return;
+    }
     cv.fill(info, W98_FACE);
     sunken(cv, info);
     numbers_98(f, cv, c, info);
@@ -1185,16 +1192,23 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
 
 /// The sunken pane of the Windows 98 screen while paused: from the sentence
 /// down to the progress bar, full width, with the numbers on its last row.
+/// Height of the 98 progress bar (none when it's switched off).
+fn bar_h_98(c: &Ctx) -> i32 {
+    if c.app.settings.progress_bar { c.l.i(9.0) } else { 0 }
+}
+
 fn pane_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let l = c.l;
-    let bar_top = l.stage.bottom() - l.i(9.0);
+    let bar_top = l.stage.bottom() - bar_h_98(c);
     let pane = Rect::new(l.stage.x, l.context.y, l.stage.w, bar_top - l.context.y);
     cv.fill(pane, W98_FACE);
     cv.fill(Rect::new(pane.x, pane.y, pane.w, 1), 0x808080);
     cv.fill(Rect::new(pane.x, pane.y, 1, pane.h), 0x808080);
     cv.fill(Rect::new(pane.x, pane.bottom() - 1, pane.w, 1), WHITE);
     cv.fill(Rect::new(pane.right() - 1, pane.y, 1, pane.h), WHITE);
-    numbers_98(f, cv, c, Rect::new(pane.x, pane.bottom() - l.i(16.0), pane.w, l.i(16.0)));
+    if c.app.settings.book_info {
+        numbers_98(f, cv, c, Rect::new(pane.x, pane.bottom() - l.i(16.0), pane.w, l.i(16.0)));
+    }
 }
 
 /// Whether the sentence under the word is on screen.

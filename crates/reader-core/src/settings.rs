@@ -56,12 +56,12 @@ pub struct Pacing {
 }
 
 /// Picture display times, in ms; 0 = reading pauses on the picture until ▶.
-pub const PICTURE_MS: [u64; 5] = [2_000, 4_000, 8_000, 15_000, 0];
-pub const PICTURE_NAMES: [&str; 5] = ["2 seconds", "4 seconds", "8 seconds", "15 seconds", "Until I press play"];
+pub const PICTURE_MS: [u64; 6] = [2_000, 3_000, 4_000, 8_000, 15_000, 0];
+pub const PICTURE_NAMES: [&str; 6] = ["2 seconds", "3 seconds", "4 seconds", "8 seconds", "15 seconds", "Until I press play"];
 
 impl Default for Pacing {
     fn default() -> Self {
-        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 1 }
+        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 2 }
     }
 }
 
@@ -100,6 +100,10 @@ pub struct Settings {
     pub position: u8,
     /// Show a picture's description (when paused on it).
     pub captions: bool,
+    /// The progress bar at the bottom of the reading screen.
+    pub progress_bar: bool,
+    /// The book numbers when paused: %, words, time left, chapter.
+    pub book_info: bool,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -133,6 +137,8 @@ impl Default for Settings {
             brackets: true,
             position: 1,
             captions: false,
+            progress_bar: true,
+            book_info: true,
             skip: 0,
             context: true,
             book: 0,
@@ -157,7 +163,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 28] = [
+pub const FIELDS: [(&str, u16, u16); 30] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -174,7 +180,7 @@ pub const FIELDS: [(&str, u16, u16); 28] = [
     ("title", 10, 40),
     ("long_words", 0, 1),
     ("ramp", 0, 1),
-    ("picture", 0, 4),
+    ("pictures", 0, 5),
     ("book", 0, 255),
     ("phrase", 1, 3),
     ("spacing", 0, 2),
@@ -186,6 +192,8 @@ pub const FIELDS: [(&str, u16, u16); 28] = [
     ("brackets", 0, 1),
     ("position", 0, 1),
     ("captions", 0, 1),
+    ("progress_bar", 0, 1),
+    ("book_info", 0, 1),
 ];
 
 impl Settings {
@@ -218,6 +226,8 @@ impl Settings {
             "brackets" => self.brackets as u16,
             "position" => self.position as u16,
             "captions" => self.captions as u16,
+            "progress_bar" => self.progress_bar as u16,
+            "book_info" => self.book_info as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -226,7 +236,7 @@ impl Settings {
             "title" => p.title as u16,
             "long_words" => p.long_words as u16,
             "ramp" => p.ramp as u16,
-            "picture" => p.picture as u16,
+            "pictures" => p.picture as u16,
             "book" => self.book as u16,
             _ => return None,
         })
@@ -257,6 +267,8 @@ impl Settings {
             "brackets" => self.brackets = v != 0,
             "position" => self.position = b,
             "captions" => self.captions = v != 0,
+            "progress_bar" => self.progress_bar = v != 0,
+            "book_info" => self.book_info = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,
@@ -265,7 +277,7 @@ impl Settings {
             "title" => p.title = b,
             "long_words" => p.long_words = v != 0,
             "ramp" => p.ramp = v != 0,
-            "picture" => p.picture = b,
+            "pictures" => p.picture = b,
             "book" => self.book = b,
             _ => unreachable!("FIELDS and set() list the same names"),
         }

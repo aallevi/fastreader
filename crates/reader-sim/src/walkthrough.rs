@@ -149,6 +149,13 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.key(Key::Left);
     r.shot("jumps-add-up");
     r.wait(3_000);
+    for (bar, info, name) in [(false, true, "no-progress-bar"), (true, false, "no-book-info"), (false, false, "neither")] {
+        r.app.set_setting("progress_bar", bar as u16).unwrap();
+        r.app.set_setting("book_info", info as u16).unwrap();
+        r.shot(name);
+    }
+    r.app.set_setting("progress_bar", 1).unwrap();
+    r.app.set_setting("book_info", 1).unwrap();
     r.tap_icon(Icon::Book);
     r.shot("menu-book");
     r.app.library = vec!["The Quiet Machine".into(), "La storia dell'arte".into()];

@@ -145,7 +145,7 @@ impl Reader {
 
     /// Paused by itself on a picture ("Until I press play").
     pub fn held_on_picture(&self) -> bool {
-        !self.playing && !self.finished && self.on_picture() && crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize] == 0
+        !self.playing && !self.finished && self.on_picture() && crate::settings::PICTURE_MS[(self.pacing.picture as usize).min(crate::settings::PICTURE_MS.len() - 1)] == 0
     }
 
     /// Display time of the current word in ms, including the start-up ramp.
@@ -156,7 +156,7 @@ impl Reader {
         if self.on_picture() {
             // Pictures stay a set time, whatever the reading speed; with
             // "until I press play" the press itself moves on (delay 0).
-            return crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize];
+            return crate::settings::PICTURE_MS[(self.pacing.picture as usize).min(crate::settings::PICTURE_MS.len() - 1)];
         }
         let base = self.ms_for(self.book.weight_of(self.shown()) as u64);
         // Each half of a split word gets half its time.
@@ -382,7 +382,7 @@ impl Reader {
         self.second = false;
         self.pos = self.shown().end;
         self.ramp = self.ramp.saturating_sub(1);
-        if self.on_picture() && crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize] == 0 {
+        if self.on_picture() && crate::settings::PICTURE_MS[(self.pacing.picture as usize).min(crate::settings::PICTURE_MS.len() - 1)] == 0 {
             self.playing = false; // wait on the picture until ▶
             return true;
         }
@@ -531,13 +531,13 @@ mod tests {
     #[test]
     fn pictures_stay_their_set_time_or_wait() {
         let mut r = Reader::new(Book::new("t", "One two.\n\n{image:0}\n\nThree four."), 475);
-        r.set_pacing(Pacing { ramp: false, picture: 2, ..Pacing::default() });
+        r.set_pacing(Pacing { ramp: false, picture: 3, ..Pacing::default() });
         r.seek(2, 0);
         assert!(r.on_picture());
         assert_eq!(r.current_delay(), 8_000, "8 seconds, whatever the speed");
         r.set_wpm(900);
         assert_eq!(r.current_delay(), 8_000);
-        r.set_pacing(Pacing { ramp: false, picture: 4, ..Pacing::default() });
+        r.set_pacing(Pacing { ramp: false, picture: 5, ..Pacing::default() });
         r.seek(0, 0);
         r.play(0);
         let mut t = 0;

@@ -56,6 +56,8 @@ pub enum MenuItem {
     Pictures,
     Position,
     Card,
+    ProgressBar,
+    BookInfo,
     Brightness,
     Rotate,
     Wifi,
@@ -67,7 +69,7 @@ pub enum MenuItem {
 /// ▲▼ run through all of them in this order; the screen shows the menu the
 /// selection is in.
 pub const MENU: [(&str, &[MenuItem]); 4] = [
-    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
+    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::ProgressBar, MenuItem::BookInfo, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
     ("Library", &[MenuItem::Library]),
     ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
@@ -95,7 +97,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 27;
+pub const MENU_LEN: u8 = 29;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -132,6 +134,8 @@ impl MenuItem {
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Wifi => "Web view (Wi-Fi)",
             MenuItem::Card => "SD card",
+            MenuItem::ProgressBar => "Progress bar",
+            MenuItem::BookInfo => "Book info when paused",
             MenuItem::DeleteBook => "Delete a book…",
             MenuItem::Info => "Device info",
             MenuItem::Sleep => "Sleep",
@@ -156,6 +160,8 @@ impl MenuItem {
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::Position => PickKind::Position,
             MenuItem::Card => PickKind::Card,
+            MenuItem::ProgressBar => PickKind::ProgressBar,
+            MenuItem::BookInfo => PickKind::BookInfo,
             MenuItem::DeleteBook => PickKind::DeleteWhich,
             MenuItem::GoTo => PickKind::GoTo,
             MenuItem::Size => PickKind::Size,
@@ -175,6 +181,8 @@ pub enum PickKind {
     Pictures,
     Position,
     Card,
+    ProgressBar,
+    BookInfo,
     DeleteWhich,
     DeleteConfirm,
     Pace,
@@ -202,6 +210,8 @@ impl PickKind {
             PickKind::Pictures => "Picture time",
             PickKind::Position => "Word position",
             PickKind::Card => "SD card",
+            PickKind::ProgressBar => "Progress bar",
+            PickKind::BookInfo => "Book info when paused",
             PickKind::DeleteWhich => "Delete a book",
             PickKind::DeleteConfirm => "Delete this book?",
             PickKind::Pace => "Speed means",
@@ -223,7 +233,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo)
     }
 }
 
@@ -1353,7 +1363,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Pace => 2,
@@ -1378,9 +1388,10 @@ impl App {
             PickKind::Book => self.library.get(i).cloned().unwrap_or_else(|| self.reader.book.title.clone()),
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
             PickKind::Brackets => BRACKET_NAMES[i].into(),
-            PickKind::Pictures => PICTURE_NAMES[i.min(4)].into(),
+            PickKind::Pictures => PICTURE_NAMES[i.min(PICTURE_NAMES.len() - 1)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
+            PickKind::ProgressBar | PickKind::BookInfo => ["Shown", "Hidden"][i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
                     Some(Place::Card) => "  · SD card",
@@ -1420,6 +1431,8 @@ impl App {
             MenuItem::GoTo => format!("{}%", self.reader.permille() / 10),
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
+            MenuItem::ProgressBar => (if self.settings.progress_bar { "Shown" } else { "Hidden" }).into(),
+            MenuItem::BookInfo => (if self.settings.book_info { "Shown" } else { "Hidden" }).into(),
             MenuItem::Card => match self.card {
                 None => "No card".into(),
                 Some(c) if !c.formatted => "Needs formatting".into(),
@@ -1442,9 +1455,11 @@ impl App {
                 self.book_marks().iter().rposition(|&b| b <= pos).unwrap_or(0) as u8
             }
             PickKind::Brackets => self.settings.brackets as u8,
-            PickKind::Pictures => self.settings.pacing.picture.min(4),
+            PickKind::Pictures => self.settings.pacing.picture.min(PICTURE_NAMES.len() as u8 - 1),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
+            PickKind::ProgressBar => (!self.settings.progress_bar) as u8,
+            PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
             PickKind::DeleteConfirm => 0,
             PickKind::Pace => self.settings.true_pace as u8,
@@ -1478,6 +1493,8 @@ impl App {
                 self.settings.position = v;
                 self.apply_mode();
             }
+            PickKind::ProgressBar => self.settings.progress_bar = v == 0,
+            PickKind::BookInfo => self.settings.book_info = v == 0,
             PickKind::Spacing => self.settings.spacing = v,
             PickKind::Paragraphs => self.settings.indent = v == 1,
             PickKind::Align => self.settings.justify = v == 1,
