@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/reader-core", "crates/reader-ui", "crates/reader-sim"]
+members = ["crates/reader-core", "crates/reader-ui", "crates/reader-sim", "crates/fat-format"]
 # The ESP32 firmware needs the Xtensa toolchain (espup), so it builds on its own.
 exclude = ["firmware"]
 

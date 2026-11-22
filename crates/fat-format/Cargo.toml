@@ -1,0 +1,12 @@
+[package]
+name = "fat-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Formats a block device as one FAT32 partition (MBR), no_std"
+
+[dependencies]
+embedded-sdmmc = { version = "0.10", default-features = false }
+
+[dev-dependencies]
+embedded-sdmmc = { version = "0.10" }
