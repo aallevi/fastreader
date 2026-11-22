@@ -1148,8 +1148,6 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let bar_h = l.i(9.0);
     let bar = Rect::new(x, l.stage.bottom() - bar_h, w, bar_h);
     let info = Rect::new(x, bar.y - l.i(16.0), w, l.i(16.0));
-    // The strip is grey 98 face, like a window's status bar.
-    cv.fill(Rect::new(x, info.y, w, bar.bottom() - info.y), W98_FACE);
     // Progress: blocks with a pixel between, the classic 98 look.
     cv.fill(bar, W98_FACE);
     sunken(cv, bar);
