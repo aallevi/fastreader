@@ -47,6 +47,7 @@ const HTTP_WORKERS: usize = 3;
 
 /// Brings up the access point and spawns the network tasks.
 pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
+    println!("wifi: starting (internal heap free {} KB)", esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into()) / 1024);
     let ap = Config::AccessPoint(AccessPointConfig::default().with_ssid(SSID.try_into().unwrap()));
     let device = Interface::access_point();
     let controller = match WifiController::new(wifi, ControllerConfig::default().with_initial_config(ap)) {
@@ -145,15 +146,20 @@ async fn dns(stack: Stack<'static>) {
 async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
     // 4 KB receive window: big uploads (an illustrated book is ~30 MB) go
     // several times faster than with 1 KB.
-    let mut rx = [0u8; 4096];
-    let mut tx = [0u8; 2048];
+    // Buffers on the heap: kept in the task itself they made each worker's
+    // state ~12 KB, and creating three of them overflowed the start-up stack
+    // (Wi-Fi then hung right after the radio came up).
+    let mut rx = alloc::vec![0u8; 4096];
+    let mut tx = alloc::vec![0u8; 2048];
+    let mut head = alloc::vec![0u8; 1024];
+    let mut chunk = alloc::vec![0u8; 4096];
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx, &mut tx);
         socket.set_timeout(Some(Duration::from_secs(10)));
         if socket.accept(IpListenEndpoint { addr: None, port: 80 }).await.is_err() {
             continue;
         }
-        let mut head = [0u8; 1024];
+        head.fill(0);
         let mut n = 0;
         while n < head.len() {
             match socket.read(&mut head[n..]).await {
@@ -200,7 +206,6 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
                             ok &= sd.borrow_mut().as_mut().is_some_and(|c| c.write(file, first));
                             written += first.len();
                         }
-                        let mut chunk = [0u8; 4096];
                         while ok && written < length {
                             match socket.read(&mut chunk).await {
                                 Ok(0) | Err(_) => break,
@@ -226,7 +231,6 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
             } else {
                 let mut body = alloc::vec::Vec::with_capacity(length);
                 body.extend_from_slice(&head[start..n]);
-                let mut chunk = [0u8; 1024];
                 while body.len() < length {
                     match socket.read(&mut chunk).await {
                         Ok(0) | Err(_) => break,
