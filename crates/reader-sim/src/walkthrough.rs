@@ -321,7 +321,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Close);
 
     // Pictures: a book with a chart, in word view and page view.
-    let mut file = b"# Figures\n\nThe chart below shows reading speed by week.\n\n{image:0}\n\nAfter the chart the text goes on as usual.".to_vec();
+    let mut file = b"# Figures\n\nThe chart below shows reading speed by week.\n\n{image:0}\n\n{caption} 12 Reading speed by week: from 250 to 600 words a minute. {/caption}\n\nAfter the chart the text goes on as usual.".to_vec();
     file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
     let (pw, ph) = (240u16, 150u16);
     file.extend_from_slice(&1u16.to_le_bytes());
@@ -340,6 +340,15 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.app.screen = Screen::Reading;
     r.app.reader.seek(r.app.reader.book.len() - 10, r.now);
     r.shot("picture-word-view");
+    for (theme, name) in [(0u16, "vista"), (3, "win98"), (5, "night")] {
+        r.app.set_setting("theme", theme).unwrap();
+        r.app.settings.captions = false;
+        r.shot(&format!("picture-button-{name}"));
+        r.app.settings.captions = true;
+        r.shot(&format!("picture-description-{name}"));
+    }
+    r.app.settings.captions = false;
+    r.app.set_setting("theme", 0).unwrap();
     r.app.set_setting("mode", 3).unwrap();
     r.app.screen = Screen::Page;
     r.app.reader.seek(0, r.now);

@@ -800,7 +800,7 @@ fn caption_button_rect(l: &Layout, area: Rect, f: &mut Fonts, th: &Theme) -> Rec
 /// button that shows or hides it.
 fn draw_caption(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect, text: &str) {
     let (th, l, app) = (c.th, c.l, c.app);
-    let button = caption_button_rect(l, area, f, th);
+    let pill = caption_button_rect(l, area, f, th);
     if app.settings.captions {
         // Wrap to the full width, at most four lines, on a band of page colour.
         let px = l.px(12.0);
@@ -828,22 +828,29 @@ fn draw_caption(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect, text: &str)
             lines[3].push('…');
         }
         let lh = l.px(15.0);
-        let band_h = (lh * lines.len() as f32 + l.px(10.0)) as i32 + button.h + l.i(6.0);
-        let band = Rect::new(area.x, area.bottom() - band_h, area.w, band_h);
-        cv.fill(band, th.page);
-        cv.fill(Rect::new(band.x, band.y, band.w, 1), mix(th.page, th.dim, 90));
+        let band_h = (lh * lines.len() as f32 + l.px(10.0)) as i32 + pill.h + l.i(6.0);
+        let band = Rect::new(area.x + l.i(4.0), area.bottom() - band_h - l.i(2.0), area.w - l.i(8.0), band_h);
+        // The theme's own panel: Windows 98 gets its pale-yellow tooltip.
+        let text_c = if th.chrome == Chrome::Win98 {
+            cv.fill(band, BLACK);
+            cv.fill(band.inset(1, 1), 0xFFFFE1);
+            BLACK
+        } else {
+            button(cv, th, l, band, Kind::Row, false)
+        };
+        let (face, tpx) = if th.chrome == Chrome::Win98 { (th.ui.0, l.px(11.5)) } else { (face, px) };
         for (k, line) in lines.iter().enumerate() {
             let y = band.y as f32 + l.px(5.0) + lh * (k as f32 + 0.78);
-            f.draw(cv, face, px, line, band.x as f32 + l.px(8.0), y, th.text);
+            f.draw(cv, face, tpx, line, band.x as f32 + l.px(8.0), y, text_c);
         }
     }
-    // The button: a small pill, filled while the description is shown.
+    // The button, in the theme's style (pushed in while the description shows).
     let on = app.settings.captions;
-    cv.rrect(button, button.h as f32 / 2.0, Paint::Solid(if on { th.fill } else { mix(th.page, th.dim, 40) }));
-    cv.rrect_stroke(button, button.h as f32 / 2.0, mix(th.page, th.dim, 140));
+    let c = button(cv, th, l, pill, Kind::Row, on);
     let label = up(th, if on { "Hide" } else { "Description" });
     let lw = f.measure(th.ui.1, l.px(11.0), &label);
-    f.draw(cv, th.ui.1, l.px(11.0), &label, button.cx() - lw / 2.0, button.cy() + l.px(4.0), if on { WHITE } else { th.text });
+    let off = if th.chrome == Chrome::Win98 && on { 1.0 } else { 0.0 };
+    f.draw(cv, th.ui.1, l.px(11.0), &label, pill.cx() - lw / 2.0 + off, pill.cy() + l.px(4.0) + off, c);
 }
 
 /// Distance from a word's start to the middle of its recognition letter.

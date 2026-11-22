@@ -15,7 +15,8 @@ use crate::reader::Reader;
 use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
-pub const TOAST_MS: u64 = 1_400;
+/// How long a message (Paused, speed, Bookmarked…) stays in the title bar.
+pub const TOAST_MS: u64 = 2_500;
 /// How long an on-screen button stays lit after its key was pressed.
 pub const FLASH_MS: u64 = 160;
 
