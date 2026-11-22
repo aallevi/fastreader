@@ -49,6 +49,10 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] A normal PDF or EPUB from the phone goes to the card.
 - [ ] Switch off and on: the card books are still in 📚.
 
+## Deleting books (web view → Settings → Books on the reader)
+- [ ] Each book shows where it is (SD card / reader's memory) and its size; Delete asks once more and the question disappears by itself after a few seconds.
+- [ ] More… → delete everything in one place asks you to type DELETE (anything else deletes nothing).
+
 ## Web view (⚙ → Web view, join "FastReader")
 - [ ] The phone opens the page by itself on joining (captive portal); otherwise http://192.168.4.1.
 - [ ] Settings drawer changes the reader live (incl. Word position, Parentheses).

@@ -1194,6 +1194,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Wifi(true) => "Web view on: join Wi-Fi FastReader".into(),
         Msg::Wifi(false) => "Web view off".into(),
         Msg::BookAdded => "Book added to the library".into(),
+        Msg::BookRemoved => "Book deleted".into(),
         Msg::Bookmarked => "Bookmarked".into(),
         Msg::NoCard => "No SD card in the reader".into(),
         Msg::PictureHeld => "Picture: press play to go on".into(),

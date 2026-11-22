@@ -264,6 +264,12 @@ impl Card {
         }
     }
 
+    /// Deletes one book from the card.
+    pub fn delete(&mut self, book: &Stored) -> bool {
+        let State::Mounted { vm, dir, .. } = &self.state else { return false };
+        vm.delete_entry_in_dir(*dir, book.file.as_str()).is_ok()
+    }
+
     /// Deletes every book on the card.
     pub fn remove_books(&mut self) {
         let books = self.scan();

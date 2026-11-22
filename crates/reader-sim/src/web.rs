@@ -66,15 +66,40 @@ fn handle(mut stream: TcpStream, app: &Mutex<App>, books: &Mutex<Vec<PathBuf>>, 
         let file = PathBuf::from(dir).join(format!("{}.{}", slug.trim_matches('-'), if on_card { "BK" } else { "md" }));
         std::fs::write(&file, &body)?;
         books.lock().unwrap().push(file);
-        app.lock().unwrap().book_added(title, now);
+        let place = if on_card { reader_core::app::Place::Card } else { reader_core::app::Place::Flash };
+        app.lock().unwrap().book_added(title, reader_core::app::BookInfo { place, bytes: length as u32 }, now);
         return write!(stream, "HTTP/1.1 202 Accepted\r\nConnection: close\r\n\r\nsaving");
     }
-    if method == "POST" && path == "/books/clear" {
-        let _ = std::fs::remove_dir_all(crate::UPLOADS);
+    // Deleting, as on the device: needs the page's confirmation, and only
+    // uploaded or card books can go (never the simulator's book folders).
+    if method == "POST" && (path == "/books/delete" || path == "/books/clear") {
+        let param = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name)?.strip_prefix('='));
+        let deletable = |p: &PathBuf| p.starts_with(crate::UPLOADS) || p.starts_with(crate::SIM_CARD);
         let mut list = books.lock().unwrap();
-        list.retain(|p| !p.starts_with(crate::UPLOADS));
-        app.lock().unwrap().books_removed(list.len(), now);
-        return write!(stream, "HTTP/1.1 202 Accepted\r\nConnection: close\r\n\r\nremoving");
+        let mut a = app.lock().unwrap();
+        let victims: Vec<usize> = if path == "/books/delete" {
+            match (param("i").and_then(|v| v.parse::<usize>().ok()), param("confirm")) {
+                (Some(i), Some("yes")) if list.get(i).is_some_and(deletable) => vec![i],
+                (Some(_), Some("yes")) => return write!(stream, "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nthis book can't be deleted"),
+                _ => return write!(stream, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nnot confirmed"),
+            }
+        } else {
+            let dir = match param("place") {
+                Some("card") => crate::SIM_CARD,
+                Some("memory") => crate::UPLOADS,
+                _ => return write!(stream, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nwhich place?"),
+            };
+            if param("confirm") != Some("DELETE") {
+                return write!(stream, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nnot confirmed");
+            }
+            (0..list.len()).filter(|&i| list[i].starts_with(dir)).collect()
+        };
+        for &i in victims.iter().rev() {
+            let _ = std::fs::remove_file(&list[i]);
+            list.remove(i);
+            a.book_removed(i, now);
+        }
+        return write!(stream, "HTTP/1.1 202 Accepted\r\nConnection: close\r\n\r\ndeleted {}", victims.len());
     }
     let (method, target) = (method.as_str(), target.as_str());
     let r = respond(&mut app.lock().unwrap(), method, target, now);

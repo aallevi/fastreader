@@ -62,6 +62,11 @@
   .step output { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
   .row select { max-width: 190px; padding: 0 6px; }
   .toggle { min-width: 64px; }
+  /* Deleting: red, and a second step before anything happens. */
+  .danger { color: #b3261e; border-color: color-mix(in srgb, #b3261e 50%, transparent); }
+  .booklist .row label small { display: block; }
+  .ask { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  details.bulk summary { cursor: pointer; padding: 6px 0; color: var(--dim); }
   .toggle[aria-pressed=true] { background: var(--sel); color: var(--seltext); }
   aside .close { position: sticky; top: 0; float: right; }
 </style>
@@ -73,7 +78,13 @@
   <div class="row"><label for="file">EPUB, PDF, Markdown or text<small>Converted here on the phone: chapters, bold/italic and pictures kept</small></label></div>
   <div class="row"><input type="file" id="file" accept=".epub,.pdf,.md,.txt,text/plain,application/pdf"></div>
   <div class="row"><button class="toggle" id="send" disabled>Send to the reader</button><small id="upmsg" role="status"></small></div>
-  <div class="row"><button class="toggle" id="clearBooks">Remove uploaded books</button></div>
+  <h3>Books on the reader</h3>
+  <div id="bookList" class="booklist"><small>Loading…</small></div>
+  <small id="delmsg" role="status"></small>
+  <details class="bulk"><summary>More…</summary>
+    <div class="row"><button class="toggle danger" data-place="card">Delete every book on the SD card</button></div>
+    <div class="row"><button class="toggle danger" data-place="memory">Delete every book in the reader's memory</button></div>
+  </details>
   <div id="setBody">Loading…</div></aside>
 <div class="bar"><div id="prog"></div></div>
 <div id="less" aria-hidden="true"></div>
@@ -220,7 +231,7 @@ function renderSettings() {
     }
   }
 }
-$('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); $('settings').classList.add('open'); };
+$('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); loadBooks(); $('settings').classList.add('open'); };
 $('closeSet').onclick = () => $('settings').classList.remove('open');
 
 // ---- add a book: EPUBs are converted here in the browser (unzip + XHTML →
@@ -656,13 +667,49 @@ $('send').onclick = async () => {
   const body = new Blob([`<!-- title: ${pending.title} -->\n` + pending.text, ...(pending.images ? [pending.images] : [])]);
   const r = await fetch('/upload?title=' + encodeURIComponent(pending.title), {method: 'POST', body});
   $('upmsg').textContent = r.ok ? 'Saved: it is in the Library on the reader' : 'Failed: ' + await r.text();
-  if (r.ok) setTimeout(async () => { S = await (await fetch('/settings')).json(); renderSettings(); }, 1500);
+  if (r.ok) setTimeout(async () => { S = await (await fetch('/settings')).json(); renderSettings(); loadBooks(); }, 1500);
 };
-$('clearBooks').onclick = async () => {
-  if (!confirm('Remove every book uploaded from the browser? Books built into the reader stay.')) return;
-  await fetch('/books/clear', {method: 'POST'});
-  $('upmsg').textContent = 'Uploaded books removed';
-};
+// ---- the library, with deleting made hard to do by accident: one book
+// takes two taps (the second within a few seconds), a whole place takes
+// typing DELETE. The reader itself refuses a request without confirmation.
+const PLACES = {card: 'SD card', memory: "reader's memory", builtin: 'built in'};
+const htmlEsc = t => t.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+let BOOKS = [];
+async function loadBooks() {
+  try { BOOKS = await (await fetch('/books')).json(); } catch (e) { return; }
+  const size = kb => kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB';
+  $('bookList').innerHTML = BOOKS.length ? BOOKS.map(b => `<div class="row" data-i="${b.i}"><label>${htmlEsc(b.title)}
+      <small>${PLACES[b.place]} · ${size(b.kb)}${b.open ? ' · open now' : ''}</small></label>
+      ${b.place === 'builtin' ? '' : '<button class="toggle danger del">Delete</button>'}</div>`).join('')
+    : '<small>No books yet: add one above.</small>';
+  $('bookList').querySelectorAll('.del').forEach(btn => btn.onclick = () => ask(btn));
+}
+function ask(btn) {
+  const row = btn.closest('.row'), b = BOOKS.find(x => x.i == row.dataset.i);
+  const box = document.createElement('span');
+  box.className = 'ask';
+  box.innerHTML = `Delete${b.open ? ' the open book' : ''}? <button class="toggle">Cancel</button><button class="toggle danger">Delete</button>`;
+  btn.replaceWith(box);
+  const back = () => { if (box.isConnected) box.replaceWith(btn); };
+  const timer = setTimeout(back, 6000); // the question goes away by itself
+  box.children[0].onclick = () => { clearTimeout(timer); back(); };
+  box.children[1].onclick = async () => {
+    clearTimeout(timer);
+    const r = await fetch(`/books/delete?i=${b.i}&confirm=yes`, {method: 'POST'});
+    $('delmsg').textContent = r.ok ? `“${b.title}” deleted` : 'Not deleted: ' + await r.text();
+    setTimeout(loadBooks, 1200);
+  };
+}
+document.querySelectorAll('details.bulk [data-place]').forEach(btn => btn.onclick = async () => {
+  const place = btn.dataset.place, hit = BOOKS.filter(b => b.place === place);
+  if (!hit.length) { $('delmsg').textContent = `No books in the ${PLACES[place]}`; return; }
+  const names = hit.slice(0, 3).map(b => '“' + b.title + '”').join(', ') + (hit.length > 3 ? ` and ${hit.length - 3} more` : '');
+  const typed = prompt(`This deletes all ${hit.length} book${hit.length > 1 ? 's' : ''} in the ${PLACES[place]}: ${names}.\nIt can't be undone.\n\nType DELETE to confirm.`);
+  if (typed !== 'DELETE') { $('delmsg').textContent = 'Nothing deleted'; return; }
+  const r = await fetch(`/books/clear?place=${place}&confirm=DELETE`, {method: 'POST'});
+  $('delmsg').textContent = r.ok ? `${hit.length} book${hit.length > 1 ? 's' : ''} deleted` : 'Not deleted: ' + await r.text();
+  setTimeout(loadBooks, 1200);
+});
 poll();
 </script>
 </body>

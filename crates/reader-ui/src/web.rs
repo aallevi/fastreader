@@ -110,6 +110,7 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
             extra_header: Some("Content-Encoding: gzip".into()),
             body: Body::Raw(if path.contains("worker") { PDFJS_WORKER } else { PDFJS }),
         },
+        ("GET", "/books") => Response::ok("application/json", Body::Text(books_json(app))),
         ("GET", "/state") => Response::ok("application/json", Body::Text(state_json(app))),
         ("GET", "/theme.css") => Response::ok("text/css", Body::Text(theme(app.settings.theme).css_vars())),
         ("GET", "/settings") => Response::ok("application/json", Body::Text(settings_json(app))),
@@ -153,6 +154,27 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
         }
         _ => Response::text("404 Not Found", "not found"),
     }
+}
+
+/// The library for the page's book list: index, title, where it is kept,
+/// size, and whether it's the open one.
+pub fn books_json(a: &App) -> String {
+    use reader_core::app::Place;
+    let rows: Vec<String> = a
+        .library
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let info = a.library_info.get(i);
+            let place = match info.map(|b| b.place) {
+                Some(Place::Card) => "card",
+                Some(Place::Flash) => "memory",
+                _ => "builtin",
+            };
+            format!("{{\"i\":{i},\"title\":{},\"place\":\"{place}\",\"kb\":{},\"open\":{}}}", json_str(t), info.map_or(0, |b| b.bytes / 1024), i == a.settings.book as usize)
+        })
+        .collect();
+    format!("[{}]", rows.join(","))
 }
 
 /// A picture as a 16-bit BMP (RGB565 bit fields): no compression code needed.
@@ -384,6 +406,16 @@ mod tests {
         assert!(!page.contains("/*THEME*/") && !page.contains("/*THEME_ID*/"));
         assert!(page.contains(&crate::themes::theme(2).css_vars()), "colours inline, no second request needed");
         assert!(page.contains("data-id=\"2\""));
+    }
+
+    #[test]
+    fn the_book_list_says_where_each_book_is() {
+        use reader_core::app::{BookInfo, Place};
+        let mut a = App::new(reader_core::Book::new("t", "x"), crate::CATALOG, Settings::default());
+        a.library = alloc::vec!["Gombrich".into(), "Notes \"1\"".into()];
+        a.library_info = alloc::vec![BookInfo { place: Place::Card, bytes: 30_000_000 }, BookInfo { place: Place::Flash, bytes: 2048 }];
+        let Body::Text(j) = respond(&mut a, "GET", "/books", 0).body else { panic!() };
+        assert_eq!(j, r#"[{"i":0,"title":"Gombrich","place":"card","kb":29296,"open":true},{"i":1,"title":"Notes \"1\"","place":"memory","kb":2,"open":false}]"#);
     }
 
     #[test]

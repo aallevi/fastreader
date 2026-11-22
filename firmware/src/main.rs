@@ -228,6 +228,11 @@ async fn main(spawner: Spawner) -> ! {
         .chain(uploads.iter().map(|s| s.title.clone()))
         .chain(card_books.iter().map(|s| s.title.clone()))
         .collect();
+    app.library_info = uploads
+        .iter()
+        .map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Flash, bytes: s.len })
+        .chain(card_books.iter().map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes: s.len }))
+        .collect();
     app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
     println!("library: {} books ({} uploaded to flash, {} on the card)", app.library.len(), uploads.len(), card_books.len());
     app.positions = load_positions(&mut flash);
@@ -425,8 +430,9 @@ async fn main(spawner: Spawner) -> ! {
             match library::append(&mut flash, &title, &text) {
                 Ok(stored) => {
                     println!("library: stored {:?} ({} bytes)", stored.title, stored.len);
+                    let bytes = stored.len;
                     uploads.push(stored);
-                    app.book_added(title, now);
+                    app.book_added(title, reader_core::app::BookInfo { place: reader_core::app::Place::Flash, bytes }, now);
                 }
                 Err(e) => println!("library: {}", e),
             }
@@ -437,17 +443,55 @@ async fn main(spawner: Spawner) -> ! {
             println!("card: stored {:?} ({} bytes)", stored.title, stored.len);
             card_books.push(stored.clone());
             app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
-            app.book_added(stored.title, now);
+            let bytes = stored.len;
+            app.book_added(stored.title, reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes }, now);
         }
-        if request.clear {
-            library::clear(&mut flash);
-            uploads.clear();
-            if let Some(c) = card_cell.borrow_mut().as_mut() {
-                c.remove_books();
+        // Deleting, confirmed on the page: one book, or every book in one place.
+        // Library order: flash uploads first, then the card's books.
+        if let Some(i) = request.delete {
+            let k = i.wrapping_sub(BOOKS.len());
+            let done = if k < uploads.len() {
+                let ok = library::delete(&mut flash, &uploads[k]);
+                if ok {
+                    uploads.remove(k);
+                }
+                ok
+            } else if k - uploads.len() < card_books.len() {
+                let c = k - uploads.len();
+                let ok = card_cell.borrow_mut().as_mut().is_some_and(|card| card.delete(&card_books[c]));
+                if ok {
+                    card_books.remove(c);
+                }
+                ok
+            } else {
+                false
+            };
+            if done {
+                if app.settings.book as usize == i {
+                    app.park_book();
+                }
+                app.book_removed(i, now);
+                app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
             }
-            card_books.clear();
+        }
+        if let Some(place) = request.clear {
+            let first = BOOKS.len();
+            let (from, count) = match place {
+                reader_core::app::Place::Flash => {
+                    library::clear(&mut flash);
+                    (first, core::mem::take(&mut uploads).len())
+                }
+                _ => {
+                    if let Some(c) = card_cell.borrow_mut().as_mut() {
+                        c.remove_books();
+                    }
+                    (first + uploads.len(), core::mem::take(&mut card_books).len())
+                }
+            };
+            for i in (from..from + count).rev() {
+                app.book_removed(i, now);
+            }
             app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
-            app.books_removed(BOOKS.len(), now); // reopens book 0 if needed (Effect::OpenBook)
         }
 
         app.tick(now);

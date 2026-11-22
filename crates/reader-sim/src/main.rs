@@ -188,6 +188,14 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
     settings.book = settings.book.min(list.len().saturating_sub(1) as u8);
     let mut app = App::new(load_book(&list[settings.book as usize]), CATALOG, settings);
     app.library = list.iter().map(|p| title_of(p)).collect();
+    app.library_info = list
+        .iter()
+        .map(|p| {
+            use reader_core::app::{BookInfo, Place};
+            let place = if p.starts_with(SIM_CARD) { Place::Card } else if p.starts_with(UPLOADS) { Place::Flash } else { Place::Builtin };
+            BookInfo { place, bytes: std::fs::metadata(p).map_or(0, |m| m.len() as u32) }
+        })
+        .collect();
     app.positions = std::fs::read_to_string(positions_path())
         .unwrap_or_default()
         .split_whitespace()

@@ -30,8 +30,10 @@ pub struct Inbox {
     pub upload: Option<(String, alloc::vec::Vec<u8>)>,
     /// A book the web task streamed to the SD card.
     pub card_added: Option<card::Stored>,
-    /// Remove every uploaded book.
-    pub clear: bool,
+    /// Delete one library book (index), confirmed on the page.
+    pub delete: Option<usize>,
+    /// Delete every book in one place, confirmed by typing DELETE.
+    pub clear: Option<reader_core::app::Place>,
 }
 
 use crate::mk_static;
@@ -245,9 +247,37 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
             socket.abort();
             continue;
         }
-        if method == "POST" && path == "/books/clear" {
-            inbox.borrow_mut().clear = true;
-            let _ = socket.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nremoving").await;
+        if method == "POST" && (path == "/books/delete" || path == "/books/clear") {
+            // Deleting needs the page's explicit confirmation in the request.
+            let param = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name)?.strip_prefix('='));
+            let ok = if path == "/books/delete" {
+                match (param("i").and_then(|v| v.parse::<usize>().ok()), param("confirm")) {
+                    (Some(i), Some("yes")) => {
+                        inbox.borrow_mut().delete = Some(i);
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                let place = match param("place") {
+                    Some("card") => Some(reader_core::app::Place::Card),
+                    Some("memory") => Some(reader_core::app::Place::Flash),
+                    _ => None,
+                };
+                match (place, param("confirm")) {
+                    (Some(p), Some("DELETE")) => {
+                        inbox.borrow_mut().clear = Some(p);
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            let reply: &[u8] = if ok {
+                b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ndeleting"
+            } else {
+                b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nnot confirmed"
+            };
+            let _ = socket.write_all(reply).await;
             let _ = socket.flush().await;
             socket.close();
             Timer::after(Duration::from_millis(20)).await;

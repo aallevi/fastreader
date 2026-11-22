@@ -393,6 +393,7 @@ pub enum Msg {
     Wifi(bool),
     BookAdded,
     BooksRemoved,
+    BookRemoved,
     Bookmarked,
     BookmarkRemoved,
     NoBookmarks,
@@ -453,6 +454,22 @@ pub struct Toast {
     pub serial: u32,
 }
 
+/// Where a book in the library is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// The reader's own memory (uploads without a card).
+    Flash,
+    Card,
+    /// Part of the program (the simulator's book folders).
+    Builtin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BookInfo {
+    pub place: Place,
+    pub bytes: u32,
+}
+
 /// The SD card, as the platform found it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Card {
@@ -501,6 +518,8 @@ pub struct App {
     pub page_hint: Option<(u32, u32)>,
     /// Titles of the books the platform can open, and where each was left.
     pub library: Vec<String>,
+    /// Where each library book is kept and how big it is (same order).
+    pub library_info: Vec<BookInfo>,
     pub positions: Vec<u32>,
     /// Every bookmark as (library book, word), all books together.
     pub bookmarks: Vec<(u8, u32)>,
@@ -541,6 +560,7 @@ impl App {
             page_hint: None,
             pages_done: false,
             library: Vec::new(),
+            library_info: Vec::new(),
             positions: Vec::new(),
             bookmarks: Vec::new(),
             card: None,
@@ -842,16 +862,54 @@ impl App {
     }
 
     /// A book arrived from the browser and is now in the library.
-    pub fn book_added(&mut self, title: String, now: u64) {
+    pub fn book_added(&mut self, title: String, info: BookInfo, now: u64) {
         self.library.push(title);
+        self.library_info.resize(self.library.len() - 1, BookInfo { place: Place::Builtin, bytes: 0 });
+        self.library_info.push(info);
         self.positions.resize(self.library.len(), 0);
         let fb = Feedback::ok(Msg::BookAdded);
+        self.feedback(fb, now);
+    }
+
+    /// One book was deleted (the platform already removed it from storage).
+    /// Places and bookmarks of the books after it move up with them; if it
+    /// was open, the first book opens.
+    pub fn book_removed(&mut self, i: usize, now: u64) {
+        if i >= self.library.len() {
+            return;
+        }
+        self.library.remove(i);
+        if i < self.library_info.len() {
+            self.library_info.remove(i);
+        }
+        if i < self.positions.len() {
+            self.positions.remove(i);
+        }
+        let b = i as u8;
+        self.bookmarks.retain(|&(k, _)| k != b);
+        for m in &mut self.bookmarks {
+            if m.0 > b {
+                m.0 -= 1;
+            }
+        }
+        self.effect(Effect::SaveBookmarks);
+        let open = self.settings.book as usize;
+        if open == i {
+            self.reader.set_book(Book::new("", ""), 0);
+            self.settings.book = 0;
+            self.pages.clear();
+            self.effect(Effect::OpenBook(0));
+        } else if open > i {
+            self.settings.book -= 1;
+        }
+        let fb = Feedback::ok(Msg::BookRemoved);
         self.feedback(fb, now);
     }
 
     /// Uploaded books were removed: the library is back to its first `keep`.
     pub fn books_removed(&mut self, keep: usize, now: u64) {
         self.library.truncate(keep);
+        self.library_info.truncate(keep);
         self.positions.truncate(keep);
         self.bookmarks.retain(|&(b, _)| (b as usize) < keep);
         self.effect(Effect::SaveBookmarks);
@@ -1772,7 +1830,7 @@ mod tests {
         let mut a = app();
         a.library = alloc::vec!["Built in".into()];
         a.reader.seek(7, 0);
-        a.book_added("Uploaded".into(), 0);
+        a.book_added("Uploaded".into(), BookInfo { place: Place::Flash, bytes: 0 }, 0);
         a.open_book(Book::new("Uploaded", "uno due tre"), 1);
         a.books_removed(1, 10);
         assert_eq!(a.library.len(), 1);
@@ -1833,6 +1891,23 @@ mod tests {
         assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::FormatCard));
         a.card_formatted(Some(Card { total_mb: 30_436, free_mb: 30_436, formatted: true }), 10);
         assert_eq!(a.toast().unwrap().feedback.msg, Msg::CardReady);
+    }
+
+    #[test]
+    fn deleting_a_book_keeps_the_others_in_place() {
+        let mut a = app();
+        a.library = alloc::vec!["A".into(), "B".into(), "C".into()];
+        a.positions = alloc::vec![10, 20, 30];
+        a.bookmarks = alloc::vec![(0, 1), (1, 2), (2, 3)];
+        a.settings.book = 2;
+        a.book_removed(1, 0);
+        assert_eq!(a.library, ["A", "C"]);
+        assert_eq!(a.positions, [10, 30], "C keeps its place");
+        assert_eq!(a.bookmarks, [(0, 1), (1, 3)], "B's bookmark goes, C's follows C");
+        assert_eq!(a.settings.book, 1, "the open book (C) is still open");
+        a.book_removed(1, 0);
+        assert_eq!(a.settings.book, 0);
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::OpenBook(0)), "the open book went: the first opens");
     }
 
     #[test]
