@@ -63,3 +63,11 @@ The 2.8" 320×240 panel is ~143 ppi, so 1 px ≈ 0.18 mm. Every toolbar hit area
 | NES / Game Boy emulators, Pokémon dashboard | planned last |
 | BME280 sensor in menu header | not applicable (this board has an IMU and RTC instead: planned) |
 | E-paper ghosting workarounds (turbo waveforms) | not needed: LCD |
+
+## Check of 2026-11-22
+
+- Tests: 133 pass (unit, render, plus randomized stress: 300 random books × 4 modes × 60 random inputs in core; 40 random books drawn in every theme/mode with random taps). Clippy clean.
+- Web: every route swept with good and bad input on the headless simulator (bad values refused with 400, out-of-range clamped, malformed requests answered, server never stops). Page checked in WebKit at iPhone size: no script errors, all 25 settings present.
+- PDF upload: Chromium and WebKit on a synthetic PDF (heads, page numbers, headings, bold/italic, indents, hyphenation, page-split sentence, picture) and on the Mekas PDF (99.5% word match with tools/convert.py; the difference is a line the desktop converter duplicates).
+- Device (selftest): Deleuze 166 047 words loads in 2.4 s with 5.6 MB free; Cancroregina 0.25 s; word paint 6–11 ms; page view 46 ms average per frame.
+- Six themes × five screens reviewed in the walkthrough (101 PNGs).

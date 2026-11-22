@@ -8,7 +8,7 @@ At first it felt *strange*, like listening to someone who never paused for breat
 
 # Chapter Two: Speed
 
-Most people read around two hundred and fifty words per minute. With practice, *rapid serial visual presentation* lets the eye stay perfectly still while the text comes to it. The red letter marks the **optimal recognition point**, the place the eye naturally wants to land.
+Most people read around two hundred and fifty words per minute. With practice, *rapid serial visual presentation* lets the eye stay perfectly still while the text comes to it. Each word can sit centred, or with its **optimal recognition point**, the letter the eye naturally lands on, always in the same place.
 
 She learned to hold the left button to scroll back through a sentence she had missed, and to let go to carry on reading. Chapters announced themselves slowly, giving her time to breathe between them.
 
