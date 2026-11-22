@@ -34,7 +34,7 @@ pub const SPACING_NAMES: [&str; 3] = ["Tight", "Normal", "Airy"];
 pub const PARAGRAPH_NAMES: [&str; 2] = ["Spaced", "Indented"];
 pub const ALIGN_NAMES: [&str; 2] = ["Ragged right", "Justified"];
 pub const POSITION_NAMES: [&str; 2] = ["Centred", "Recognition point"];
-pub const PAREN_NAMES: [&str; 2] = ["In the text", "As side marks"];
+pub const BRACKET_NAMES: [&str; 2] = ["In the text", "As side marks"];
 pub const PACE_NAMES: [&str; 2] = ["Base rate", "Real pace (pauses included)"];
 
 pub const SKIP_NAMES: [&str; 6] = ["1 sentence", "5 words", "10 words", "25 words", "50 words", "1 paragraph"];
@@ -51,11 +51,17 @@ pub struct Pacing {
     pub long_words: bool,
     /// Ease in over the first words after pressing play.
     pub ramp: bool,
+    /// How long a picture stays: an index into `PICTURE_MS` (last = until ▶).
+    pub picture: u8,
 }
+
+/// Picture display times, in ms; 0 = reading pauses on the picture until ▶.
+pub const PICTURE_MS: [u64; 5] = [2_000, 4_000, 8_000, 15_000, 0];
+pub const PICTURE_NAMES: [&str; 5] = ["2 seconds", "4 seconds", "8 seconds", "15 seconds", "Until I press play"];
 
 impl Default for Pacing {
     fn default() -> Self {
-        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true }
+        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 1 }
     }
 }
 
@@ -89,7 +95,7 @@ pub struct Settings {
     /// The wpm number means the real average pace, pauses included.
     pub true_pace: bool,
     /// Word and Phrase modes: show ( … ) as marks at the screen's sides.
-    pub parens: bool,
+    pub brackets: bool,
     /// Where words sit: 0 centred, 1 on a fixed recognition point.
     pub position: u8,
     /// Index into [`SKIPS`].
@@ -121,7 +127,7 @@ impl Default for Settings {
             highlight: true,
             wifi: false,
             true_pace: false,
-            parens: true,
+            brackets: true,
             position: 0,
             skip: 0,
             context: true,
@@ -133,12 +139,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 13;
+const VERSION: u8 = 15;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 26] = [
+pub const FIELDS: [(&str, u16, u16); 27] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -155,6 +161,7 @@ pub const FIELDS: [(&str, u16, u16); 26] = [
     ("title", 10, 40),
     ("long_words", 0, 1),
     ("ramp", 0, 1),
+    ("picture", 0, 4),
     ("book", 0, 255),
     ("phrase", 1, 3),
     ("spacing", 0, 2),
@@ -163,7 +170,7 @@ pub const FIELDS: [(&str, u16, u16); 26] = [
     ("highlight", 0, 1),
     ("wifi", 0, 1),
     ("true_pace", 0, 1),
-    ("parens", 0, 1),
+    ("brackets", 0, 1),
     ("position", 0, 1),
 ];
 
@@ -194,7 +201,7 @@ impl Settings {
             "highlight" => self.highlight as u16,
             "wifi" => self.wifi as u16,
             "true_pace" => self.true_pace as u16,
-            "parens" => self.parens as u16,
+            "brackets" => self.brackets as u16,
             "position" => self.position as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
@@ -204,6 +211,7 @@ impl Settings {
             "title" => p.title as u16,
             "long_words" => p.long_words as u16,
             "ramp" => p.ramp as u16,
+            "picture" => p.picture as u16,
             "book" => self.book as u16,
             _ => return None,
         })
@@ -231,7 +239,7 @@ impl Settings {
             "highlight" => self.highlight = v != 0,
             "wifi" => self.wifi = v != 0,
             "true_pace" => self.true_pace = v != 0,
-            "parens" => self.parens = v != 0,
+            "brackets" => self.brackets = v != 0,
             "position" => self.position = b,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
@@ -241,6 +249,7 @@ impl Settings {
             "title" => p.title = b,
             "long_words" => p.long_words = v != 0,
             "ramp" => p.ramp = v != 0,
+            "picture" => p.picture = b,
             "book" => self.book = b,
             _ => unreachable!("FIELDS and set() list the same names"),
         }

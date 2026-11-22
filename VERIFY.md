@@ -7,13 +7,18 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Aa → Word position → Recognition point: words shift so the eye stays on one spot, slightly left of centre.
 - [ ] Phrase mode: groups of up to 3 words, same size every flash, end at sentence ends.
 - [ ] Ticker: the line jumps one word at a time like a typewriter (no gliding).
-- [ ] Page view: ◀ ▶ go to the previous / next phrase; holding repeats.
+- [ ] Page view: ◀ ▶ turn whole pages like a book; holding repeats; the phone's web view follows.
 - [ ] ⏮ while playing: one press goes back to the sentence start; a second press within 2.5 s goes one sentence further.
 - [ ] Chapter titles bold and on screen twice as long; bold/italic kept.
 
+## Pictures, long words, the sentence under the word
+- [ ] Aa → Picture time: try 4 s and "Until I press play"; the time starts once the picture is on screen (a picture from the card may take a moment).
+- [ ] Aa → Word position → Recognition point: a long word ("contemporaneamente") comes in two flashes, the eye point never moves; Italian elisions ("c'è", "un'opera") focus on the letter, not the apostrophe.
+- [ ] Paused on a long sentence: ▲▼ appear beside the sentence and scroll it; at the ends they dim and tapping shows top/bottom.
+
 ## Brackets
-- [ ] Cancroregina, ~53% ("Pomposo esordio … fatterello …"): with Aa → Parentheses → As side marks, "fatterello" still shows the ( ) marks.
-- [ ] « », < >, << >> act the same as ( ).
+- [ ] Cancroregina, ~53% ("Pomposo esordio … fatterello …"): with Aa → Brackets → As side marks, "fatterello" still shows the ( ) marks.
+- [ ] [ ], { }, « », < >, << >> act the same as ( ).
 - [ ] A short pause as an aside opens and closes; asides go at normal speed.
 
 ## Bookmarks

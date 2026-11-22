@@ -224,7 +224,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.shot("bookmarked-page-corner");
     r.wait(1_500);
     // Parentheses as side marks.
-    let paren = (0..r.app.reader.book.len()).find(|&i| r.app.reader.book.word(i).unwrap().style.paren()).unwrap();
+    let paren = (0..r.app.reader.book.len()).find(|&i| r.app.reader.book.word(i).unwrap().style.bracketed()).unwrap();
     r.app.reader.seek(paren + 2, r.now);
     r.app.set_setting("mode", 0).unwrap();
     r.app.screen = Screen::Reading;
@@ -278,6 +278,33 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
         r.shot(name);
     }
     r.app.settings.context = true;
+
+    // A long sentence under the word: ▲▼ to scroll it; a long word in two flashes.
+    r.app.open_book(reader_core::Book::new("Long", "Era contemporaneamente una frase molto lunga che continua senza fermarsi mai, con tante parole che non stanno nelle due righe sotto la parola, e prosegue ancora fino alla fine del suo lungo discorso."), 0);
+    r.app.set_setting("mode", 0).unwrap();
+    r.app.set_setting("position", 1).unwrap();
+    r.app.set_setting("chunk", 1).unwrap();
+    r.app.screen = Screen::Reading;
+    r.app.reader.seek(1, r.now);
+    r.shot("long-word-first-half");
+    r.app.reader.play(r.now);
+    while r.app.reader.split_part() != Some(true) {
+        r.wait(10);
+    }
+    r.app.reader.pause();
+    r.shot("long-word-second-half");
+    r.app.reader.seek(12, r.now);
+    r.shot("long-sentence-arrows");
+    let [_, down] = reader_ui::layout::context_arrows(&r.ui.layout);
+    if let Some(h) = r.ui.hit(&r.app, down.cx() as i32, down.cy() as i32) {
+        r.app.tap(h, r.now);
+    }
+    r.shot("long-sentence-scrolled");
+    r.app.set_setting("position", 0).unwrap();
+    r.tap_icon(Icon::Text);
+    r.tap_row("Picture time");
+    r.shot("picture-time-list");
+    r.tap_icon(Icon::Close);
 
     // Pictures: a book with a chart, in word view and page view.
     let mut file = b"# Figures\n\nThe chart below shows reading speed by week.\n\n{image:0}\n\nAfter the chart the text goes on as usual.".to_vec();

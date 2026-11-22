@@ -54,7 +54,7 @@ impl Style {
     /// Last word of a verse line (`{verse}`): a line break on the page.
     pub const LINE_END: Style = Style(16);
     /// Inside ( … ): speed modes can show side marks instead of the brackets.
-    pub const PAREN: Style = Style(128);
+    pub const BRACKET: Style = Style(128);
 
     pub const fn bold(self) -> bool {
         self.0 & (Self::BOLD.0 | Self::HEADING.0) != 0
@@ -74,8 +74,8 @@ impl Style {
     pub const fn line_end(self) -> bool {
         self.0 & Self::LINE_END.0 != 0
     }
-    pub const fn paren(self) -> bool {
-        self.0 & Self::PAREN.0 != 0
+    pub const fn bracketed(self) -> bool {
+        self.0 & Self::BRACKET.0 != 0
     }
     /// Extra beats after this word from `{pause}` / `{pause:N}` (0–3), each
     /// as long as a plain word.
@@ -698,9 +698,10 @@ impl Iterator for MarkerIter<'_> {
     }
 }
 
-/// Brackets that open and close an aside: ( ), < > (also << >>), « », ‹ ›.
-pub const OPENERS: [char; 4] = ['(', '<', '«', '‹'];
-pub const CLOSERS: [char; 4] = [')', '>', '»', '›'];
+/// Brackets that open and close an aside: round ( ), square [ ], curly { },
+/// angle < > (also << >>), and guillemets « » ‹ ›.
+pub const OPENERS: [char; 6] = ['(', '[', '{', '<', '«', '‹'];
+pub const CLOSERS: [char; 6] = [')', ']', '}', '>', '»', '›'];
 
 /// Longest aside (in words) a bracket pair may span; past that, a "closer"
 /// is more likely a stray (a list's "a)") than the end of this aside.
@@ -711,7 +712,7 @@ const MAX_ASIDE: usize = 1500;
 /// breaks split asides). Openers never closed reach only to the end of
 /// their paragraph; closers without an opener ("1)", "a)") are ignored.
 fn mark_asides(text: &crate::chunked::ChunkedText, words: &mut Chunked<Word>) {
-    let kind = |c: char, set: &[char; 4]| set.iter().position(|&k| k == c);
+    let kind = |c: char, set: &[char; 6]| set.iter().position(|&k| k == c);
     let mut open: Vec<(usize, usize)> = Vec::new(); // (kind, word)
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for i in 0..words.len() {
@@ -741,7 +742,7 @@ fn mark_asides(text: &crate::chunked::ChunkedText, words: &mut Chunked<Word>) {
     for (a, z) in spans {
         for i in a..=z {
             let w = words.get(i).unwrap();
-            words.set(i, Word { style: w.style.with(Style::PAREN, true), ..w });
+            words.set(i, Word { style: w.style.with(Style::BRACKET, true), ..w });
         }
     }
 }
@@ -754,7 +755,7 @@ pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
     while j > 0 && i + 1 - j < 400 {
         j -= 1;
         let Some(w) = book.word(j) else { break };
-        if !w.style.paren() && j != i {
+        if !w.style.bracketed() && j != i {
             break;
         }
         let t = book.text_of(w);
@@ -768,6 +769,8 @@ pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
                         '<' => ("<", ">"),
                         '«' => ("«", "»"),
                         '‹' => ("‹", "›"),
+                        '[' => ("[", "]"),
+                        '{' => ("{", "}"),
                         _ => ("(", ")"),
                     };
                 }
@@ -780,7 +783,7 @@ pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
 
 fn classify(word: &str) -> Pause {
     // Look past closing quotes/brackets: `end."` still ends a sentence.
-    let tail = word.trim_end_matches(['"', '\'', ')', ']', '>', '»', '›', '”', '’']);
+    let tail = word.trim_end_matches(['"', '\'', ')', ']', '}', '>', '»', '›', '”', '’']);
     match tail.chars().last() {
         Some('.' | '!' | '?' | '…') => Pause::Sentence,
         Some(',' | ';' | ':' | '—' | '–') => Pause::Clause,
@@ -805,8 +808,37 @@ pub fn orp_index(word: &str) -> usize {
         10..=13 => 3,
         _ => 4,
     };
-    let total = word.chars().count();
-    (lead + idx).min(total.saturating_sub(1))
+    // The idx-th *letter*: an apostrophe or hyphen inside the word doesn't
+    // count ("c'è" → "è", "un'opera" → "o", "l'arte" → "a").
+    let _ = lead;
+    word.chars().enumerate().filter(|(_, c)| c.is_alphanumeric()).nth(idx).map_or(0, |(i, _)| i)
+}
+
+/// Words over 13 letters shown in two flashes, as Spritz does (patent
+/// US9483109): the recognition point then never has to move for a word too
+/// long to fit around it. Splits at a hyphen if there is one near the
+/// middle, otherwise at a syllable boundary (vowel | consonant + vowel) close
+/// to the middle. Returns the two parts as shown ("contempora-", "neamente").
+pub fn split_long(word: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = word.chars().collect();
+    let letters = chars.iter().filter(|c| c.is_alphanumeric()).count();
+    if letters <= 13 {
+        return None;
+    }
+    let n = chars.len();
+    let mid = n / 2;
+    let vowel = |c: char| "aeiouàèéìíòóùúAEIOUÀÈÉÌÒÙäöüÄÖÜy".contains(c);
+    let near = |i: &usize| (*i as isize - mid as isize).unsigned_abs();
+    if let Some(h) = (n / 4..3 * n / 4).filter(|&i| chars[i] == '-').min_by_key(near) {
+        return Some((chars[..=h].iter().collect(), chars[h + 1..].iter().collect()));
+    }
+    let cut = (n / 3..=2 * n / 3)
+        .filter(|&i| i > 0 && i + 1 < n && vowel(chars[i - 1]) && chars[i].is_alphabetic() && !vowel(chars[i]) && vowel(chars[i + 1]))
+        .min_by_key(near)
+        .unwrap_or(mid);
+    let mut first: String = chars[..cut].iter().collect();
+    first.push('-');
+    Some((first, chars[cut..].iter().collect()))
 }
 
 /// Splits a word around its ORP letter: (before, focus, after).
@@ -1042,7 +1074,7 @@ mod tests {
     #[test]
     fn angle_brackets_and_guillemets_are_asides_too() {
         let b = Book::new("t", "He said «come here» and <<then>> left <x y> ok");
-        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.bracketed()).collect();
         assert_eq!(p, [false, false, true, true, false, true, false, true, true, false]);
         assert_eq!(bracket_pair(&b, 3), ("«", "»"));
         assert_eq!(bracket_pair(&b, 5), ("«", "»"), "<< >> shows as « »");
@@ -1050,22 +1082,27 @@ mod tests {
         assert_eq!(b.word(1).unwrap().pause, Pause::Clause, "a breath before the aside");
         let b = Book::new("t", "a (b [c] d) e");
         assert_eq!(bracket_pair(&b, 3), ("(", ")"));
+        assert_eq!(bracket_pair(&b, 2), ("[", "]"), "the innermost pair shows");
+        let b = Book::new("t", "see [the note here] and {this one} done");
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.bracketed()).collect();
+        assert_eq!(p, [false, true, true, true, false, true, true, false]);
+        assert_eq!(bracket_pair(&b, 6), ("{", "}"));
     }
 
     #[test]
     fn words_inside_parentheses_are_flagged() {
         let b = Book::new("t", "Before (inside one, inside (two) three) after (x).");
-        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.bracketed()).collect();
         assert_eq!(p, [false, true, true, true, true, true, false, true]);
         assert_eq!(words(&b)[1], "(inside", "the text itself is unchanged");
         let b = Book::new("t", "Open (never closed\n\nnext paragraph");
-        assert!(!b.word(3).unwrap().style.paren(), "a paragraph ends a bracket that never closes");
+        assert!(!b.word(3).unwrap().style.bracketed(), "a paragraph ends a bracket that never closes");
         // Cancroregina, 53%: a page break splits the aside; it still holds.
         let b = Book::new("t", "passato. (Pomposo esordio, per codesto tuo\n\nfatterello. Eh, pensi ciò che vuole). Egualmente");
-        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.bracketed()).collect();
         assert_eq!(p, [false, true, true, true, true, true, true, true, true, true, true, true, false]);
         let b = Book::new("t", "Items: a) one, b) two (and more) three.");
-        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.bracketed()).collect();
         assert_eq!(p, [false, false, false, false, false, true, true, false], "list closers are not asides");
     }
 
@@ -1113,6 +1150,23 @@ mod tests {
         assert_eq!(split_orp("\"Hello"), ("\"H", "e", "llo"));
         assert_eq!(split_orp("über"), ("ü", "b", "er"));
         assert_eq!(split_orp("..."), (".", ".", "."));
+        // Letters count, not apostrophes or hyphens (Italian elisions).
+        assert_eq!(split_orp("c'è").1, "è");
+        assert_eq!(split_orp("un'opera").1, "o");
+        assert_eq!(split_orp("l'arte").1, "a");
+        assert_eq!(split_orp("dell'arte").1, "l");
+        assert_eq!(split_orp("«Così»").1, "o");
+        assert_eq!(split_orp("anti-aging").1, "t", "9 letters → the 3rd letter; the hyphen is not one");
+    }
+
+    #[test]
+    fn long_words_split_at_a_syllable() {
+        assert_eq!(split_long("contemporaneamente"), Some(("contempo-".into(), "raneamente".into())));
+        assert_eq!(split_long("rappresentazione"), Some(("rappre-".into(), "sentazione".into())));
+        assert_eq!(split_long("socio-economically"), Some(("socio-".into(), "economically".into())), "at its own hyphen");
+        assert_eq!(split_long("antichissimi"), None, "13 letters or fewer stay whole");
+        let (a, b) = split_long("precipitevolissimevolmente,").unwrap();
+        assert!(a.ends_with('-') && b.ends_with(','), "{a} {b}");
     }
 
     #[test]

@@ -543,7 +543,12 @@ async fn main(spawner: Spawner) -> ! {
 
         if !asleep {
             let damage = ui.paint(app, now, &mut cv);
+            let drew = !damage.is_empty();
             flush!(damage);
+            if drew {
+                // Now really on the panel (a picture may have come from the card).
+                app.frame_shown(start.elapsed().as_millis());
+            }
         }
 
         // Poll touch at ~100 Hz; sleep a little longer when idle.

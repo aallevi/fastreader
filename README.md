@@ -8,10 +8,12 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 - **Bookmarks:** tap the page's top-right corner to dog-ear the place; the corner folds down with a soft shadow. Tap again to remove. Menu → Bookmarks lists them; the web view marks them too.
 - **Pictures and charts** from EPUBs and PDFs (vector charts included) fill the screen for 4× a word's time; in page view they sit in the text.
 - **Four menus in the title bar:** ⚙ Settings (speed, pace, skip, theme, brightness, rotation, Wi-Fi, info, sleep) · 📖 Book (resume, chapters, bookmarks, go to %, start over) · 📚 Library (the book list) · Aa Text (mode, size, font, words per flash, word position, spacing, paragraphs, alignment, parentheses). The ▲▼ keys run through all four in order.
-- **Word position:** Centred (default) or Recognition point.
+- **Word position:** Centred (default) or Recognition point. With the recognition point, words over 13 letters come in two flashes split at a syllable ("contempo-" "raneamente"), as Spritz does, so the point never moves.
+- **Picture time** (Aa Text): 2, 4, 8 or 15 seconds, or until you press play; counted from when the picture is on screen.
+- **The sentence under the word** (while paused) follows the word; when it is longer than two lines, small ▲▼ beside it scroll through it.
 - **Recognition point follows published practice:** one fixation point a little left of centre. A single word puts its optimal recognition letter there (Spritz patent US9483109, OpenSpritz, Jetzt: 2nd letter of 2–5-letter words, 3rd of 6–9, 4th of 10–13), uncoloured. A phrase starts about 3½ letters before it, since readers take in ~4 letters left and ~15 right of a fixation (McConkie & Rayner), which is why the original e-reader uses a fixed left edge. Text never changes size; only a group wider than the screen shrinks, and a long one starts further left.
 - **⏮ like a music player:** a second press within 2.5 s goes one more sentence/phrase back, even if playing moved on meanwhile.
-- **Brackets** — ( ), < >, << >>, « », ‹ › — read as punctuation: a short breath as an aside opens and closes. Each closing bracket is matched with its opening one across the whole book, even when a page break splits the aside. Optionally the brackets (of the right kind) become marks at the screen's sides in word/phrase modes (Menu → Parentheses).
+- **Brackets** — round ( ), square [ ], curly { }, angle < > and << >>, guillemets « » ‹ › — read as punctuation: a short breath as an aside opens and closes. Each closing bracket is matched with its opening one across the whole book, even when a page break splits the aside. Optionally the brackets (of the right kind) become marks at the screen's sides in word/phrase modes (Aa → Brackets).
 - Six themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night), six reading fonts, anti-aliased.
 - Four reading modes: word by word, phrases (fixed groups of 1–3 words that end at sentences, starting at the same left point, as on the original e-reader), ticker (the line steps word by word like a typewriter carriage; nothing glides), page (normal text with a moving phrase highlight).
 - **microSD card:** books and every picture live on the card (any size; a scanned art book with 368 illustrations is ~31 MB). ⚙ Settings → SD card shows the free space and can **Erase and format** it (FAT32; the reader can't read exFAT, which most cards over 32 GB and many used cards have). Without a card, books go to the reader's own flash (3 MB each, pictures shrunk to fit).
@@ -25,7 +27,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 |---|---|---|---|---|
 | ⚙ 📖 📚 Aa (top-left) | BOOT long press (opens 📖) | Settings · Book · Library · Text menus | same | close |
 | − / + | ▼ / ▲ | speed ∓25 wpm (hold repeats) | speed ∓25 wpm | move |
-| ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | previous / next phrase (hold repeats) | back / open |
+| ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | previous / next page (hold repeats) | back / open |
 | page corner (top-right) | – | bookmark here / remove | bookmark this page / remove | – |
 | ▶ ❚❚ | BOOT short press | play / pause | play / pause the moving highlight | choose |
 

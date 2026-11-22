@@ -54,7 +54,7 @@ struct View {
     frame: Frame,
     header: (String, Option<Battery>, Option<u32>, bool),
     word: (usize, u8, bool, u16),
-    context: Option<usize>,
+    context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
     /// The current place (word, or page in page view) has a bookmark.
@@ -73,11 +73,16 @@ pub struct Ui {
     word_box: Rect,
     /// The page on screen: first word, highlighted phrase, highlight shown.
     page_drawn: Option<(usize, core::ops::Range<usize>, bool)>,
+    /// The sentence under the word, when longer than fits: whether it can
+    /// scroll up / down (the ▲▼ are shown and tappable only then).
+    context_room: Option<(bool, bool)>,
+    /// The word the sentence's scroll belongs to (a new word starts afresh).
+    context_for: usize,
 }
 
 impl Ui {
     pub fn new(w: u32, h: u32) -> Self {
-        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None }
+        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None, context_room: None, context_for: usize::MAX }
     }
 
     /// Forces a full repaint next time (after wake-up, rotation...).
@@ -88,6 +93,15 @@ impl Ui {
 
     /// The touch target under a point, in screen coordinates.
     pub fn hit(&self, app: &App, x: i32, y: i32) -> Option<Hit> {
+        if let (Some((up, down)), Screen::Reading, false) = (self.context_room, app.screen, app.reader.is_playing()) {
+            let [a, b] = layout::context_arrows(&self.layout);
+            if a.contains(x, y) {
+                return Some(Hit::ContextScroll { down: false, room: up });
+            }
+            if b.contains(x, y) {
+                return Some(Hit::ContextScroll { down: true, room: down });
+            }
+        }
         hit_test(app, &self.layout, x, y)
     }
 
@@ -95,6 +109,19 @@ impl Ui {
     pub fn paint(&mut self, app: &mut App, now: u64, cv: &mut Canvas) -> Vec<Rect> {
         if app.screen == Screen::Page || app.settings.mode() == Mode::Page {
             self.paginate(app);
+        }
+        // Past the counted pages: lay out the page on screen so a page turn
+        // knows where it ends.
+        app.page_hint = None;
+        if app.screen == Screen::Page && app.page_index().is_none() {
+            let th = theme(app.settings.theme);
+            let start = page_start(app);
+            let (_, next) = layout_page(&mut self.fonts, app, page_area(th, &self.layout), start, &self.layout);
+            app.page_hint = Some((start as u32, next as u32));
+        }
+        if app.reader.pos() != self.context_for {
+            self.context_for = app.reader.pos();
+            app.context_scroll = 0;
         }
         let th = theme(app.settings.theme);
         cv.linear_text = th.light_on_dark;
@@ -120,7 +147,7 @@ impl Ui {
                 // While the ticker glides, every frame is a new picture.
                 if app.animating() { (app.reader.progress(now) * 256.0) as u16 } else { 0 },
             ),
-            context: (paused || matches!(app.screen, Screen::Line { .. })).then_some(app.reader.pos()),
+            context: (paused || matches!(app.screen, Screen::Line { .. })).then_some((app.reader.pos(), app.context_scroll)),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
             corner: place_bookmarked(app),
@@ -132,6 +159,7 @@ impl Ui {
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
         let ctx = Ctx { th, l: &l, app, now };
+        let mut room: Option<Option<(bool, bool, i16)>> = None;
 
         if app.screen.is_overlay() {
             if full {
@@ -147,7 +175,7 @@ impl Ui {
                 self.page_drawn = Some((page_start(app), app.reader.shown(), page_highlight(app)));
             } else {
                 *word_box = draw_word(f, cv, &ctx);
-                draw_context(f, cv, &ctx);
+                room = Some(draw_context(f, cv, &ctx));
             }
             draw_status(f, cv, &ctx);
             draw_toolbar(f, cv, &ctx);
@@ -182,7 +210,7 @@ impl Ui {
                     *word_box = new_box;
                 }
                 if o.context != view.context {
-                    draw_context(f, cv, &ctx);
+                    room = Some(draw_context(f, cv, &ctx));
                     damage.push(l.context);
                 }
                 if o.status != view.status {
@@ -194,6 +222,18 @@ impl Ui {
                 draw_toolbar(f, cv, &ctx);
                 damage.push(l.toolbar);
             }
+        }
+        let mut view = view;
+        if let Some(r) = room {
+            // Keep the scroll in range, and remember whether the arrows are live.
+            self.context_room = r.map(|(up, down, _)| (up, down));
+            if let Some((_, _, scroll)) = r {
+                app.context_scroll = scroll;
+            }
+            view.context = view.context.map(|(p, _)| (p, app.context_scroll));
+        }
+        if app.screen != Screen::Reading || app.reader.is_playing() {
+            self.context_room = None;
         }
         self.last = Some(view);
         damage
@@ -633,8 +673,8 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     let fam = family(app.settings.font);
     // Parentheses as side marks: brackets leave the words and sit at the
     // screen's edges while the reader is inside ( … ).
-    let side_marks = app.settings.parens && app.reader.shown().any(|i| book.word(i).is_some_and(|w| w.style.paren()));
-    let words: Vec<(String, Face, bool)> = app
+    let side_marks = app.settings.brackets && app.reader.shown().any(|i| book.word(i).is_some_and(|w| w.style.bracketed()));
+    let mut words: Vec<(String, Face, bool)> = app
         .reader
         .shown()
         .map(|i| {
@@ -647,6 +687,12 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         .collect();
     if words.is_empty() {
         return l.word.intersect(&p);
+    }
+    // A long word in two flashes: show the half that is due.
+    if let (Some(second), 1) = (app.reader.split_part(), words.len()) {
+        if let Some((a, b)) = reader_core::book::split_long(&words[0].0) {
+            words[0].0 = if second { b } else { a };
+        }
     }
     let heading = words.iter().any(|w| w.2);
     // One size per mode, never changing from flash to flash (Spritz,
@@ -675,10 +721,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         // point (Spritz patent US9483109: 2nd letter of 2–5, 3rd of 6–9,
         // 4th of 10–13), so the eye never moves.
         let (s, face, _) = &words[0];
-        let k = reader_core::book::orp_index(s);
-        let before: String = s.chars().take(k).collect();
-        let letter: String = s.chars().skip(k).take(1).collect();
-        fix - f.measure(*face, px, &before) - f.measure(*face, px, &letter) / 2.0
+        fix - recognition_x(f, *face, px, s)
     } else {
         // A group starts a fixed few letters before the fixation point: the
         // eye takes in ~4 letters left of where it rests and ~15 right
@@ -722,9 +765,19 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
 /// Phrase and ticker text size relative to the single-word size.
 const PHRASE_SCALE: f32 = 0.62;
 
+/// Distance from a word's start to the middle of its recognition letter.
+/// Measured with the letter (and the one before it) together, so kerning
+/// between them is included.
+pub fn recognition_x(f: &mut Fonts, face: Face, px: f32, s: &str) -> f32 {
+    let k = reader_core::book::orp_index(s);
+    let upto = s.char_indices().nth(k).map_or(s.len(), |(i, _)| i);
+    let through = s.char_indices().nth(k + 1).map_or(s.len(), |(i, _)| i);
+    (f.measure(face, px, &s[..upto]) + f.measure(face, px, &s[..through])) / 2.0
+}
+
 /// Where the eye rests in Word and Phrase modes: a little left of centre,
 /// as the Spritz reticle, so long words and groups have room on the right.
-fn fixation_x(p: Rect) -> f32 {
+pub fn fixation_x(p: Rect) -> f32 {
     p.x as f32 + p.w as f32 * 0.37
 }
 
@@ -759,8 +812,13 @@ fn draw_ticker(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     // between (a glide is tiring for the eye). The new word types in at the
     // anchor; the words read move to the left in steps.
     let _ = cw;
-    let anchor = p.x as f32 + p.w as f32 * 0.32;
-    let x_cur = anchor;
+    // With the recognition point, the new word's letter lands on the same
+    // fixation point as in Word mode; otherwise words start at the anchor.
+    let x_cur = if app.settings.position == 1 {
+        fixation_x(p) - recognition_x(f, fam.face(cur.style), px, running_text(book, cur))
+    } else {
+        p.x as f32 + p.w as f32 * 0.32
+    };
     cv.clip(l.word.intersect(&p));
     let colour = |w: reader_core::Word, past: bool| {
         if past { th.dim } else if w.style.heading() { th.heading } else { th.text }
@@ -828,14 +886,17 @@ fn draw_line(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
 
 /// Under the word, only while paused: the sentence around it (RSVP's known
 /// weakness is that you can't glance back; this restores the glance).
-fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+/// The sentence under the word while paused. When it is longer than its two
+/// lines, the two lines follow the current word and the ▲▼ beside it scroll
+/// through the rest. Returns (can scroll up, can scroll down, scroll in range).
+fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, i16)> {
     let (th, l, app) = (c.th, c.l, c.app);
     let on_picture = matches!(app.screen, Screen::Reading)
         && app.settings.mode() != Mode::Ticker
         && app.reader.shown().len() == 1
         && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w));
     if on_picture {
-        return; // the picture covers this area
+        return None; // the picture covers this area
     }
     clear(cv, th, l, l.context);
     let p = paper(th, l);
@@ -844,13 +905,13 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         let s = up(th, "Release to keep reading from here");
         let w = f.measure(th.ui.0, l.px(11.0), &s);
         f.draw(cv, th.ui.0, l.px(11.0), &s, r.cx() - w / 2.0, r.cy() + l.px(4.0), th.dim);
-        return;
+        return None;
     }
     if app.screen != Screen::Reading || app.reader.is_playing() || app.reader.book.is_empty() || !app.settings.context {
-        return;
+        return None;
     }
     if app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w)) {
-        return; // a picture fills the stage; no sentence under it
+        return None; // a picture fills the stage; no sentence under it
     }
     let book = &app.reader.book;
     let fam = family(app.settings.font);
@@ -858,8 +919,9 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let face = fam.face(Style::PLAIN);
     let space = f.measure(face, px, " ");
     let shown = app.reader.shown();
-    let start = book.sentence_start(shown.start).max(shown.start.saturating_sub(7));
-    let max_w = r.w as f32 - l.px(28.0);
+    let start = book.sentence_start(shown.start);
+    // Room for the ▲▼ on the right, the same on the left so the text stays centred.
+    let max_w = r.w as f32 - 2.0 * l.px(30.0);
     let mut lines: Vec<Vec<(usize, f32)>> = alloc::vec![Vec::new()];
     let mut lw = 0.0;
     let mut i = start;
@@ -867,7 +929,7 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         let w = book.word(i).unwrap();
         let ww = f.measure(fam.face(w.style), px, running_text(book, w));
         if lw + ww > max_w && !lines.last().unwrap().is_empty() {
-            if lines.len() == 2 {
+            if lines.len() == 40 {
                 break;
             }
             lines.push(Vec::new());
@@ -880,9 +942,25 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         }
         i += 1;
     }
+    // Two lines at a time: the current word's line first, then as scrolled.
+    const ROWS: usize = 2;
+    let here = lines.iter().position(|ln| ln.iter().any(|&(i, _)| i >= shown.start)).unwrap_or(0);
+    let last_first = lines.len().saturating_sub(ROWS) as i16;
+    let base = (here as i16).min(last_first);
+    let first = (base + app.context_scroll).clamp(0, last_first);
+    let visible = &lines[first as usize..(first as usize + ROWS).min(lines.len())];
     let lh = l.px(15.0);
-    let top = r.y as f32 + (r.h as f32 - lh * lines.len() as f32) / 2.0 + lh * 0.78;
-    for (n, line) in lines.iter().enumerate() {
+    let top = r.y as f32 + (r.h as f32 - lh * visible.len() as f32) / 2.0 + lh * 0.78;
+    let (up, down) = (first > 0, (first as usize) + ROWS < lines.len());
+    if lines.len() > ROWS {
+        // ▲▼, dimmed where there is nothing more.
+        let [a, b] = layout::context_arrows(l);
+        for (rect, icon, on) in [(a, Icon::Up, up), (b, Icon::Down, down)] {
+            let col = if on { th.text } else { mix(th.page, th.dim, 90) };
+            crate::icons::draw(cv, icon, rect.cx(), rect.cy(), l.px(12.0), col);
+        }
+    }
+    for (n, line) in visible.iter().enumerate() {
         let width: f32 = line.iter().map(|w| w.1).sum::<f32>() + space * (line.len().saturating_sub(1)) as f32;
         let x0 = r.cx() - width / 2.0;
         let y = top + n as f32 * lh;
@@ -907,6 +985,7 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             x += ww + space;
         }
     }
+    (lines.len() > ROWS).then_some((up, down, first - base))
 }
 
 // ------------------------------------------------------------------ status
@@ -1025,6 +1104,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::BookAdded => "Book added to the library".into(),
         Msg::Bookmarked => "Bookmarked".into(),
         Msg::NoCard => "No SD card in the reader".into(),
+        Msg::PictureHeld => "Picture: press play to go on".into(),
         Msg::Formatting => "Formatting the card…".into(),
         Msg::CardReady => "SD card ready".into(),
         Msg::CardFailed => "Could not format the card".into(),

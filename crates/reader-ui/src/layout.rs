@@ -112,6 +112,13 @@ pub fn bookmark_corner(app: &App, l: &Layout) -> Button {
     Button { rect, hit_rect: Rect::new(p.right() - l.i(36.0), p.y, l.i(36.0), l.i(32.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
 }
 
+/// The small ▲ and ▼ at the right of the sentence under the word.
+pub fn context_arrows(l: &Layout) -> [Rect; 2] {
+    let r = l.context;
+    let (w, h) = (l.i(26.0), r.h / 2);
+    [Rect::new(r.right() - w - l.i(2.0), r.y, w, h), Rect::new(r.right() - w - l.i(2.0), r.y + h, w, r.h - h)]
+}
+
 /// The four menu buttons, left in the title bar: Settings, Book, Library,
 /// Text (see `reader_core::app::MENU`). Touch areas meet edge to edge and
 /// reach a little below the bar, easier for a thumb.

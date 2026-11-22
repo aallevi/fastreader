@@ -279,6 +279,7 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
             }
             if !ui.paint(&mut a, now, &mut cv).is_empty() || dirty {
                 present(&cv, &mut out, &a.settings);
+                a.frame_shown(start.elapsed().as_millis() as u64);
                 dirty = false;
             }
         }

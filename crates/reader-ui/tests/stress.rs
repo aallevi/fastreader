@@ -37,7 +37,7 @@ fn random_books_draw_everywhere() {
             file.extend(core::iter::repeat_n(0x55, 7 * 5 * 2));
         }
         let theme = (round % THEMES.len()) as u8;
-        let s = Settings { theme, mode: (round % 4) as u8, size: (round % 3) as u8, position: (round % 2) as u8, parens: round % 3 != 0, ..Settings::default() };
+        let s = Settings { theme, mode: (round % 4) as u8, size: (round % 3) as u8, position: (round % 2) as u8, brackets: round % 3 != 0, ..Settings::default() };
         let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, s);
         let mut cv = Canvas::new(320, 240);
         let mut ui = Ui::new(320, 240);

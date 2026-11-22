@@ -13,6 +13,10 @@ pub const WPM_STEP: u16 = 25;
 /// Words shown at reduced speed after (re)starting, so the eye can lock on.
 const RAMP_WORDS: usize = 4;
 
+/// A picture's time starts when it is shown; if the platform doesn't say
+/// so, at most this much later.
+pub const PICTURE_GRACE_MS: u64 = 3_000;
+
 /// A second ◀ within this long of the first goes one unit further back.
 pub const BACK_AGAIN_MS: u64 = 2_500;
 
@@ -29,6 +33,13 @@ pub struct Reader {
     phrase: u8,
     /// Reached the end by playing; the next play starts over.
     finished: bool,
+    /// Long words in two flashes (Word mode with the recognition point).
+    split: bool,
+    /// Showing the second half of a split word.
+    second: bool,
+    /// A picture came up and isn't confirmed on screen yet: its time starts
+    /// when the platform says the frame is shown (`frame_shown`).
+    picture_pending: bool,
     /// The last backward jump: (when, where it landed). A press soon after
     /// counts from there, so pressing ◀ twice goes two units back even while
     /// playing moved on a word or two (as a music player's ⏮).
@@ -40,7 +51,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(book: Book, wpm: u16) -> Self {
-        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, last_back: None, pacing: Pacing::default(), true_pace: false }
+        Reader { book, pos: 0, wpm: wpm.clamp(MIN_WPM, MAX_WPM), playing: false, next_due: 0, ramp: 0, chunk: 1, phrase: 0, finished: false, split: false, second: false, picture_pending: false, last_back: None, pacing: Pacing::default(), true_pace: false }
     }
 
     pub fn pos(&self) -> usize {
@@ -110,12 +121,46 @@ impl Reader {
         (now.saturating_sub(start) as f32 / d as f32).clamp(0.0, 1.0)
     }
 
+    pub fn set_split(&mut self, on: bool) {
+        self.split = on;
+        self.second = false;
+    }
+
+    /// For a long word shown in two flashes: `Some(false)` for its first
+    /// half, `Some(true)` for the second. `None` otherwise.
+    pub fn split_part(&self) -> Option<bool> {
+        if !self.split {
+            return None;
+        }
+        let s = self.shown();
+        let w = self.book.word(s.start)?;
+        (s.len() == 1 && !self.book.is_image(w) && crate::book::split_long(self.book.text_of(w)).is_some()).then_some(self.second)
+    }
+
+    /// A picture on screen right now (shown alone).
+    pub fn on_picture(&self) -> bool {
+        let s = self.shown();
+        s.len() == 1 && self.book.word(s.start).is_some_and(|w| self.book.is_image(w))
+    }
+
+    /// Paused by itself on a picture ("Until I press play").
+    pub fn held_on_picture(&self) -> bool {
+        !self.playing && !self.finished && self.on_picture() && crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize] == 0
+    }
+
     /// Display time of the current word in ms, including the start-up ramp.
     pub fn current_delay(&self) -> u64 {
         if self.book.is_empty() {
             return 0;
         }
+        if self.on_picture() {
+            // Pictures stay a set time, whatever the reading speed; with
+            // "until I press play" the press itself moves on (delay 0).
+            return crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize];
+        }
         let base = self.ms_for(self.book.weight_of(self.shown()) as u64);
+        // Each half of a split word gets half its time.
+        let base = if self.split_part().is_some() { base / 2 } else { base };
         if self.ramp > 0 && self.pacing.ramp {
             base * (100 + 25 * self.ramp as u64) / 100
         } else {
@@ -187,6 +232,8 @@ impl Reader {
     /// Jumps to a word; playback restarts its ramp from there.
     pub fn seek(&mut self, pos: usize, now: u64) {
         self.pos = pos.min(self.book.len().saturating_sub(1));
+        self.second = false;
+        self.picture_pending = false;
         self.finished = false;
         if self.playing {
             self.ramp = RAMP_WORDS;
@@ -326,11 +373,41 @@ impl Reader {
             self.finished = true;
             return false;
         }
+        if self.split_part() == Some(false) {
+            self.second = true;
+            let delay = self.current_delay();
+            self.next_due = if now - self.next_due > delay { now + delay } else { self.next_due + delay };
+            return true;
+        }
+        self.second = false;
         self.pos = self.shown().end;
         self.ramp = self.ramp.saturating_sub(1);
+        if self.on_picture() && crate::settings::PICTURE_MS[self.pacing.picture.min(4) as usize] == 0 {
+            self.playing = false; // wait on the picture until ▶
+            return true;
+        }
+        if self.on_picture() {
+            // Loading a picture (from the SD card) and drawing it takes a
+            // moment: its time counts from when it is on screen. If the
+            // platform never says, it starts anyway a few seconds later.
+            self.picture_pending = true;
+            self.next_due = now + PICTURE_GRACE_MS + self.current_delay();
+            return true;
+        }
         let delay = self.current_delay();
         self.next_due = if now - self.next_due > delay { now + delay } else { self.next_due + delay };
         true
+    }
+
+    /// The platform has put the current frame on the screen: a picture that
+    /// just came up starts its time now.
+    pub fn frame_shown(&mut self, now: u64) {
+        if self.picture_pending {
+            self.picture_pending = false;
+            if self.playing && self.on_picture() {
+                self.next_due = now + self.current_delay();
+            }
+        }
     }
 
     /// When the platform should wake up next, if playing.
@@ -410,6 +487,69 @@ mod tests {
         assert!(r.sentence_back(0));
         assert_eq!(r.pos(), 0);
         assert!(!r.sentence_back(0));
+    }
+
+    #[test]
+    fn a_picture_counts_from_when_it_is_on_screen() {
+        let mut r = Reader::new(Book::new("t", "One.\n\n{image:0}\n\nTwo."), 475);
+        r.set_pacing(Pacing { ramp: false, picture: 0, ..Pacing::default() }); // 2 s
+        r.play(0);
+        let mut t = 0;
+        while r.pos() == 0 {
+            t += 5;
+            r.tick(t);
+        }
+        assert!(r.on_picture());
+        // Loading from the card took 900 ms; then the frame is shown.
+        r.frame_shown(t + 900);
+        r.tick(t + 2_800);
+        assert_eq!(r.pos(), 1, "still on the picture: only 1.9 s on screen");
+        r.tick(t + 2_905);
+        assert_eq!(r.pos(), 2, "2 s after it appeared, reading moves on");
+    }
+
+    #[test]
+    fn long_words_take_two_flashes_in_the_same_time() {
+        let mut r = Reader::new(Book::new("t", "Era contemporaneamente qui."), 300);
+        r.set_pacing(Pacing { ramp: false, long_words: false, ..Pacing::default() });
+        r.seek(1, 0);
+        let whole = r.current_delay();
+        r.set_split(true);
+        assert_eq!(r.split_part(), Some(false));
+        assert_eq!(r.current_delay(), whole / 2);
+        r.seek(0, 0);
+        r.play(0);
+        let mut seen = alloc::vec::Vec::new();
+        for t in (0..3000).step_by(5) {
+            if r.tick(t) {
+                seen.push((r.pos(), r.split_part()));
+            }
+        }
+        assert_eq!(seen[..3], [(1, Some(false)), (1, Some(true)), (2, None)]);
+    }
+
+    #[test]
+    fn pictures_stay_their_set_time_or_wait() {
+        let mut r = Reader::new(Book::new("t", "One two.\n\n{image:0}\n\nThree four."), 475);
+        r.set_pacing(Pacing { ramp: false, picture: 2, ..Pacing::default() });
+        r.seek(2, 0);
+        assert!(r.on_picture());
+        assert_eq!(r.current_delay(), 8_000, "8 seconds, whatever the speed");
+        r.set_wpm(900);
+        assert_eq!(r.current_delay(), 8_000);
+        r.set_pacing(Pacing { ramp: false, picture: 4, ..Pacing::default() });
+        r.seek(0, 0);
+        r.play(0);
+        let mut t = 0;
+        while r.is_playing() && t < 20_000 {
+            t += 10;
+            r.tick(t);
+        }
+        assert_eq!(r.pos(), 2, "stopped on the picture");
+        assert!(r.held_on_picture());
+        r.play(t);
+        r.tick(t + 1);
+        assert_eq!(r.pos(), 3, "play moves on at once");
     }
 
     #[test]

@@ -332,3 +332,61 @@ fn phrases_start_at_the_same_left_edge_every_flash() {
     let (min, max) = (lefts.iter().min().unwrap(), lefts.iter().max().unwrap());
     assert!(max - min <= 3, "left edges moved: {lefts:?}");
 }
+
+/// How well the recognition point holds on real text: in how many words the
+/// letter can sit exactly on the fixation point (the rest are long words
+/// that must shift to fit). Run with --ignored --nocapture to see figures.
+#[test]
+#[ignore]
+fn recognition_point_on_real_books() {
+    use reader_core::book::orp_index;
+    let l = reader_ui::layout::Layout::new(320, 240);
+    let p = l.stage;
+    let fix = reader_ui::painter::fixation_x(p);
+    let mut f = reader_ui::text::Fonts::new();
+    for path in ["../../books/private/cancroregina.md", "../../books/private/differenza-e-ripetizione.md", "../../books/sample.md"] {
+        let Ok(text) = std::fs::read_to_string(path) else { continue };
+        let b = Book::parse(&text, "t");
+        for (size, px) in [(0, 30.0f32), (1, 40.0), (2, 52.0)] {
+            let face = reader_ui::text::family(0).face(reader_core::book::Style::PLAIN);
+            let (mut off, mut n) = (0, 0);
+            for i in (0..b.len()).step_by(7) {
+                let w = b.text_of(b.word(i).unwrap());
+                let total = f.measure(face, px, w);
+                let x0 = fix - reader_ui::painter::recognition_x(&mut f, face, px, w);
+                n += 1;
+                if x0 < p.x as f32 + 8.0 || x0 + total > p.right() as f32 - 8.0 {
+                    off += 1;
+                }
+                let _ = orp_index(w);
+            }
+            println!("{path} size {size}: {:.2}% of words must shift ({off} of {n})", off as f64 * 100.0 / n as f64);
+        }
+    }
+}
+
+#[test]
+fn long_sentence_under_the_word_scrolls_with_arrows() {
+    let long = "This sentence goes on and on with many words so that it cannot possibly fit on the two short lines under the word, and it keeps going with more and more words until the very end of it.";
+    let mut a = app_with(&format!("Short one. {long} Next."), Settings { mode: 0, chunk: 1, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    let [up, down] = reader_ui::layout::context_arrows(&ui.layout);
+    a.reader.seek(1, 0);
+    ui.paint(&mut a, 0, &mut cv);
+    assert_ne!(ui.hit(&a, down.cx() as i32, down.cy() as i32).map(|h| matches!(h, Hit::ContextScroll { .. })), Some(true), "a short sentence has no arrows");
+    a.reader.seek(4, 0);
+    ui.paint(&mut a, 10, &mut cv);
+    let tap = |ui: &Ui, a: &App, r: reader_ui::Rect| ui.hit(a, r.cx() as i32, r.cy() as i32);
+    assert_eq!(tap(&ui, &a, up), Some(Hit::ContextScroll { down: false, room: false }), "at the start: nothing above");
+    assert_eq!(a.tap(Hit::ContextScroll { down: false, room: false }, 20).tone, reader_core::app::Tone::Limit);
+    let h = tap(&ui, &a, down).unwrap();
+    assert_eq!(h, Hit::ContextScroll { down: true, room: true });
+    a.tap(h, 30);
+    let dmg = ui.paint(&mut a, 40, &mut cv);
+    assert_eq!(a.context_scroll, 1);
+    assert!(dmg.contains(&ui.layout.context), "the sentence area redraws");
+    a.reader.seek(20, 50);
+    ui.paint(&mut a, 60, &mut cv);
+    assert_eq!(a.context_scroll, 0, "a new word starts at its own line");
+}

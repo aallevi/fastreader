@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, PAREN_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 pub const TOAST_MS: u64 = 1_400;
@@ -50,7 +50,8 @@ pub enum MenuItem {
     Spacing,
     Paragraphs,
     Align,
-    Parens,
+    Brackets,
+    Pictures,
     Position,
     Card,
     Brightness,
@@ -67,7 +68,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
     ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart]),
     ("Library", &[MenuItem::Library]),
-    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Parens]),
+    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
 ];
 
 /// Which menu (0–3) an item index is in, and that menu's index range.
@@ -92,7 +93,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 25;
+pub const MENU_LEN: u8 = 26;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -122,7 +123,8 @@ impl MenuItem {
             MenuItem::Spacing => "Line spacing",
             MenuItem::Paragraphs => "Paragraphs",
             MenuItem::Align => "Text alignment",
-            MenuItem::Parens => "Parentheses",
+            MenuItem::Brackets => "Brackets",
+            MenuItem::Pictures => "Picture time",
             MenuItem::Position => "Word position",
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
@@ -147,7 +149,8 @@ impl MenuItem {
             MenuItem::Skip => PickKind::Skip,
             MenuItem::Chapters => PickKind::Chapter,
             MenuItem::Bookmarks => PickKind::Bookmark,
-            MenuItem::Parens => PickKind::Parens,
+            MenuItem::Brackets => PickKind::Brackets,
+            MenuItem::Pictures => PickKind::Pictures,
             MenuItem::Position => PickKind::Position,
             MenuItem::Card => PickKind::Card,
             MenuItem::GoTo => PickKind::GoTo,
@@ -164,7 +167,8 @@ impl MenuItem {
 pub enum PickKind {
     Book,
     Bookmark,
-    Parens,
+    Brackets,
+    Pictures,
     Position,
     Card,
     Pace,
@@ -188,7 +192,8 @@ impl PickKind {
         match self {
             PickKind::Book => "Library",
             PickKind::Bookmark => "Bookmarks",
-            PickKind::Parens => "Parentheses",
+            PickKind::Brackets => "Brackets",
+            PickKind::Pictures => "Picture time",
             PickKind::Position => "Word position",
             PickKind::Card => "SD card",
             PickKind::Pace => "Speed means",
@@ -210,7 +215,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Parens | PickKind::Position)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position)
     }
 }
 
@@ -242,8 +247,8 @@ pub enum Action {
     SkipForward,
     WordBack,
     WordForward,
-    PhraseBack,
-    PhraseForward,
+    PageBack,
+    PageForward,
     TogglePlay,
     OpenMenu,
     CloseMenu,
@@ -263,8 +268,8 @@ impl Action {
             Action::SkipForward => "skip forward",
             Action::WordBack => "previous word",
             Action::WordForward => "next word",
-            Action::PhraseBack => "previous phrase",
-            Action::PhraseForward => "next phrase",
+            Action::PageBack => "previous page",
+            Action::PageForward => "next page",
             Action::TogglePlay => "play / pause",
             Action::OpenMenu => "menu",
             Action::CloseMenu => "close menu",
@@ -299,8 +304,8 @@ const LINE: Table = [
 const PAGE: Table = [
     (Key::Up, Action::Faster),
     (Key::Down, Action::Slower),
-    (Key::Left, Action::PhraseBack),
-    (Key::Right, Action::PhraseForward),
+    (Key::Left, Action::PageBack),
+    (Key::Right, Action::PageForward),
     (Key::Select, Action::TogglePlay),
     (Key::Menu, Action::OpenMenu),
 ];
@@ -348,6 +353,9 @@ pub enum Hit {
     Bookmark,
     /// One of the four title-bar buttons: open that menu (see [`MENU`]).
     Group(u8),
+    /// The small ▲▼ beside the sentence under the word (while paused);
+    /// `room`: whether there is more of the sentence that way.
+    ContextScroll { down: bool, room: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,6 +395,8 @@ pub enum Msg {
     BookmarkRemoved,
     NoBookmarks,
     NoCard,
+    /// Reading waits on a picture ("Until I press play").
+    PictureHeld,
     Formatting,
     CardReady,
     CardFailed,
@@ -482,6 +492,9 @@ pub struct App {
     /// a little at a time; `pages_done` once the whole book is measured.
     pub pages: Vec<u32>,
     pub pages_done: bool,
+    /// The page on screen when it lies past the counted pages: (first word,
+    /// first word of the next page), set by the renderer.
+    pub page_hint: Option<(u32, u32)>,
     /// Titles of the books the platform can open, and where each was left.
     pub library: Vec<String>,
     pub positions: Vec<u32>,
@@ -489,6 +502,9 @@ pub struct App {
     pub bookmarks: Vec<(u8, u32)>,
     /// The SD card, if one is in.
     pub card: Option<Card>,
+    /// Lines the sentence under the word is scrolled from where it starts
+    /// (the renderer keeps it in range and resets it when the word changes).
+    pub context_scroll: i16,
     toast: Option<Toast>,
     serial: u32,
     /// The key whose on-screen button is lit, and until when.
@@ -518,11 +534,13 @@ impl App {
             battery: None,
             device: DeviceInfo::default(),
             pages: Vec::new(),
+            page_hint: None,
             pages_done: false,
             library: Vec::new(),
             positions: Vec::new(),
             bookmarks: Vec::new(),
             card: None,
+            context_scroll: 0,
             toast: None,
             serial: 0,
             flash: None,
@@ -642,6 +660,15 @@ impl App {
                 };
                 self.feedback(fb, now)
             }
+            (Hit::ContextScroll { down, room }, Screen::Reading) => {
+                let fb = if room {
+                    self.context_scroll += if down { 1 } else { -1 };
+                    Feedback::ok(Msg::Shown)
+                } else {
+                    Feedback::limit(if down { Msg::Bottom } else { Msg::Top })
+                };
+                self.feedback(fb, now)
+            }
             (Hit::Bookmark, Screen::Reading | Screen::Page) => {
                 let fb = self.toggle_bookmark();
                 self.feedback(fb, now)
@@ -673,7 +700,8 @@ impl App {
         let mut changed = self.reader.tick(now);
         if was_playing && !self.reader.is_playing() {
             self.serial = self.serial.wrapping_add(1);
-            self.toast = Some(Toast { feedback: Feedback::ok(Msg::Finished), until: now + TOAST_MS * 2, serial: self.serial });
+            let msg = if self.reader.held_on_picture() { Msg::PictureHeld } else { Msg::Finished };
+            self.toast = Some(Toast { feedback: Feedback::ok(msg), until: now + TOAST_MS * 2, serial: self.serial });
             self.save();
             changed = true;
         }
@@ -732,6 +760,9 @@ impl App {
 
     /// Groups words the way the current mode reads them.
     pub fn apply_mode(&mut self) {
+        // Long words in two flashes only where the recognition point is kept
+        // fixed for single words.
+        self.reader.set_split(self.settings.mode() == Mode::Word && self.settings.position == 1);
         match self.settings.mode() {
             Mode::Word => {
                 self.reader.set_phrase(None);
@@ -743,6 +774,12 @@ impl App {
                 self.reader.set_chunk(1);
             }
         }
+    }
+
+    /// The platform has put the current frame on the screen (pictures time
+    /// themselves from this moment).
+    pub fn frame_shown(&mut self, now: u64) {
+        self.reader.frame_shown(now);
     }
 
     /// The platform finished formatting the card (`None`: it failed).
@@ -863,6 +900,34 @@ impl App {
 
     /// Index of the page containing the current word.
     /// `None` while the reader is beyond the pages measured so far.
+    /// Where a page turn lands, like a book: the next page's first word, or
+    /// the previous page's. Before the page count reaches this far, the
+    /// renderer's `page_hint` (the page on screen) stands in.
+    fn turn_page(&self, forward: bool) -> Option<usize> {
+        let n = self.reader.book.len();
+        match (self.page_index(), self.page_hint) {
+            (Some(i), _) => {
+                if forward {
+                    self.pages.get(i + 1).map(|&p| p as usize).or_else(|| self.page_hint.map(|(_, e)| e as usize).filter(|&e| e < n && !self.pages_done))
+                } else {
+                    (i > 0).then(|| self.pages[i - 1] as usize)
+                }
+            }
+            (None, Some((start, end))) => {
+                let (start, end) = (start as usize, end as usize);
+                if forward {
+                    (end < n && end > start).then_some(end)
+                } else {
+                    // The page before: the last counted one, or a page's worth back.
+                    let counted = self.pages.iter().rev().map(|&p| p as usize).find(|&p| p < start);
+                    let guess = start.saturating_sub(end - start);
+                    (start > 0).then(|| counted.map_or(guess, |c| c.max(guess)))
+                }
+            }
+            (None, None) => None,
+        }
+    }
+
     pub fn page_index(&self) -> Option<usize> {
         if self.pages.is_empty() {
             return None;
@@ -908,14 +973,16 @@ impl App {
                     Feedback::limit(if fwd { Msg::AtEnd } else { Msg::AtStart })
                 }
             }
-            (_, Action::PhraseBack | Action::PhraseForward) => {
-                let forward = action == Action::PhraseForward;
-                if self.reader.step_phrase(forward, now) {
-                    self.settings.pos = self.reader.pos() as u32;
-                    // The highlight moving (and the page turning) is the feedback.
-                    Feedback::ok(Msg::Shown)
-                } else {
-                    Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart })
+            (_, Action::PageBack | Action::PageForward) => {
+                let forward = action == Action::PageForward;
+                match self.turn_page(forward) {
+                    Some(target) => {
+                        self.reader.seek(target, now);
+                        self.settings.pos = target as u32;
+                        // The page turning is the feedback (the phone's view follows).
+                        Feedback::ok(Msg::Shown)
+                    }
+                    None => Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart }),
                 }
             }
             (Screen::Line { .. }, Action::TogglePlay) => {
@@ -1093,6 +1160,10 @@ impl App {
                 self.apply_mode();
             }
             PickKind::Skip => self.settings.skip = sel,
+            PickKind::Pictures => {
+                self.settings.pacing.picture = sel;
+                self.reader.set_pacing(self.settings.pacing);
+            }
             PickKind::Pace => {
                 self.settings.true_pace = sel == 1;
                 self.reader.set_true_pace(sel == 1);
@@ -1134,7 +1205,8 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Parens | PickKind::Position | PickKind::Card => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card => 2,
+            PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1156,7 +1228,8 @@ impl App {
         match kind {
             PickKind::Book => self.library.get(i).cloned().unwrap_or_else(|| self.reader.book.title.clone()),
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
-            PickKind::Parens => PAREN_NAMES[i].into(),
+            PickKind::Brackets => BRACKET_NAMES[i].into(),
+            PickKind::Pictures => PICTURE_NAMES[i.min(4)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
             PickKind::Pace => PACE_NAMES[i].into(),
@@ -1207,7 +1280,8 @@ impl App {
                 let pos = self.reader.pos() as u32;
                 self.book_marks().iter().rposition(|&b| b <= pos).unwrap_or(0) as u8
             }
-            PickKind::Parens => self.settings.parens as u8,
+            PickKind::Brackets => self.settings.brackets as u8,
+            PickKind::Pictures => self.settings.pacing.picture.min(4),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
             PickKind::Pace => self.settings.true_pace as u8,
@@ -1236,8 +1310,11 @@ impl App {
             PickKind::Size => self.settings.size = v,
             PickKind::Font => self.settings.font = v,
             PickKind::Theme => self.settings.theme = v,
-            PickKind::Parens => self.settings.parens = v == 1,
-            PickKind::Position => self.settings.position = v,
+            PickKind::Brackets => self.settings.brackets = v == 1,
+            PickKind::Position => {
+                self.settings.position = v;
+                self.apply_mode();
+            }
             PickKind::Spacing => self.settings.spacing = v,
             PickKind::Paragraphs => self.settings.indent = v == 1,
             PickKind::Align => self.settings.justify = v == 1,
@@ -1285,7 +1362,7 @@ mod tests {
         for i in 0..MENU_LEN {
             v.push(Screen::Menu { sel: i });
         }
-        for kind in [PickKind::Book, PickKind::Parens, PickKind::Pace, PickKind::Speed, PickKind::Words, PickKind::Skip, PickKind::Chapter, PickKind::GoTo, PickKind::Size, PickKind::Font, PickKind::Theme, PickKind::Brightness] {
+        for kind in [PickKind::Book, PickKind::Brackets, PickKind::Pace, PickKind::Speed, PickKind::Words, PickKind::Skip, PickKind::Chapter, PickKind::GoTo, PickKind::Size, PickKind::Font, PickKind::Theme, PickKind::Brightness] {
             v.push(Screen::Pick { kind, sel: 0, original: 0 });
             v.push(Screen::Pick { kind, sel: 1, original: 0 });
         }
@@ -1484,28 +1561,41 @@ mod tests {
     }
 
     #[test]
-    fn page_mode_steps_phrase_by_phrase() {
-        let mut a = App::new(Book::new("t", "She walked into the old house of the family, and waited. Then left."), CAT, Settings::default());
+    fn page_view_turns_whole_pages_like_a_book() {
+        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, Settings::default());
         choose_mode(&mut a, Mode::Page);
-        assert_eq!(a.screen, Screen::Page);
-        assert!(a.reader.phrase_mode(), "page mode groups by phrases");
-        assert_eq!(a.handle(Right, 0).msg, Msg::Shown, "the highlight moving is the feedback");
-        assert_eq!(a.reader.pos(), 3);
+        // As the renderer measured them: pages start at words 0, 4 and 8.
+        a.pages = alloc::vec![0, 4, 8];
+        a.pages_done = true;
+        assert_eq!(a.handle(Right, 0).msg, Msg::Shown);
+        assert_eq!(a.reader.pos(), 4, "next page");
         a.handle(Right, 0);
-        assert_eq!(a.reader.pos(), 6);
+        assert_eq!(a.reader.pos(), 8);
+        assert_eq!(a.handle(Right, 0).tone, Tone::Limit, "last page");
+        a.reader.seek(6, 0); // the highlight mid-page
         a.handle(Left, 0);
-        assert_eq!(a.reader.pos(), 3);
+        assert_eq!(a.reader.pos(), 0, "back = the page before this one");
+        assert_eq!(a.handle(Left, 0).tone, Tone::Limit, "first page");
         a.handle_held(Right, 500);
         a.handle_held(Right, 610);
-        assert_eq!(a.reader.pos(), 9, "holding repeats");
-        assert_eq!(a.screen, Screen::Page, "holding doesn't open the line view in page mode");
-        a.reader.seek(11, 0);
-        assert_eq!(a.handle(Right, 0).tone, Tone::Limit, "end of book");
+        assert_eq!(a.reader.pos(), 8, "holding keeps turning");
+        assert_eq!(a.screen, Screen::Page);
         a.handle(Up, 0);
         assert_eq!(a.reader.wpm(), 500, "▲ is speed in every mode");
-        a.handle(Menu, 0);
-        a.handle(Menu, 0);
-        assert_eq!(a.screen, Screen::Page, "menu returns to the view you were in");
+    }
+
+    #[test]
+    fn pages_not_yet_counted_turn_with_the_renderers_hint() {
+        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, Settings::default());
+        choose_mode(&mut a, Mode::Page);
+        a.pages = alloc::vec![0, 4];
+        a.reader.seek(5, 0);
+        a.page_hint = Some((4, 9));
+        a.handle(Right, 0);
+        assert_eq!(a.reader.pos(), 9, "the page on screen ends at word 9");
+        a.page_hint = Some((9, 12));
+        a.handle(Left, 0);
+        assert_eq!(a.reader.pos(), 6, "back about a page (counted pages only reach 4)");
     }
 
     #[test]
