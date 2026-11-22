@@ -111,7 +111,9 @@ async fn dhcp(stack: Stack<'static>) {
         let mut options = ServerOptions::new(IP, Some(&mut gw));
         options.dns = &dns;
         options.captive_url = Some("http://192.168.4.1/captive-portal-api");
-        let _ = io::server::run(&mut Server::<_, 16>::new_with_et(IP), &options, &mut socket, &mut buf).await;
+        if let Err(e) = io::server::run(&mut Server::<_, 16>::new_with_et(IP), &options, &mut socket, &mut buf).await {
+            println!("dhcp: {:?}", e);
+        }
         Timer::after(Duration::from_millis(500)).await;
     }
 }
@@ -146,9 +148,7 @@ async fn dns(stack: Stack<'static>) {
 async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
     // 4 KB receive window: big uploads (an illustrated book is ~30 MB) go
     // several times faster than with 1 KB.
-    // Buffers on the heap: kept in the task itself they made each worker's
-    // state ~12 KB, and creating three of them overflowed the start-up stack
-    // (Wi-Fi then hung right after the radio came up).
+    // Buffers on the heap, so each worker's task state stays small.
     let mut rx = alloc::vec![0u8; 4096];
     let mut tx = alloc::vec![0u8; 2048];
     let mut head = alloc::vec![0u8; 1024];
