@@ -288,9 +288,30 @@ fn page_deep_in_a_long_book_shows_without_counting_first() {
 }
 
 #[test]
+fn centred_words_are_centred() {
+    let th = THEMES[0];
+    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 0, chunk: 1, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    let l = ui.layout;
+    for pos in [30usize, 45, 61] {
+        a.reader.seek(pos, 0);
+        a.handle(Key::Select, 0);
+        ui.invalidate();
+        ui.paint(&mut a, 0, &mut cv);
+        a.handle(Key::Select, 0);
+        // Below the corner's fold line.
+        let ink = |x: i32| (l.word.y.max(l.stage.y + 34)..l.word.bottom()).any(|y| cv.pixel(x, y) != th.page);
+        let left = (0..320).find(|&x| ink(x)).unwrap();
+        let right = (0..320).rev().find(|&x| ink(x)).unwrap();
+        assert!(((left + right) / 2 - 160).abs() <= 3, "word at {left}..{right}");
+    }
+}
+
+#[test]
 fn phrases_start_at_the_same_left_edge_every_flash() {
     let th = THEMES[0];
-    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 1, ..Settings::default() });
+    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 1, position: 1, ..Settings::default() });
     let mut cv = Canvas::new(320, 240);
     let mut ui = Ui::new(320, 240);
     let l = ui.layout;

@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use reader_core::app::{PickKind, BRIGHTNESS_NAMES, SIZE_NAMES};
-use reader_core::settings::{ALIGN_NAMES, FIELDS, MODE_NAMES, PAREN_NAMES, PARAGRAPH_NAMES, SKIP_NAMES, SPACING_NAMES};
+use reader_core::settings::{ALIGN_NAMES, FIELDS, MODE_NAMES, PAREN_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIP_NAMES, SPACING_NAMES};
 use reader_core::{App, Key, Screen};
 
 use crate::themes::theme;
@@ -296,7 +296,7 @@ pub fn settings_json(a: &App) -> String {
         .map(|(n, lo, hi)| format!("{}:{{\"value\":{},\"min\":{lo},\"max\":{hi}}}", json_str(n), a.settings.get(n).unwrap_or(0)))
         .collect();
     format!(
-        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{},\"parens\":{}}}",
+        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{},\"parens\":{},\"positions\":{}}}",
         fields.join(","),
         json_list(a.catalog.themes.iter().copied()),
         json_list(a.catalog.fonts.iter().copied()),
@@ -309,6 +309,7 @@ pub fn settings_json(a: &App) -> String {
         json_list(PARAGRAPH_NAMES.iter().copied()),
         json_list(ALIGN_NAMES.iter().copied()),
         json_list(PAREN_NAMES.iter().copied()),
+        json_list(POSITION_NAMES.iter().copied()),
     )
 }
 

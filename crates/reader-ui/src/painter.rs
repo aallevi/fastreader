@@ -673,7 +673,10 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         total = measure(f, px);
     }
     let fix = fixation_x(p);
-    let x0 = if !phrase && words.len() == 1 {
+    let x0 = if app.settings.position == 0 {
+        // Centred: the word or group in the middle of the page.
+        p.cx() - total / 2.0
+    } else if !phrase && words.len() == 1 {
         // A single word: its optimal recognition letter sits on the fixation
         // point (Spritz patent US9483109: 2nd letter of 2–5, 3rd of 6–9,
         // 4th of 10–13), so the eye never moves.

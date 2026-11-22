@@ -33,6 +33,7 @@ pub const MODE_NAMES: [&str; 4] = ["Word by word", "Phrases", "Ticker", "Page"];
 pub const SPACING_NAMES: [&str; 3] = ["Tight", "Normal", "Airy"];
 pub const PARAGRAPH_NAMES: [&str; 2] = ["Spaced", "Indented"];
 pub const ALIGN_NAMES: [&str; 2] = ["Ragged right", "Justified"];
+pub const POSITION_NAMES: [&str; 2] = ["Centred", "Recognition point"];
 pub const PAREN_NAMES: [&str; 2] = ["In the text", "As side marks"];
 pub const PACE_NAMES: [&str; 2] = ["Base rate", "Real pace (pauses included)"];
 
@@ -89,6 +90,8 @@ pub struct Settings {
     pub true_pace: bool,
     /// Word and Phrase modes: show ( … ) as marks at the screen's sides.
     pub parens: bool,
+    /// Where words sit: 0 centred, 1 on a fixed recognition point.
+    pub position: u8,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -119,6 +122,7 @@ impl Default for Settings {
             wifi: false,
             true_pace: false,
             parens: true,
+            position: 0,
             skip: 0,
             context: true,
             book: 0,
@@ -129,12 +133,12 @@ impl Default for Settings {
 }
 
 const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 12;
+const VERSION: u8 = 13;
 /// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
 pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 25] = [
+pub const FIELDS: [(&str, u16, u16); 26] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -160,6 +164,7 @@ pub const FIELDS: [(&str, u16, u16); 25] = [
     ("wifi", 0, 1),
     ("true_pace", 0, 1),
     ("parens", 0, 1),
+    ("position", 0, 1),
 ];
 
 impl Settings {
@@ -190,6 +195,7 @@ impl Settings {
             "wifi" => self.wifi as u16,
             "true_pace" => self.true_pace as u16,
             "parens" => self.parens as u16,
+            "position" => self.position as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -226,6 +232,7 @@ impl Settings {
             "wifi" => self.wifi = v != 0,
             "true_pace" => self.true_pace = v != 0,
             "parens" => self.parens = v != 0,
+            "position" => self.position = b,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,
