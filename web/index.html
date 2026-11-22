@@ -571,6 +571,10 @@ async function epubToMarkup(file) {
     } catch (e) { /* not a picture the browser can read */ }
   }
   text = text.replace(/\u0000IMG:([^\u0000]*)\u0000/g, (_, p) => ids[p] || '').replace(/\n{3,}/g, '\n\n');
+  // Some "ebooks" are only photos of the printed pages (e.g. a scan run
+  // through Calibre): nothing to read word by word.
+  if ((text.replace(/\{image:\d+\}/g, '').match(/\p{L}/gu) || []).length < 500)
+    throw new Error('this EPUB has only pictures of the pages, no text: use a PDF with a text layer (OCR) instead');
   return {title, text, images: pics.blob(), pictures: pics.list.length};
 }
 let pending = null;
