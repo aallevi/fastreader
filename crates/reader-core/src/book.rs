@@ -133,6 +133,9 @@ pub const IMAGES_MAGIC2: &[u8] = b"\n\0FRIMG2";
 /// Pictures that stay in storage (an SD card) until shown.
 pub trait PictureSource {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// Width and height, without loading the pixels.
     fn dims(&self, n: usize) -> Option<(u16, u16)>;
     fn load(&self, n: usize) -> Option<Image>;

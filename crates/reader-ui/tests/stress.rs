@@ -44,7 +44,7 @@ fn random_books_draw_everywhere() {
         let mut now = 0;
         for _ in 0..50 {
             now += r.next() % 300;
-            if r.next() % 2 == 0 {
+            if r.next().is_multiple_of(2) {
                 let (x, y) = ((r.next() % 320) as i32, (r.next() % 240) as i32);
                 if let Some(hit) = ui.hit(&a, x, y) {
                     a.touch_down(Some(hit));
