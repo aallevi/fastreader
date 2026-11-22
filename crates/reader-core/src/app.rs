@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, PAREN_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, PAREN_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 pub const TOAST_MS: u64 = 1_400;
@@ -51,6 +51,7 @@ pub enum MenuItem {
     Paragraphs,
     Align,
     Parens,
+    Position,
     Brightness,
     Rotate,
     Wifi,
@@ -58,18 +59,39 @@ pub enum MenuItem {
     Sleep,
 }
 
-/// Menu groups, shown as section headings.
-pub const MENU: [(&str, &[MenuItem]); 3] = [
-    ("Reading", &[MenuItem::Resume, MenuItem::Library, MenuItem::Mode, MenuItem::Speed, MenuItem::Pace, MenuItem::Words, MenuItem::Skip, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart]),
-    ("Look", &[MenuItem::Size, MenuItem::Font, MenuItem::Theme, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Parens]),
-    ("Device", &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Info, MenuItem::Sleep]),
+/// The four menus, one per button in the title bar (left to right). Keys
+/// ▲▼ run through all of them in this order; the screen shows the menu the
+/// selection is in.
+pub const MENU: [(&str, &[MenuItem]); 4] = [
+    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Info, MenuItem::Sleep]),
+    ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart]),
+    ("Library", &[MenuItem::Library]),
+    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Parens]),
 ];
+
+/// Which menu (0–3) an item index is in, and that menu's index range.
+pub fn menu_group(sel: u8) -> (usize, core::ops::Range<u8>) {
+    let mut start = 0u8;
+    for (g, (_, items)) in MENU.iter().enumerate() {
+        let end = start + items.len() as u8;
+        if sel < end {
+            return (g, start..end);
+        }
+        start = end;
+    }
+    (0, 0..MENU[0].1.len() as u8)
+}
+
+/// First item index of menu `g`.
+pub fn menu_start(g: usize) -> u8 {
+    MENU.iter().take(g).map(|(_, items)| items.len() as u8).sum()
+}
 
 pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 23;
+pub const MENU_LEN: u8 = 24;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -100,6 +122,7 @@ impl MenuItem {
             MenuItem::Paragraphs => "Paragraphs",
             MenuItem::Align => "Text alignment",
             MenuItem::Parens => "Parentheses",
+            MenuItem::Position => "Word position",
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Wifi => "Web view (Wi-Fi)",
@@ -123,6 +146,7 @@ impl MenuItem {
             MenuItem::Chapters => PickKind::Chapter,
             MenuItem::Bookmarks => PickKind::Bookmark,
             MenuItem::Parens => PickKind::Parens,
+            MenuItem::Position => PickKind::Position,
             MenuItem::GoTo => PickKind::GoTo,
             MenuItem::Size => PickKind::Size,
             MenuItem::Font => PickKind::Font,
@@ -138,6 +162,7 @@ pub enum PickKind {
     Book,
     Bookmark,
     Parens,
+    Position,
     Pace,
     Mode,
     Spacing,
@@ -160,6 +185,7 @@ impl PickKind {
             PickKind::Book => "Library",
             PickKind::Bookmark => "Bookmarks",
             PickKind::Parens => "Parentheses",
+            PickKind::Position => "Word position",
             PickKind::Pace => "Speed means",
             PickKind::Mode => "Reading mode",
             PickKind::Spacing => "Line spacing",
@@ -179,7 +205,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Parens)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Parens | PickKind::Position)
     }
 }
 
@@ -315,6 +341,8 @@ pub enum Hit {
     Highlight,
     /// The page's top-right corner: bookmark (dog-ear) the current place.
     Bookmark,
+    /// One of the four title-bar buttons: open that menu (see [`MENU`]).
+    Group(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -557,13 +585,33 @@ impl App {
             }
             (Hit::Scroll { down, rows }, Screen::Menu { .. } | Screen::Pick { .. }) => {
                 let mut fb = Feedback::limit(if down { Msg::Bottom } else { Msg::Top });
+                // Paging stays inside the menu on screen.
+                let group = if let Screen::Menu { sel } = self.screen { Some(menu_group(sel).1) } else { None };
                 for _ in 0..rows.max(1) {
+                    if let (Some(g), Screen::Menu { sel }) = (&group, self.screen) {
+                        if (down && sel + 1 >= g.end) || (!down && sel <= g.start) {
+                            break;
+                        }
+                    }
                     let step = self.perform(if down { Action::Next } else { Action::Prev }, now);
                     if step.tone == Tone::Limit {
                         break;
                     }
                     fb = step;
                 }
+                self.feedback(fb, now)
+            }
+            (Hit::Group(g), Screen::Reading | Screen::Page | Screen::Line { .. }) => {
+                self.resume_after_menu = self.reader.is_playing() || matches!(self.screen, Screen::Line { resume: true });
+                self.reader.pause();
+                let sel = menu_start(g as usize);
+                let fb = if menu_item(sel) == MenuItem::Library {
+                    self.screen = Screen::Menu { sel };
+                    self.activate(MenuItem::Library, now)
+                } else {
+                    self.screen = Screen::Menu { sel };
+                    Feedback::ok(Msg::Shown)
+                };
                 self.feedback(fb, now)
             }
             (Hit::Bookmark, Screen::Reading | Screen::Page) => {
@@ -851,7 +899,8 @@ impl App {
             (_, Action::OpenMenu) => {
                 self.resume_after_menu = self.reader.is_playing() || matches!(screen, Screen::Line { resume: true });
                 self.reader.pause();
-                self.screen = Screen::Menu { sel: 0 };
+                // The menu key opens the Book menu: what's needed most while reading.
+                self.screen = Screen::Menu { sel: menu_start(1) };
                 Feedback::ok(Msg::Shown)
             }
             (_, Action::CloseMenu) => {
@@ -889,6 +938,11 @@ impl App {
             (Screen::Menu { .. }, Action::Back) => {
                 self.close_menu(now);
                 Feedback::ok(Msg::Shown)
+            }
+            (Screen::Pick { kind: PickKind::Book, .. }, Action::Back) => {
+                // The library has its own button: back closes it.
+                self.close_menu(now);
+                Feedback::ok(Msg::Kept)
             }
             (Screen::Pick { kind, original, .. }, Action::Back) => {
                 if kind.live_preview() {
@@ -1030,7 +1084,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Parens => 2,
+            PickKind::Parens | PickKind::Position => 2,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1053,6 +1107,7 @@ impl App {
             PickKind::Book => self.library.get(i).cloned().unwrap_or_else(|| self.reader.book.title.clone()),
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
             PickKind::Parens => PAREN_NAMES[i].into(),
+            PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Pace => PACE_NAMES[i].into(),
             PickKind::Mode => MODE_NAMES[i].into(),
             PickKind::Spacing => SPACING_NAMES[i].into(),
@@ -1097,6 +1152,7 @@ impl App {
                 self.book_marks().iter().rposition(|&b| b <= pos).unwrap_or(0) as u8
             }
             PickKind::Parens => self.settings.parens as u8,
+            PickKind::Position => self.settings.position,
             PickKind::Pace => self.settings.true_pace as u8,
             PickKind::Mode => self.settings.mode,
             PickKind::Spacing => self.settings.spacing,
@@ -1124,6 +1180,7 @@ impl App {
             PickKind::Font => self.settings.font = v,
             PickKind::Theme => self.settings.theme = v,
             PickKind::Parens => self.settings.parens = v == 1,
+            PickKind::Position => self.settings.position = v,
             PickKind::Spacing => self.settings.spacing = v,
             PickKind::Paragraphs => self.settings.indent = v == 1,
             PickKind::Align => self.settings.justify = v == 1,
@@ -1221,7 +1278,7 @@ mod tests {
             let mut a = app();
             a.screen = s;
             a.handle(Menu, 0);
-            let expect = if s.is_overlay() { Screen::Reading } else { Screen::Menu { sel: 0 } };
+            let expect = if s.is_overlay() { Screen::Reading } else { Screen::Menu { sel: menu_start(1) } };
             assert_eq!(a.screen, expect, "Menu on {s:?}");
         }
     }
@@ -1258,11 +1315,36 @@ mod tests {
     fn scroll_buttons_page_through_lists() {
         let mut a = app();
         a.handle(Menu, 0);
-        a.tap(Hit::Scroll { down: true, rows: 5 }, 0);
-        assert_eq!(a.screen, Screen::Menu { sel: 5 });
+        let book = menu_group(menu_start(1)).1;
+        a.tap(Hit::Scroll { down: true, rows: 2 }, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: book.start + 2 });
         a.tap(Hit::Scroll { down: true, rows: 50 }, 0);
-        assert_eq!(a.screen, Screen::Menu { sel: MENU_LEN - 1 });
+        assert_eq!(a.screen, Screen::Menu { sel: book.end - 1 }, "paging stops at the end of this menu");
         assert_eq!(a.tap(Hit::Scroll { down: true, rows: 5 }, 0).tone, Tone::Limit);
+        a.handle(Down, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: book.end }, "the ▼ key goes on into the next menu");
+    }
+
+    #[test]
+    fn title_bar_buttons_open_their_menus() {
+        let mut a = app();
+        a.reader.play(0);
+        a.tap(Hit::Group(0), 0);
+        assert_eq!(menu_item(match a.screen { Screen::Menu { sel } => sel, _ => 99 }), MenuItem::Speed);
+        assert!(!a.reader.is_playing(), "a menu pauses");
+        a.handle(Menu, 0);
+        assert!(a.reader.is_playing(), "and closing it resumes");
+        a.tap(Hit::Group(1), 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Resume) });
+        a.handle(Menu, 0);
+        a.tap(Hit::Group(2), 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "Library opens the book list directly");
+        a.handle(Left, 0);
+        assert!(matches!(a.screen, Screen::Reading), "back from the library returns to reading");
+        a.tap(Hit::Group(3), 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Mode) });
+        a.handle(Menu, 0);
+        assert_eq!(MENU.iter().map(|(_, i)| i.len()).sum::<usize>(), MENU_LEN as usize);
     }
 
     #[test]

@@ -43,6 +43,35 @@ pub fn draw(cv: &mut Canvas, icon: Icon, cx: f32, cy: f32, s: f32, c: Rgb) {
                 bar(cv, -5.5, y, 11.0, 2.0);
             }
         }
+        Icon::Gear => {
+            // Eight teeth around a ring.
+            for k in 0..8 {
+                let a = k as f32 * core::f32::consts::PI / 4.0;
+                let (s, co) = (a.sin(), a.cos());
+                cv.line(p(co * 3.5, s * 3.5), p(co * 6.6, s * 6.6), 2.6 * u, c);
+            }
+            cv.ring(cx, cy, 4.4 * u, 2.4 * u, c);
+        }
+        Icon::Book => {
+            // An open book: two pages meeting at the spine.
+            cv.polygon(&[p(-7.0, -4.5), p(-0.6, -3.2), p(-0.6, 5.5), p(-7.0, 4.2)], c);
+            cv.polygon(&[p(0.6, -3.2), p(7.0, -4.5), p(7.0, 4.2), p(0.6, 5.5)], c);
+        }
+        Icon::Library => {
+            // Books on a shelf, the last one leaning.
+            bar(cv, -7.0, -5.5, 3.0, 11.0);
+            bar(cv, -3.2, -3.5, 3.0, 9.0);
+            bar(cv, 0.6, -5.0, 2.4, 10.5);
+            cv.polygon(&[p(3.6, 5.5), p(6.0, -3.8), p(8.2, -3.2), p(5.8, 5.5)], c);
+        }
+        Icon::Text => {
+            // "Aa": a big A and a small a.
+            cv.line(p(-7.0, 5.5), p(-3.5, -5.5), 2.0 * u, c);
+            cv.line(p(-3.5, -5.5), p(0.0, 5.5), 2.0 * u, c);
+            cv.line(p(-5.4, 1.6), p(-1.6, 1.6), 1.8 * u, c);
+            cv.ring(cx + 4.2 * u, cy + 2.6 * u, 2.4 * u, 1.7 * u, c);
+            cv.line(p(6.9, -0.6), p(6.9, 5.5), 1.8 * u, c);
+        }
         Icon::Bolt => {
             // Two overlapping triangles make the zig-zag (polygons must be convex).
             cv.polygon(&[p(2.5, -7.5), p(-4.5, 1.2), p(1.2, 1.2)], c);

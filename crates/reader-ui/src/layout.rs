@@ -57,6 +57,10 @@ impl Layout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     Menu,
+    Gear,
+    Book,
+    Library,
+    Text,
     SentenceBack,
     SentenceForward,
     Play,
@@ -92,18 +96,10 @@ pub struct Label {
     pub small: String,
 }
 
-/// The paper the text sits on (Scrivener's column is narrower than the
-/// screen; Windows 98 has a sunken frame).
-pub fn paper(th: &crate::theme::Theme, l: &Layout) -> Rect {
-    use crate::theme::Chrome;
-    match th.chrome {
-        Chrome::Scrivener => {
-            let m = l.screen.w / 11;
-            Rect::new(m, l.stage.y, l.screen.w - 2 * m, l.stage.h)
-        }
-        Chrome::Win98 => l.stage.inset(4, 3),
-        _ => l.stage,
-    }
+/// The paper the text sits on: the whole reading area, edge to edge, in
+/// every theme (no side bands; the screen is small).
+pub fn paper(_th: &crate::theme::Theme, l: &Layout) -> Rect {
+    l.stage
 }
 
 /// The page's top-right corner: tap to dog-ear (bookmark) the current place.
@@ -116,12 +112,20 @@ pub fn bookmark_corner(app: &App, l: &Layout) -> Button {
     Button { rect, hit_rect: Rect::new(p.right() - l.i(36.0), p.y, l.i(36.0), l.i(32.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
 }
 
-/// The menu button, top-left in the title bar, on reading screens.
-pub fn menu_button(l: &Layout) -> Button {
+/// The four menu buttons, left in the title bar: Settings, Book, Library,
+/// Text (see `reader_core::app::MENU`). Touch areas meet edge to edge and
+/// reach a little below the bar, easier for a thumb.
+pub fn header_buttons(l: &Layout) -> [Button; 4] {
     let h = l.header;
-    let rect = Rect::new(l.i(4.0), h.y + l.i(3.0), l.i(34.0), h.h - l.i(6.0));
-    // The touch area reaches a little below the bar: easier for a thumb.
-    Button { rect, hit_rect: Rect::new(0, h.y, l.i(52.0), h.h + l.i(12.0)), hit: Hit::Key(Key::Menu), icon: Icon::Menu, primary: false }
+    let (w, gap) = (l.i(32.0), l.i(4.0));
+    let icons = [Icon::Gear, Icon::Book, Icon::Library, Icon::Text];
+    core::array::from_fn(|k| {
+        let x = l.i(4.0) + k as i32 * (w + gap);
+        let rect = Rect::new(x, h.y + l.i(3.0), w, h.h - l.i(6.0));
+        let hx = if k == 0 { 0 } else { x - gap / 2 };
+        let hit_rect = Rect::new(hx, h.y, x + w + gap / 2 - hx, h.h + l.i(12.0));
+        Button { rect, hit_rect, hit: Hit::Group(k as u8), icon: icons[k], primary: false }
+    })
 }
 
 /// The small highlight dot, top-right in Page mode (left of the battery).
@@ -219,16 +223,9 @@ pub struct ListGeom {
 fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
     match app.screen {
         Screen::Menu { sel } => {
-            let mut v = Vec::new();
-            let mut i = 0u8;
-            for (name, items) in MENU.iter() {
-                v.push(RowKind::Section(name));
-                for _ in items.iter() {
-                    v.push(RowKind::Item(i));
-                    i += 1;
-                }
-            }
-            (String::from("Menu"), v, Some(sel))
+            // Only the menu the selection is in (one per title-bar button).
+            let (g, range) = reader_core::app::menu_group(sel);
+            (String::from(MENU[g].0), range.map(RowKind::Item).collect(), Some(sel))
         }
         Screen::Pick { kind, sel, .. } => {
             let v = (0..app.pick_len(kind)).map(RowKind::Item).collect();
@@ -358,9 +355,8 @@ pub fn hit_test(app: &App, l: &Layout, x: i32, y: i32) -> Option<Hit> {
             _ => None,
         });
     }
-    let mb = menu_button(l);
-    if mb.hit_rect.contains(x, y) {
-        return Some(mb.hit);
+    if let Some(b) = header_buttons(l).into_iter().find(|b| b.hit_rect.contains(x, y)) {
+        return Some(b.hit);
     }
     if app.screen == Screen::Page && highlight_button(l).hit_rect.contains(x, y) {
         return Some(Hit::Highlight);
@@ -430,9 +426,13 @@ mod tests {
     fn every_key_has_an_on_screen_button_while_reading() {
         let a = app();
         let l = Layout::new(320, 240);
-        let (mut bs, _) = toolbar(&a, &l);
-        bs.push(menu_button(&l));
+        let (bs, _) = toolbar(&a, &l);
         for k in Key::ALL {
+            // The menu key's job is done by the four title-bar buttons.
+            if k == Key::Menu {
+                assert_eq!(header_buttons(&l).len(), 4);
+                continue;
+            }
             assert!(bs.iter().any(|b| b.hit == Hit::Key(k)), "{k:?} has no button");
         }
     }
@@ -446,7 +446,8 @@ mod tests {
             let g = list_geom(&a, &l);
             let row = g.rows.iter().find(|r| r.kind == RowKind::Item(sel)).unwrap_or_else(|| panic!("row {sel} not visible"));
             assert_eq!(hit_test(&a, &l, row.rect.cx() as i32, row.rect.cy() as i32), Some(Hit::Row(sel)));
-            assert!(g.scroll.is_some(), "16 items need the scroll buttons at 240 px");
+            let n = reader_core::app::menu_group(sel).1.len();
+            assert_eq!(g.scroll.is_some(), n > 6, "scroll buttons only when a menu ({n} rows) doesn't fit");
         }
     }
 

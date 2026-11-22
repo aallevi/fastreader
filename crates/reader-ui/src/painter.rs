@@ -24,7 +24,7 @@ use crate::canvas::{Canvas, Paint};
 use crate::color::{mix, Rgb};
 use crate::geom::Rect;
 use crate::icons;
-use crate::layout::{self, bookmark_corner, paper, highlight_button, hit_test, list_geom, menu_button, toolbar, Button, Icon, Layout, RowKind};
+use crate::layout::{self, bookmark_corner, paper, highlight_button, hit_test, list_geom, header_buttons, toolbar, Button, Icon, Layout, RowKind};
 use crate::text::{family, Face, Fonts};
 use crate::theme::{ButtonStyle, Chrome, Theme};
 use crate::themes::theme;
@@ -522,18 +522,12 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         Chrome::Vista | Chrome::Win98 => WHITE,
         _ => th.bar_text,
     };
-    // Menu button, top-left.
-    let mb = menu_button(l);
-    draw_icon_button(cv, th, l, &mb, app.lit(c.now) == Some(mb.hit));
-    let mut x = mb.rect.right() as f32 + l.px(8.0);
-    if th.chrome == Chrome::Mac {
-        for (i, col) in [0xFF5F57, 0xFEBC2E, 0x28C840].into_iter().enumerate() {
-            let cx = x + l.px(5.0) + i as f32 * l.px(15.0);
-            cv.circle(cx, r.cy(), l.px(5.0), Paint::Solid(mix(col, BLACK, 40)));
-            cv.circle(cx, r.cy(), l.px(4.3), Paint::Solid(col));
-        }
-        x += l.px(48.0);
+    // The four menu buttons, top-left: Settings, Book, Library, Text.
+    let hb = header_buttons(l);
+    for b in &hb {
+        draw_icon_button(cv, th, l, b, app.lit(c.now) == Some(b.hit));
     }
+    let x = hb[3].rect.right() as f32 + l.px(8.0);
     let base = r.cy() + l.px(4.5);
     // Battery, top-right.
     let mut right = r.w as f32 - l.px(8.0);

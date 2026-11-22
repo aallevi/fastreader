@@ -7,7 +7,7 @@ use std::path::Path;
 
 use reader_core::app::{Battery, PickKind, Screen};
 use reader_core::{App, Book, Hit, Key, Settings};
-use reader_ui::layout::{list_geom, menu_button, toolbar, Icon, RowKind};
+use reader_ui::layout::{header_buttons, list_geom, toolbar, Icon, RowKind};
 use reader_ui::{Canvas, Ui, CATALOG};
 
 use crate::{sim_device, write_png};
@@ -49,7 +49,7 @@ impl Run<'_> {
                 .find(|b| b.icon == icon)
         } else {
             let mut bs = toolbar(&self.app, &l).0;
-            bs.push(menu_button(&l));
+            bs.extend(header_buttons(&l));
             bs.into_iter().find(|b| b.icon == icon)
         }
         .unwrap_or_else(|| panic!("no {icon:?} button on {:?}", self.app.screen));
@@ -62,6 +62,20 @@ impl Run<'_> {
     /// Taps a list row by its visible label.
     fn tap_row(&mut self, label: &str) {
         let l = self.ui.layout;
+        // In another menu: close this one and tap that menu's button.
+        if let Screen::Menu { .. } = self.app.screen {
+            if let Some(i) = (0..reader_core::app::MENU_LEN).find(|&i| reader_core::app::menu_item(i).label() == label) {
+                let (g, _) = reader_core::app::menu_group(i);
+                let here = match self.app.screen { Screen::Menu { sel } => reader_core::app::menu_group(sel).0, _ => g };
+                if g != here {
+                    self.tap_icon(Icon::Close);
+                    self.tap_icon([Icon::Gear, Icon::Book, Icon::Library, Icon::Text][g]);
+                    if !matches!(self.app.screen, Screen::Menu { .. }) {
+                        return; // the Library button opens the list itself
+                    }
+                }
+            }
+        }
         // Like a person: if the row isn't on screen, press the drawn ▼ until it is.
         let mut tries = 0;
         let row = loop {
@@ -129,10 +143,19 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Pause);
     r.wait(1500);
     r.shot("paused-with-sentence-context");
-    r.tap_icon(Icon::Menu);
-    r.shot("menu");
+    r.tap_icon(Icon::Book);
+    r.shot("menu-book");
+    r.tap_icon(Icon::Close);
+    r.tap_icon(Icon::Gear);
+    r.shot("menu-settings");
+    r.tap_icon(Icon::Close);
+    r.tap_icon(Icon::Library);
+    r.shot("menu-library");
+    r.tap_icon(Icon::Back);
+    r.tap_icon(Icon::Text);
+    r.shot("menu-text");
     r.tap_icon(Icon::Down);
-    r.shot("menu-scrolled");
+    r.shot("menu-text-scrolled");
     r.tap_row("Font");
     r.shot("font-list");
     r.key(Key::Down);
@@ -144,12 +167,12 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.shot("words-per-flash-set");
     r.tap_icon(Icon::Close);
     r.shot("two-words-per-flash");
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Text size");
     r.tap_row("Large");
     r.tap_icon(Icon::Close);
     r.shot("large-text");
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Text size");
     r.tap_row("Normal");
     r.tap_row("Reading mode");
@@ -159,14 +182,14 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.wait(2_000);
     r.shot("mode-phrases-playing");
     r.tap_icon(Icon::Pause);
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Reading mode");
     r.tap_row("Ticker");
     r.tap_icon(Icon::Play);
     r.wait(1_730);
     r.shot("mode-ticker-gliding");
     r.tap_icon(Icon::Pause);
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Reading mode");
     r.tap_row("Page");
     r.shot("mode-page-highlight");
@@ -181,7 +204,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.app.tap(hit, r.now);
     r.wait(1_500);
     r.shot("page-highlight-off");
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Paragraphs");
     r.tap_row("Indented");
     r.tap_row("Text alignment");
@@ -191,7 +214,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Close);
     r.wait(1_500);
     r.shot("page-book-style-justified-airy");
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Reading mode");
     r.tap_row("Word by word");
     // Bookmark: tap the page corner (dog-ear), in reading and page view.
@@ -211,22 +234,22 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.app.set_setting("mode", 3).unwrap();
     r.app.screen = Screen::Page;
     r.app.reader.seek(paren, r.now);
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_icon(Icon::Close);
     r.wait(1_500);
     r.shot("page-with-parentheses");
     r.app.set_setting("mode", 0).unwrap();
     r.app.screen = Screen::Reading;
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Bookmarks");
     r.shot("bookmarks-list");
     r.tap_icon(Icon::Close);
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Chapters");
     r.shot("chapters-list");
     r.tap_row("Chapter Two: Speed");
     r.shot("jumped-to-chapter-two");
-    r.tap_icon(Icon::Menu);
+    r.tap_icon(Icon::Book);
     r.tap_row("Device info");
     r.shot("device-info");
     r.key(Key::Menu);
@@ -299,7 +322,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
         r.app.handle_held(Key::Left, r.now);
         r.shot("line");
         r.app.release(r.now);
-        r.tap_icon(Icon::Menu);
+        r.tap_icon(Icon::Book);
         r.shot("menu");
         r.app.screen = Screen::Pick { kind: PickKind::Font, sel: 1, original: 0 };
         r.shot("fonts");

@@ -119,7 +119,11 @@ fn tapping_a_menu_row_opens_it() {
     let mut a = app(0);
     let mut cv = Canvas::new(320, 240);
     let mut ui = Ui::new(320, 240);
-    a.handle(Key::Menu, 0);
+    ui.paint(&mut a, 0, &mut cv);
+    // The ⚙ Settings button in the title bar, through hit testing.
+    let gear = reader_ui::layout::header_buttons(&ui.layout)[0];
+    let hit = ui.hit(&a, gear.rect.cx() as i32, gear.rect.cy() as i32).unwrap();
+    a.tap(hit, 0);
     ui.paint(&mut a, 0, &mut cv);
     let g = reader_ui::layout::list_geom(&a, &ui.layout);
     let row = g.rows.iter().find(|r| r.kind == reader_ui::layout::RowKind::Item(menu_index(MenuItem::Speed))).unwrap();
