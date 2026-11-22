@@ -2,6 +2,9 @@
 
 Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
+## Settings
+- [ ] After this update the reader kept your settings (500 wpm, Windows 98, brightness 1, recognition point, brackets as side marks). Change one, restart: it stays.
+
 ## Reading
 - [ ] Word mode: words **centred** (Aa → Word position → Centred); size never changes between words.
 - [ ] Aa → Word position → Recognition point: words shift so the eye stays on one spot, slightly left of centre.
@@ -15,6 +18,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Aa → Picture time: try 4 s and "Until I press play"; the time starts once the picture is on screen (a picture from the card may take a moment).
 - [ ] Aa → Word position → Recognition point: a long word ("contemporaneamente") comes in two flashes, the eye point never moves; Italian elisions ("c'è", "un'opera") focus on the letter, not the apostrophe.
 - [ ] Paused on a long sentence: ▲▼ appear beside the sentence and scroll it; at the ends they dim and tapping shows top/bottom.
+- [ ] The sentence under the word runs out to the screen edges (short sentences stay centred).
+- [ ] Gombrich on the card, while playing: each picture appears whole at once (no lower half missing, nothing left behind under the next words) and stays 4 s.
+- [ ] Paused on a picture with a description: a **Description** button at its bottom right shows the caption over the picture; **Hide** removes it; the choice holds for the next pictures. (Captions come with the OCR EPUB; the PDF version on the card has none, so no button there.)
 
 ## Brackets
 - [ ] Cancroregina, ~53% ("Pomposo esordio … fatterello …"): with Aa → Brackets → As side marks, "fatterello" still shows the ( ) marks.
