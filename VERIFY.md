@@ -31,6 +31,11 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Pictures
 - [ ] A book with figures: each picture fills the stage for ~4 words' time; in page view it sits in the text; the web view shows it.
 
+## SD card
+- [ ] ⚙ Settings → SD card shows "Needs formatting" (your card is exFAT). Choose it → **Erase and format** → "SD card ready", then it shows the free space (~14.8 GB).
+- [ ] Upload Gombrich from the phone: it goes to the card (31 MB, 368 pictures; a few minutes to convert and send). It appears in 📚; pictures show as you read and in page view.
+- [ ] Switch off and on: the card books are still in 📚.
+
 ## Web view (⚙ → Web view, join "FastReader")
 - [ ] The phone opens the page by itself on joining (captive portal); otherwise http://192.168.4.1.
 - [ ] Settings drawer changes the reader live (incl. Word position, Parentheses).

@@ -19,13 +19,17 @@ use esp_println::println;
 use esp_radio::wifi::ap::AccessPointConfig;
 use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController};
 use reader_core::App;
-use reader_ui::web::{book_piece, respond, url_decode, Body, MAX_UPLOAD};
+use reader_ui::web::{book_piece, respond, upload_limit, url_decode, Body};
+
+use crate::card;
 
 /// Requests the web tasks hand to the screen loop, which owns the flash.
 #[derive(Default)]
 pub struct Inbox {
     /// A book to store: (title, text).
     pub upload: Option<(String, alloc::vec::Vec<u8>)>,
+    /// A book the web task streamed to the SD card.
+    pub card_added: Option<card::Stored>,
     /// Remove every uploaded book.
     pub clear: bool,
 }
@@ -40,7 +44,7 @@ pub const ADDRESS: &str = "Wi-Fi FastReader → http://192.168.4.1";
 const HTTP_WORKERS: usize = 3;
 
 /// Brings up the access point and spawns the network tasks.
-pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, clock: Instant) {
+pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
     let ap = Config::AccessPoint(AccessPointConfig::default().with_ssid(SSID.try_into().unwrap()));
     let device = Interface::access_point();
     let controller = match WifiController::new(wifi, ControllerConfig::default().with_initial_config(ap)) {
@@ -60,7 +64,7 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
     spawner.spawn(dhcp(stack).unwrap());
     spawner.spawn(dns(stack).unwrap());
     for _ in 0..HTTP_WORKERS {
-        spawner.spawn(http(stack, app, inbox, clock).unwrap());
+        spawner.spawn(http(stack, app, inbox, sd, clock).unwrap());
     }
     println!("wifi: access point {} up, http://{}", SSID, IP);
 }
@@ -136,8 +140,10 @@ async fn dns(stack: Stack<'static>) {
 /// One HTTP/1.0-style worker: read the request line, answer through the
 /// shared handler, close. The app is borrowed only between awaits.
 #[embassy_executor::task(pool_size = 3)]
-async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, clock: Instant) {
-    let mut rx = [0u8; 1024];
+async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
+    // 4 KB receive window: big uploads (an illustrated book is ~30 MB) go
+    // several times faster than with 1 KB.
+    let mut rx = [0u8; 4096];
     let mut tx = [0u8; 2048];
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx, &mut tx);
@@ -172,10 +178,50 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
                 .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
                 .unwrap_or(0);
             let title = query.split('&').find_map(|kv| kv.strip_prefix("title=")).map(url_decode).unwrap_or_default();
-            let reply: &[u8] = if length == 0 || length > MAX_UPLOAD || title.is_empty() {
-                b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nneed a title and a book of at most 3 MB"
+            let (limit, to_card) = {
+                let a = app.borrow();
+                (upload_limit(&a), a.card.is_some_and(|c| c.formatted))
+            };
+            let start = head_text.find("\r\n\r\n").map_or(n, |p| p + 4);
+            let reply: &[u8] = if length == 0 || length > limit || title.is_empty() {
+                b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nneed a title and a book that fits"
+            } else if to_card {
+                // Straight to the SD card, piece by piece: no size limit from memory.
+                let created = sd.borrow_mut().as_mut().and_then(|c| c.create());
+                match created {
+                    None => b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ncould not write to the SD card",
+                    Some((file, name)) => {
+                        let mut written = 0usize;
+                        let mut ok = true;
+                        let first = &head[start..n.min(start + length)];
+                        if !first.is_empty() {
+                            ok &= sd.borrow_mut().as_mut().is_some_and(|c| c.write(file, first));
+                            written += first.len();
+                        }
+                        let mut chunk = [0u8; 4096];
+                        while ok && written < length {
+                            match socket.read(&mut chunk).await {
+                                Ok(0) | Err(_) => break,
+                                Ok(k) => {
+                                    let k = k.min(length - written);
+                                    ok &= sd.borrow_mut().as_mut().is_some_and(|c| c.write(file, &chunk[..k]));
+                                    written += k;
+                                }
+                            }
+                        }
+                        let done = ok && written == length;
+                        if let Some(c) = sd.borrow_mut().as_mut() {
+                            c.finish(file, &name, done);
+                        }
+                        if done {
+                            inbox.borrow_mut().card_added = Some(card::Stored { title, file: name, len: length as u32 });
+                            b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nsaving"
+                        } else {
+                            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupload interrupted"
+                        }
+                    }
+                }
             } else {
-                let start = head_text.find("\r\n\r\n").map_or(n, |p| p + 4);
                 let mut body = alloc::vec::Vec::with_capacity(length);
                 body.extend_from_slice(&head[start..n]);
                 let mut chunk = [0u8; 1024];

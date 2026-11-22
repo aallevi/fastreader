@@ -192,7 +192,8 @@ pub const MAX_CARD_UPLOAD: usize = 256 * 1024 * 1024;
 /// The upload limit right now: card or the reader's own flash.
 pub fn upload_limit(a: &App) -> usize {
     match a.card {
-        Some(c) => MAX_CARD_UPLOAD.min((c.free_mb as usize).saturating_sub(16) << 20),
+        Some(c) if c.formatted => MAX_CARD_UPLOAD.min((c.free_mb as usize).saturating_sub(16) << 20),
+        Some(_) => MAX_UPLOAD,
         None => MAX_UPLOAD,
     }
 }
@@ -342,7 +343,7 @@ pub fn settings_json(a: &App) -> String {
         json_list(PAREN_NAMES.iter().copied()),
         json_list(POSITION_NAMES.iter().copied()),
         upload_limit(a),
-        a.card.is_some(),
+        a.card.is_some_and(|c| c.formatted),
     )
 }
 

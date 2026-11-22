@@ -14,6 +14,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 - **Brackets** — ( ), < >, << >>, « », ‹ › — read as punctuation: a short breath as an aside opens and closes. Each closing bracket is matched with its opening one across the whole book, even when a page break splits the aside. Optionally the brackets (of the right kind) become marks at the screen's sides in word/phrase modes (Menu → Parentheses).
 - Six themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night), six reading fonts, anti-aliased.
 - Four reading modes: word by word, phrases (fixed groups of 1–3 words that end at sentences, starting at the same left point, as on the original e-reader), ticker (the line steps word by word like a typewriter carriage; nothing glides), page (normal text with a moving phrase highlight).
+- **microSD card:** books and every picture live on the card (any size; a scanned art book with 368 illustrations is ~31 MB). ⚙ Settings → SD card shows the free space and can **Erase and format** it (FAT32; the reader can't read exFAT, which most cards over 32 GB and many used cards have). Without a card, books go to the reader's own flash (3 MB each, pictures shrunk to fit).
 - **Add books from the phone:** EPUB, PDF, Markdown or text, converted in the phone's browser (chapters, bold/italic, pictures, running heads and page numbers removed, page-split sentences rejoined). pdf.js is served by the reader itself, so no internet is needed.
 - A browser view of the book plus every setting: on the device, Menu → Web view, join Wi-Fi "FastReader", open http://192.168.4.1.
 
@@ -78,7 +79,8 @@ cd firmware && cargo run --release                # add --features selftest to l
 | `crates/reader-core` | `no_std` logic: books and markup, pacing, keys → actions, feedback, touch gestures, settings |
 | `crates/reader-ui` | `no_std` renderer: canvas, TrueType text, themes, layout + hit testing, painter |
 | `crates/reader-sim` | desktop window, browser view and settings server, walkthrough |
-| `firmware` | ES3C28P: display, touch, buttons, backlight, flash storage, embedded books |
+| `firmware` | ES3C28P: display, touch, buttons, backlight, flash storage, SD card, embedded books |
+| `crates/fat-format` | FAT32 formatter for the SD card (`no_std`), checked against macOS `fsck_msdos` |
 | `tools/convert.py` | EPUB/PDF/TXT → reader markup |
 
 Add a theme: copy a file in `crates/reader-ui/src/themes/`, change colours and button styles, list it in `themes/mod.rs`.

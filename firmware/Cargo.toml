@@ -46,6 +46,9 @@ edge-nal = "0.7"
 edge-nal-embassy = "0.9"
 embedded-io-async = "0.7"
 static_cell = "2.1"
+# microSD card: FAT file system over SPI, and our FAT32 formatter
+embedded-sdmmc = { version = "0.10", default-features = false }
+fat-format = { path = "../crates/fat-format" }
 
 [profile.release]
 opt-level = "s"

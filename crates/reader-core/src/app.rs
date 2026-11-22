@@ -444,6 +444,8 @@ pub struct Toast {
 pub struct Card {
     pub total_mb: u32,
     pub free_mb: u32,
+    /// False for a card the reader can't use until it is formatted.
+    pub formatted: bool,
 }
 
 /// "29.7 GB" or "812 MB".
@@ -1186,6 +1188,7 @@ impl App {
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
             MenuItem::Card => match self.card {
                 None => "No card".into(),
+                Some(c) if !c.formatted => "Needs formatting".into(),
                 Some(c) => format!("{} free", gb(c.free_mb)),
             },
             MenuItem::Info | MenuItem::Resume | MenuItem::Restart | MenuItem::Sleep => return None,
@@ -1703,7 +1706,7 @@ mod tests {
         let mut a = app();
         a.screen = Screen::Menu { sel: menu_index(MenuItem::Card) };
         assert_eq!(a.handle(Select, 0), Feedback::limit(Msg::NoCard), "explained without a card");
-        a.card = Some(Card { total_mb: 30_436, free_mb: 30_400 });
+        a.card = Some(Card { total_mb: 30_436, free_mb: 30_400, formatted: true });
         assert_eq!(a.menu_value(MenuItem::Card).unwrap(), "29.6 GB free");
         a.handle(Select, 0);
         assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Card, sel: 0, .. }), "starts on Keep everything");
@@ -1713,7 +1716,7 @@ mod tests {
         a.handle(Down, 0);
         assert_eq!(a.handle(Select, 0).msg, Msg::Formatting);
         assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::FormatCard));
-        a.card_formatted(Some(Card { total_mb: 30_436, free_mb: 30_436 }), 10);
+        a.card_formatted(Some(Card { total_mb: 30_436, free_mb: 30_436, formatted: true }), 10);
         assert_eq!(a.toast().unwrap().feedback.msg, Msg::CardReady);
     }
 

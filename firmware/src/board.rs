@@ -49,3 +49,7 @@ pub fn battery_percent(mv: u16) -> u8 {
     }
     100
 }
+
+// microSD slot, driven in SPI mode on its SDIO pins (LCDWIKI ES3C28P manual:
+// SD_CLK 38, SD_CMD 40, SD_D0 39, SD_D3 47; D1 41 and D2 48 unused). Set up
+// in main.rs on SPI3; see card.rs.

@@ -13,6 +13,7 @@
 extern crate alloc;
 
 mod board;
+mod card;
 mod library;
 mod net;
 
@@ -129,6 +130,20 @@ async fn main(spawner: Spawner) -> ! {
         .init(&mut delay)
         .unwrap();
 
+    // --- microSD card on its own SPI bus (SPI3), so the display isn't disturbed.
+    let sd_spi = Spi::new(p.SPI3, SpiConfig::default().with_frequency(Rate::from_khz(400)).with_mode(Mode::_0))
+        .unwrap()
+        .with_sck(p.GPIO38)
+        .with_mosi(p.GPIO40)
+        .with_miso(p.GPIO39);
+    let sd_cs = Output::new(p.GPIO47, Level::High, out);
+    let card_cell: card::Shared = mk_static!(RefCell<Option<card::Card>>, RefCell::new(card::init(sd_spi, sd_cs)));
+    let mut card_books = card_cell.borrow_mut().as_mut().map(|c| c.scan()).unwrap_or_default();
+    match &*card_cell.borrow() {
+        Some(c) => println!("card: {} MB, {}, {} books", c.total_mb, if c.formatted() { "FAT" } else { "not formatted" }, card_books.len()),
+        None => println!("card: none"),
+    }
+
     // --- Touch (FT6336G).
     let mut tp_rst = Output::new(p.GPIO18, Level::Low, out);
     delay.delay_millis(10);
@@ -166,21 +181,39 @@ async fn main(spawner: Spawner) -> ! {
 
     // --- App.
     let mut settings = settings;
-    settings.book = settings.book.min((BOOKS.len() + library::scan(&mut flash).len()).saturating_sub(1) as u8);
-    // Library = books built into the firmware, then books uploaded over Wi-Fi.
+    // Library = books built into the firmware, then books uploaded to the
+    // reader's flash, then books on the SD card.
     let mut uploads = library::scan(&mut flash);
-    let open_book = |i: u8, flash: &mut FlashStorage, uploads: &[library::Stored]| -> Book {
+    settings.book = settings.book.min((BOOKS.len() + uploads.len() + card_books.len()).saturating_sub(1) as u8);
+    let open_book = |i: u8, flash: &mut FlashStorage, uploads: &[library::Stored], card_books: &[card::Stored]| -> Book {
         let i = i as usize;
         if i < BOOKS.len() {
             let (title, bytes) = BOOKS[i];
             return Book::from_bytes(bytes, title);
         }
-        match uploads.get(i - BOOKS.len()).and_then(|s| library::read(flash, s).map(|t| (s.title.clone(), t))) {
-            Some((title, bytes)) => Book::from_bytes(&bytes, &title),
-            None => Book::new("Missing book", "# Missing book\nThis uploaded book could not be read."),
+        if let Some(s) = uploads.get(i - BOOKS.len()) {
+            return match library::read(flash, s) {
+                Some(bytes) => Book::from_bytes(&bytes, &s.title),
+                None => Book::new("Missing book", "# Missing book\nThis uploaded book could not be read."),
+            };
+        }
+        let Some(s) = card_books.get(i - BOOKS.len() - uploads.len()) else {
+            return Book::new("Missing book", "# Missing book\nThe SD card with this book is not in the reader.");
+        };
+        // Card book: only the text comes into memory; pictures stay on the card.
+        let opened = card_cell.borrow_mut().as_mut().and_then(|c| c.open_text(s));
+        match opened {
+            Some((text, pictures)) => {
+                let mut book = Book::parse(&alloc::string::String::from_utf8_lossy(&text), &s.title);
+                if let Some((base, table)) = pictures {
+                    book.images = reader_core::book::Pictures::Stored(card::CardPictures::new(card_cell, s.file.clone(), base, table));
+                }
+                book
+            }
+            None => Book::new("Missing book", "# Missing book\nThis book could not be read from the SD card."),
         }
     };
-    let mut app = App::new(open_book(settings.book, &mut flash, &uploads), CATALOG, settings);
+    let mut app = App::new(open_book(settings.book, &mut flash, &uploads, &card_books), CATALOG, settings);
     app.library = BOOKS
         .iter()
         .map(|(t, bytes)| {
@@ -189,7 +222,9 @@ async fn main(spawner: Spawner) -> ! {
             Book::parse(&head, t).title
         })
         .chain(uploads.iter().map(|s| s.title.clone()))
+        .chain(card_books.iter().map(|s| s.title.clone()))
         .collect();
+    app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
     app.positions = load_positions(&mut flash);
     app.positions.resize(app.library.len(), 0);
     app.bookmarks = load_bookmarks(&mut flash);
@@ -239,7 +274,7 @@ async fn main(spawner: Spawner) -> ! {
     for i in 0..BOOKS.len() as u8 {
         let t0 = Instant::now();
         app.park_book();
-        app.open_book(open_book(i, &mut flash, &uploads), i);
+        app.open_book(open_book(i, &mut flash, &uploads, &card_books), i);
         let load = t0.elapsed().as_millis();
         let t1 = Instant::now();
         app.settings.mode = 3;
@@ -269,7 +304,7 @@ async fn main(spawner: Spawner) -> ! {
     #[cfg(feature = "selftest")]
     for mode in 0..4u16 {
         app.park_book();
-        app.open_book(open_book(1, &mut flash, &uploads), 1);
+        app.open_book(open_book(1, &mut flash, &uploads, &card_books), 1);
         let _ = app.set_setting("mode", mode);
         app.screen = if mode == 3 { reader_core::Screen::Page } else { reader_core::Screen::Reading };
         ui.invalidate();
@@ -307,7 +342,7 @@ async fn main(spawner: Spawner) -> ! {
     let inbox: &'static RefCell<net::Inbox> = mk_static!(RefCell<net::Inbox>, RefCell::new(net::Inbox::default()));
     if app_cell.borrow().settings.wifi || cfg!(feature = "wifi-boot") {
         if let Some(w) = wifi_peripheral.take() {
-            net::start(spawner, w, app_cell, inbox, start);
+            net::start(spawner, w, app_cell, inbox, card_cell, start);
             app_cell.borrow_mut().device.web = net::ADDRESS.into();
         }
     }
@@ -391,9 +426,22 @@ async fn main(spawner: Spawner) -> ! {
                 Err(e) => println!("library: {}", e),
             }
         }
+        if let Some(stored) = request.card_added {
+            // The web task already wrote it to the card; insert it after the
+            // flash uploads, keeping the library in its order.
+            println!("card: stored {:?} ({} bytes)", stored.title, stored.len);
+            card_books.push(stored.clone());
+            app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+            app.book_added(stored.title, now);
+        }
         if request.clear {
             library::clear(&mut flash);
             uploads.clear();
+            if let Some(c) = card_cell.borrow_mut().as_mut() {
+                c.remove_books();
+            }
+            card_books.clear();
+            app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
             app.books_removed(BOOKS.len(), now); // reopens book 0 if needed (Effect::OpenBook)
         }
 
@@ -412,7 +460,7 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 Effect::OpenBook(i) => {
                     app.park_book(); // free the old book first: memory is tight
-                    app.open_book(open_book(i, &mut flash, &uploads), i);
+                    app.open_book(open_book(i, &mut flash, &uploads, &card_books), i);
                     save_positions(&mut flash, &app.positions);
                     ui.invalidate();
                 }
@@ -445,9 +493,28 @@ async fn main(spawner: Spawner) -> ! {
                     low_power.sleep_deep(esp_hal::rtc_cntl::sleep::RtcSleepConfig::deep());
                 }
                 Effect::SaveBookmarks => save_bookmarks(&mut flash, &app.bookmarks),
+                Effect::FormatCard => {
+                    // Show "Formatting the card…" first: clearing the FATs takes a while.
+                    let damage = ui.paint(app, now, &mut cv);
+                    flush!(damage);
+                    let open_on_card = app.settings.book as usize >= BOOKS.len() + uploads.len();
+                    if open_on_card {
+                        app.park_book();
+                    }
+                    let id = start.elapsed().as_micros() as u32 ^ 0xFA57_2026;
+                    let ok = card_cell.borrow_mut().as_mut().is_some_and(|c| c.format(id, |d, t| println!("card: formatting {}%", d * 100 / t.max(1))));
+                    println!("card: format {}", if ok { "done" } else { "failed" });
+                    card_books.clear();
+                    let info = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+                    app.books_removed(BOOKS.len() + uploads.len(), now);
+                    app.card_formatted(if ok { info } else { None }, now);
+                    if !ok {
+                        app.card = info;
+                    }
+                }
                 Effect::Wifi(true) => {
                     if let Some(w) = wifi_peripheral.take() {
-                        net::start(spawner, w, app_cell, inbox, start);
+                        net::start(spawner, w, app_cell, inbox, card_cell, start);
                     }
                     app.device.web = net::ADDRESS.into();
                 }

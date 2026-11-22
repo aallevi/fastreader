@@ -98,7 +98,7 @@ pub const UPLOADS: &str = "books/uploaded";
 pub const SIM_CARD: &str = "target/sim-card";
 
 pub fn sim_card() -> reader_core::app::Card {
-    reader_core::app::Card { total_mb: 30_436, free_mb: 30_100 }
+    reader_core::app::Card { total_mb: 30_436, free_mb: 30_100, formatted: true }
 }
 
 fn bookmarks_path() -> PathBuf {
