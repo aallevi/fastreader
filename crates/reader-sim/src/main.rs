@@ -64,13 +64,13 @@ pub fn load_book(path: &Path) -> Book {
 /// Every book in `books/` and `books/private/` (converted with tools/convert.py).
 fn library(first: Option<PathBuf>) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = first.into_iter().collect();
-    for dir in ["books", "books/private", UPLOADS] {
+    for dir in ["books", "books/private", UPLOADS, "target/sim-card/BOOKS"] {
         let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
             .flatten()
             .map(|e| e.path())
-            .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("md" | "txt")))
+            .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("md" | "txt" | "BK" | "bk")))
             .collect();
         found.sort();
         for p in found {
@@ -94,6 +94,12 @@ fn title_of(path: &Path) -> String {
 
 /// Where books sent from the browser land (like the device's flash area).
 pub const UPLOADS: &str = "books/uploaded";
+/// The simulator's SD card: a folder.
+pub const SIM_CARD: &str = "target/sim-card";
+
+pub fn sim_card() -> reader_core::app::Card {
+    reader_core::app::Card { total_mb: 30_436, free_mb: 30_100 }
+}
 
 fn bookmarks_path() -> PathBuf {
     PathBuf::from("target/sim-bookmarks.txt")
@@ -150,6 +156,17 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
                 let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
                 let _ = std::fs::write(bookmarks_path(), list.join(" "));
             }
+            Effect::FormatCard => {
+                // The simulator's card is a folder: formatting empties it.
+                let _ = std::fs::remove_dir_all(SIM_CARD);
+                let _ = std::fs::create_dir_all(format!("{SIM_CARD}/BOOKS"));
+                let mut list = books.lock().unwrap();
+                list.retain(|p| !p.starts_with(SIM_CARD));
+                let keep = list.len();
+                drop(list);
+                a.books_removed(keep, 0);
+                a.card_formatted(Some(sim_card()), 0);
+            }
             Effect::Wifi(on) => println!("(web view {}: the simulator always serves http://localhost:8080)", if on { "on" } else { "off" }),
             Effect::OpenBook(i) => {
                 let path = books.lock().unwrap().get(i as usize).cloned().unwrap_or_default();
@@ -185,6 +202,8 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
     let _ = first_count;
     app.battery = Some(Battery { percent: 82, charging: false, millivolts: 4010 });
     app.device = sim_device();
+    let _ = std::fs::create_dir_all(format!("{SIM_CARD}/BOOKS"));
+    app.card = Some(sim_card());
     let app = Arc::new(Mutex::new(app));
     let start = Instant::now();
     web::serve(app.clone(), books.clone(), "127.0.0.1:8080", start);

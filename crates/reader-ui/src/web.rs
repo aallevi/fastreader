@@ -101,7 +101,7 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
             }
         }
         ("GET", p) if p.starts_with("/img/") => match p[5..].parse::<usize>().ok().and_then(|n| app.reader.book.images.get(n)) {
-            Some(img) => Response::ok("image/bmp", Body::Bytes(bmp(img))),
+            Some(img) => Response::ok("image/bmp", Body::Bytes(bmp(&img))),
             None => Response::text("404 Not Found", "no such image"),
         },
         ("GET", "/pdfjs/pdf.min.mjs") | ("GET", "/pdfjs/pdf.worker.min.mjs") => Response {
@@ -185,6 +185,17 @@ pub fn bmp(img: &reader_core::book::Image) -> Vec<u8> {
 
 /// Most an uploaded book may weigh (it is held in RAM before being saved).
 pub const MAX_UPLOAD: usize = 3 * 1024 * 1024;
+/// With an SD card, books go to the card and may be this big (a scanned art
+/// book with all its pictures is ~60 MB).
+pub const MAX_CARD_UPLOAD: usize = 256 * 1024 * 1024;
+
+/// The upload limit right now: card or the reader's own flash.
+pub fn upload_limit(a: &App) -> usize {
+    match a.card {
+        Some(c) => MAX_CARD_UPLOAD.min((c.free_mb as usize).saturating_sub(16) << 20),
+        None => MAX_UPLOAD,
+    }
+}
 
 /// Decodes a query parameter (`%XX` and `+`).
 pub fn url_decode(s: &str) -> String {
@@ -316,7 +327,7 @@ pub fn settings_json(a: &App) -> String {
         .map(|(n, lo, hi)| format!("{}:{{\"value\":{},\"min\":{lo},\"max\":{hi}}}", json_str(n), a.settings.get(n).unwrap_or(0)))
         .collect();
     format!(
-        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{},\"parens\":{},\"positions\":{}}}",
+        "{{\"fields\":{{{}}},\"themes\":{},\"fonts\":{},\"skips\":{},\"books\":{},\"sizes\":{},\"brightness\":{},\"modes\":{},\"spacings\":{},\"paragraphs\":{},\"aligns\":{},\"parens\":{},\"positions\":{},\"upload_limit\":{},\"card\":{}}}",
         fields.join(","),
         json_list(a.catalog.themes.iter().copied()),
         json_list(a.catalog.fonts.iter().copied()),
@@ -330,6 +341,8 @@ pub fn settings_json(a: &App) -> String {
         json_list(ALIGN_NAMES.iter().copied()),
         json_list(PAREN_NAMES.iter().copied()),
         json_list(POSITION_NAMES.iter().copied()),
+        upload_limit(a),
+        a.card.is_some(),
     )
 }
 

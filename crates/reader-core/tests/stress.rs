@@ -78,7 +78,8 @@ fn image_section_garbage_is_harmless() {
         let n = (r.next() % 40) as usize;
         b.extend((0..n).map(|_| r.next() as u8));
         let book = Book::from_bytes(&b, "t");
-        for img in &book.images {
+        for n in 0..book.images.len() {
+            let img = book.images.get(n).unwrap();
             assert_eq!(img.px.len(), img.w as usize * img.h as usize);
         }
     }

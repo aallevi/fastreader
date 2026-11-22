@@ -1024,6 +1024,10 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Wifi(false) => "Web view off".into(),
         Msg::BookAdded => "Book added to the library".into(),
         Msg::Bookmarked => "Bookmarked".into(),
+        Msg::NoCard => "No SD card in the reader".into(),
+        Msg::Formatting => "Formatting the card…".into(),
+        Msg::CardReady => "SD card ready".into(),
+        Msg::CardFailed => "Could not format the card".into(),
         Msg::BookmarkRemoved => "Bookmark removed".into(),
         Msg::NoBookmarks => "No bookmarks yet: tap the page corner".into(),
         Msg::BooksRemoved => "Uploaded books removed".into(),
@@ -1137,7 +1141,7 @@ fn layout_page(f: &mut Fonts, app: &App, area: Rect, start: usize, l: &Layout) -
                 return (out, next);
             }
             x = 0.0;
-            let (iw, ih) = book.image_of(w).map_or((area.w as f32, base_px * 2.0), |m| (m.w as f32, m.h as f32));
+            let (iw, ih) = book.image_dims(w).map_or((area.w as f32, base_px * 2.0), |(w, h)| (w as f32, h as f32));
             let scale = (area.w as f32 / iw).min(area.h as f32 / ih).min(2.0);
             let (dw, dh) = (iw * scale, ih * scale);
             let gap = base_px * 0.5;

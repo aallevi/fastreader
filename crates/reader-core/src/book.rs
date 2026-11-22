@@ -121,8 +121,90 @@ pub struct Image {
 
 /// Marks an image word's text; the rest of the text is its index.
 const IMAGE_MARK: char = '\u{FFFC}';
-/// Separates text from the image section in a book file.
+/// Separates text from the image section in a book file (version 1: the
+/// pictures one after the other).
 pub const IMAGES_MAGIC: &[u8] = b"\n\0FRIMG1";
+/// Version 2 adds a table of where each picture starts, so a reader can
+/// fetch one picture from storage without reading the rest:
+/// count (u16), 0 (u16), then per picture width, height (u16) and offset
+/// (u32, from the start of the section after the magic), then the pixels.
+pub const IMAGES_MAGIC2: &[u8] = b"\n\0FRIMG2";
+
+/// Pictures that stay in storage (an SD card) until shown.
+pub trait PictureSource {
+    fn len(&self) -> usize;
+    /// Width and height, without loading the pixels.
+    fn dims(&self, n: usize) -> Option<(u16, u16)>;
+    fn load(&self, n: usize) -> Option<Image>;
+}
+
+/// A book's pictures: in memory, or fetched from storage when shown.
+pub enum Pictures {
+    Memory(Vec<Image>),
+    Stored(alloc::boxed::Box<dyn PictureSource + Send>),
+}
+
+impl Pictures {
+    pub fn len(&self) -> usize {
+        match self {
+            Pictures::Memory(v) => v.len(),
+            Pictures::Stored(s) => s.len(),
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn dims(&self, n: usize) -> Option<(u16, u16)> {
+        match self {
+            Pictures::Memory(v) => v.get(n).map(|i| (i.w, i.h)),
+            Pictures::Stored(s) => s.dims(n),
+        }
+    }
+    pub fn get(&self, n: usize) -> Option<alloc::borrow::Cow<'_, Image>> {
+        match self {
+            Pictures::Memory(v) => v.get(n).map(alloc::borrow::Cow::Borrowed),
+            Pictures::Stored(s) => s.load(n).map(alloc::borrow::Cow::Owned),
+        }
+    }
+}
+
+/// Where the text ends and the image section (after its magic) begins, and
+/// whether that section is version 2.
+pub fn split_images(bytes: &[u8]) -> (usize, Option<(usize, bool)>) {
+    let find = |m: &[u8]| bytes.windows(m.len()).position(|w| w == m);
+    match (find(IMAGES_MAGIC2), find(IMAGES_MAGIC)) {
+        (Some(i), _) => (i, Some((i + IMAGES_MAGIC2.len(), true))),
+        (None, Some(i)) => (i, Some((i + IMAGES_MAGIC.len(), false))),
+        _ => (bytes.len(), None),
+    }
+}
+
+/// A version-2 section's table: (width, height, offset) per picture. Needs
+/// only the first `4 + 8 × count` bytes of the section.
+pub fn image_table(b: &[u8]) -> Vec<(u16, u16, u32)> {
+    if b.len() < 4 {
+        return Vec::new();
+    }
+    let n = u16::from_le_bytes([b[0], b[1]]) as usize;
+    (0..n)
+        .map_while(|k| {
+            let e = b.get(4 + k * 8..12 + k * 8)?;
+            Some((u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]])))
+        })
+        .collect()
+}
+
+/// Reads a whole version-2 section held in memory.
+pub fn parse_images2(b: &[u8]) -> Vec<Image> {
+    image_table(b)
+        .into_iter()
+        .map_while(|(w, h, off)| {
+            let len = w as usize * h as usize * 2;
+            let px = b.get(off as usize..off as usize + len)?;
+            Some(Image { w, h, px: px.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() })
+        })
+        .collect()
+}
 
 /// Reads the image section: count (u16), then width, height (u16) and
 /// width × height RGB565 pixels (little endian) per image.
@@ -153,7 +235,7 @@ pub fn parse_images(mut b: &[u8]) -> Vec<Image> {
 pub struct Book {
     pub title: String,
     /// Pictures referenced by `{image:N}` marks in the text.
-    pub images: Vec<Image>,
+    pub images: Pictures,
     /// All words, cleaned of markup, in 64 KB blocks.
     text: ChunkedText,
     words: Chunked<Word>,
@@ -191,7 +273,7 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), images: Vec::new(), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), images: Pictures::Memory(Vec::new()), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
     }
@@ -199,21 +281,31 @@ impl Book {
     /// Builds a book from a file's bytes: text, then optionally the image
     /// section (see [`IMAGES_MAGIC`]).
     pub fn from_bytes(bytes: &[u8], fallback: &str) -> Self {
-        let split = bytes.windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC);
-        let (text, images) = match split {
-            Some(i) => (&bytes[..i], parse_images(&bytes[i + IMAGES_MAGIC.len()..])),
-            None => (bytes, Vec::new()),
+        let (end, section) = split_images(bytes);
+        let images = match section {
+            Some((at, true)) => parse_images2(&bytes[at..]),
+            Some((at, false)) => parse_images(&bytes[at..]),
+            None => Vec::new(),
         };
-        let mut book = Book::parse(&String::from_utf8_lossy(text), fallback);
-        book.images = images;
+        let mut book = Book::parse(&String::from_utf8_lossy(&bytes[..end]), fallback);
+        book.images = Pictures::Memory(images);
         book
     }
 
-    /// The picture a word stands for, if it is an image word.
-    pub fn image_of(&self, w: Word) -> Option<&Image> {
-        let t = self.text_of(w);
-        let n: usize = t.strip_prefix(IMAGE_MARK)?.parse().ok()?;
-        self.images.get(n)
+    /// Which picture an image word stands for.
+    pub fn picture_index(&self, w: Word) -> Option<usize> {
+        self.text_of(w).strip_prefix(IMAGE_MARK)?.parse().ok()
+    }
+
+    /// The picture a word stands for, if it is an image word (loaded from
+    /// storage if the book keeps its pictures there).
+    pub fn image_of(&self, w: Word) -> Option<alloc::borrow::Cow<'_, Image>> {
+        self.images.get(self.picture_index(w)?)
+    }
+
+    /// A picture's size without loading it (for laying out pages).
+    pub fn image_dims(&self, w: Word) -> Option<(u16, u16)> {
+        self.images.dims(self.picture_index(w)?)
     }
 
     /// Whether a word is an image (even if its picture is missing).
@@ -895,6 +987,42 @@ mod tests {
         file.extend_from_slice(IMAGES_MAGIC);
         file.extend_from_slice(&[1, 0, 200, 0, 200]); // truncated image
         assert!(Book::from_bytes(&file, "t").images.is_empty());
+    }
+
+    #[test]
+    fn version_2_pictures_load_from_a_table() {
+        // Two pictures, table first: 2×1 and 1×1.
+        let mut sec = Vec::new();
+        sec.extend_from_slice(&2u16.to_le_bytes());
+        sec.extend_from_slice(&0u16.to_le_bytes());
+        for (w, h, off) in [(2u16, 1u16, 20u32), (1, 1, 24)] {
+            sec.extend_from_slice(&w.to_le_bytes());
+            sec.extend_from_slice(&h.to_le_bytes());
+            sec.extend_from_slice(&off.to_le_bytes());
+        }
+        sec.extend_from_slice(&[1, 0, 2, 0, 3, 0]);
+        assert_eq!(image_table(&sec), [(2, 1, 20), (1, 1, 24)]);
+        let mut file = b"A {image:1} B".to_vec();
+        file.extend_from_slice(IMAGES_MAGIC2);
+        file.extend_from_slice(&sec);
+        let b = Book::from_bytes(&file, "t");
+        assert_eq!(b.image_of(b.word(1).unwrap()).unwrap().px, [3]);
+        assert_eq!(b.image_dims(b.word(1).unwrap()), Some((1, 1)));
+        assert_eq!(split_images(&file).1, Some((13 + IMAGES_MAGIC2.len(), true)));
+    }
+
+    #[test]
+    fn pictures_can_stay_in_storage() {
+        struct Card;
+        impl PictureSource for Card {
+            fn len(&self) -> usize { 1 }
+            fn dims(&self, n: usize) -> Option<(u16, u16)> { (n == 0).then_some((3, 2)) }
+            fn load(&self, n: usize) -> Option<Image> { (n == 0).then(|| Image { w: 3, h: 2, px: alloc::vec![9; 6] }) }
+        }
+        let mut b = Book::new("t", "Look {image:0} here");
+        b.images = Pictures::Stored(alloc::boxed::Box::new(Card));
+        assert_eq!(b.image_dims(b.word(1).unwrap()), Some((3, 2)));
+        assert_eq!(b.image_of(b.word(1).unwrap()).unwrap().px.len(), 6);
     }
 
     #[test]

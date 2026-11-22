@@ -52,6 +52,7 @@ pub enum MenuItem {
     Align,
     Parens,
     Position,
+    Card,
     Brightness,
     Rotate,
     Wifi,
@@ -63,7 +64,7 @@ pub enum MenuItem {
 /// ▲▼ run through all of them in this order; the screen shows the menu the
 /// selection is in.
 pub const MENU: [(&str, &[MenuItem]); 4] = [
-    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Info, MenuItem::Sleep]),
+    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart]),
     ("Library", &[MenuItem::Library]),
     ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Parens]),
@@ -91,7 +92,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 24;
+pub const MENU_LEN: u8 = 25;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -126,6 +127,7 @@ impl MenuItem {
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Wifi => "Web view (Wi-Fi)",
+            MenuItem::Card => "SD card",
             MenuItem::Info => "Device info",
             MenuItem::Sleep => "Sleep",
         }
@@ -147,6 +149,7 @@ impl MenuItem {
             MenuItem::Bookmarks => PickKind::Bookmark,
             MenuItem::Parens => PickKind::Parens,
             MenuItem::Position => PickKind::Position,
+            MenuItem::Card => PickKind::Card,
             MenuItem::GoTo => PickKind::GoTo,
             MenuItem::Size => PickKind::Size,
             MenuItem::Font => PickKind::Font,
@@ -163,6 +166,7 @@ pub enum PickKind {
     Bookmark,
     Parens,
     Position,
+    Card,
     Pace,
     Mode,
     Spacing,
@@ -186,6 +190,7 @@ impl PickKind {
             PickKind::Bookmark => "Bookmarks",
             PickKind::Parens => "Parentheses",
             PickKind::Position => "Word position",
+            PickKind::Card => "SD card",
             PickKind::Pace => "Speed means",
             PickKind::Mode => "Reading mode",
             PickKind::Spacing => "Line spacing",
@@ -381,6 +386,10 @@ pub enum Msg {
     Bookmarked,
     BookmarkRemoved,
     NoBookmarks,
+    NoCard,
+    Formatting,
+    CardReady,
+    CardFailed,
     Rotated,
     NoChapters,
     /// The screen itself shows the change (menu opened, highlight moved).
@@ -418,6 +427,8 @@ pub enum Effect {
     Wifi(bool),
     /// Bookmarks changed: store `App::bookmarks`.
     SaveBookmarks,
+    /// Erase the SD card and format it (FAT32); then call `card_formatted`.
+    FormatCard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -426,6 +437,18 @@ pub struct Toast {
     pub until: u64,
     /// Bumped on every toast so repeating the same message still re-flashes.
     pub serial: u32,
+}
+
+/// The SD card, as the platform found it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Card {
+    pub total_mb: u32,
+    pub free_mb: u32,
+}
+
+/// "29.7 GB" or "812 MB".
+pub fn gb(mb: u32) -> String {
+    if mb >= 1024 { format!("{}.{} GB", mb / 1024, mb % 1024 * 10 / 1024) } else { format!("{mb} MB") }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -462,6 +485,8 @@ pub struct App {
     pub positions: Vec<u32>,
     /// Every bookmark as (library book, word), all books together.
     pub bookmarks: Vec<(u8, u32)>,
+    /// The SD card, if one is in.
+    pub card: Option<Card>,
     toast: Option<Toast>,
     serial: u32,
     /// The key whose on-screen button is lit, and until when.
@@ -495,6 +520,7 @@ impl App {
             library: Vec::new(),
             positions: Vec::new(),
             bookmarks: Vec::new(),
+            card: None,
             toast: None,
             serial: 0,
             flash: None,
@@ -715,6 +741,15 @@ impl App {
                 self.reader.set_chunk(1);
             }
         }
+    }
+
+    /// The platform finished formatting the card (`None`: it failed).
+    pub fn card_formatted(&mut self, card: Option<Card>, now: u64) {
+        let ok = card.is_some();
+        if ok {
+            self.card = card;
+        }
+        self.feedback(if ok { Feedback::ok(Msg::CardReady) } else { Feedback::limit(Msg::CardFailed) }, now);
     }
 
     /// The open book's bookmarks, in reading order.
@@ -968,6 +1003,9 @@ impl App {
             if kind == PickKind::Bookmark && self.book_marks().is_empty() {
                 return Feedback::limit(Msg::NoBookmarks);
             }
+            if kind == PickKind::Card && self.card.is_none() {
+                return Feedback::limit(Msg::NoCard);
+            }
             let cur = self.current_pick(kind);
             self.screen = Screen::Pick { kind, sel: cur, original: cur };
             return Feedback::ok(Msg::Shown);
@@ -1011,6 +1049,16 @@ impl App {
     }
 
     fn choose(&mut self, kind: PickKind, sel: u8, now: u64) -> Feedback {
+        if kind == PickKind::Card {
+            // Erasing needs the second, explicit row; the first keeps everything.
+            self.screen = Screen::Menu { sel: menu_index(MenuItem::Card) };
+            if sel == 1 {
+                self.effect(Effect::FormatCard);
+                self.close_menu(now);
+                return Feedback::ok(Msg::Formatting);
+            }
+            return Feedback::ok(Msg::Kept);
+        }
         if kind == PickKind::Book {
             self.resume_after_menu = false;
             if sel != self.settings.book && (sel as usize) < self.library.len() {
@@ -1084,7 +1132,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Parens | PickKind::Position => 2,
+            PickKind::Parens | PickKind::Position | PickKind::Card => 2,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1108,6 +1156,7 @@ impl App {
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
             PickKind::Parens => PAREN_NAMES[i].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
+            PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
             PickKind::Pace => PACE_NAMES[i].into(),
             PickKind::Mode => MODE_NAMES[i].into(),
             PickKind::Spacing => SPACING_NAMES[i].into(),
@@ -1135,6 +1184,10 @@ impl App {
             MenuItem::GoTo => format!("{}%", self.reader.permille() / 10),
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
+            MenuItem::Card => match self.card {
+                None => "No card".into(),
+                Some(c) => format!("{} free", gb(c.free_mb)),
+            },
             MenuItem::Info | MenuItem::Resume | MenuItem::Restart | MenuItem::Sleep => return None,
             other => {
                 let kind = other.pick()?;
@@ -1153,6 +1206,7 @@ impl App {
             }
             PickKind::Parens => self.settings.parens as u8,
             PickKind::Position => self.settings.position,
+            PickKind::Card => 0,
             PickKind::Pace => self.settings.true_pace as u8,
             PickKind::Mode => self.settings.mode,
             PickKind::Spacing => self.settings.spacing,
@@ -1642,6 +1696,25 @@ mod tests {
         assert_eq!(a.screen, Screen::Reading);
         assert_eq!(a.tap(Hit::Bookmark, 0).msg, Msg::BookmarkRemoved, "tapping the corner again removes it");
         assert_eq!(a.book_marks(), [2]);
+    }
+
+    #[test]
+    fn formatting_the_card_needs_the_explicit_row() {
+        let mut a = app();
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Card) };
+        assert_eq!(a.handle(Select, 0), Feedback::limit(Msg::NoCard), "explained without a card");
+        a.card = Some(Card { total_mb: 30_436, free_mb: 30_400 });
+        assert_eq!(a.menu_value(MenuItem::Card).unwrap(), "29.6 GB free");
+        a.handle(Select, 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Card, sel: 0, .. }), "starts on Keep everything");
+        a.handle(Select, 0);
+        assert!(core::iter::from_fn(|| a.take_effect()).all(|e| e != Effect::FormatCard), "keeping erases nothing");
+        a.handle(Select, 0);
+        a.handle(Down, 0);
+        assert_eq!(a.handle(Select, 0).msg, Msg::Formatting);
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::FormatCard));
+        a.card_formatted(Some(Card { total_mb: 30_436, free_mb: 30_436 }), 10);
+        assert_eq!(a.toast().unwrap().feedback.msg, Msg::CardReady);
     }
 
     #[test]

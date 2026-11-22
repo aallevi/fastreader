@@ -9,7 +9,7 @@ use std::time::Instant;
 use std::path::PathBuf;
 
 use reader_core::App;
-use reader_ui::web::{book_piece, respond, url_decode, Body, MAX_UPLOAD};
+use reader_ui::web::{book_piece, respond, upload_limit, url_decode, Body};
 
 /// `start` is the simulator's clock origin, so web actions share its timeline.
 pub fn serve(app: Arc<Mutex<App>>, books: Arc<Mutex<Vec<PathBuf>>>, addr: &str, start: Instant) {
@@ -52,14 +52,18 @@ fn handle(mut stream: TcpStream, app: &Mutex<App>, books: &Mutex<Vec<PathBuf>>, 
     if method == "POST" && path == "/upload" {
         // Same behaviour as the device: store, add to the library, toast.
         let title = query.split('&').find_map(|kv| kv.strip_prefix("title=")).map(url_decode).unwrap_or_default();
-        if title.is_empty() || length == 0 || length > MAX_UPLOAD {
-            return write!(stream, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nneed a title and a book of at most 3 MB");
+        let limit = upload_limit(&app.lock().unwrap());
+        if title.is_empty() || length == 0 || length > limit {
+            return write!(stream, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nneed a title and a book of at most {} MB", limit >> 20);
         }
         let mut body = vec![0u8; length];
         std::io::Read::read_exact(&mut reader, &mut body)?;
-        std::fs::create_dir_all(crate::UPLOADS)?;
+        // With a card, books go to the card (as on the device).
+        let on_card = app.lock().unwrap().card.is_some();
+        let dir = if on_card { format!("{}/BOOKS", crate::SIM_CARD) } else { crate::UPLOADS.into() };
+        std::fs::create_dir_all(&dir)?;
         let slug: String = title.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
-        let file = PathBuf::from(crate::UPLOADS).join(format!("{}.md", slug.trim_matches('-')));
+        let file = PathBuf::from(dir).join(format!("{}.{}", slug.trim_matches('-'), if on_card { "BK" } else { "md" }));
         std::fs::write(&file, &body)?;
         books.lock().unwrap().push(file);
         app.lock().unwrap().book_added(title, now);

@@ -284,29 +284,30 @@ function toMarkup(doc, docPath) {
 // Pictures go after the text: "\n\0FRIMG1", count, then width, height and
 // RGB565 pixels per picture, scaled to fit the reader's stage (300×190).
 class Pictures {
-  constructor() { this.list = []; this.used = 0; this.maxArea = 300 * 190; this.wanted = 0; this.seen = 0; this.n = 0; this.room = Infinity; }
+  // `budget`: bytes of pixels the book may carry (small without an SD card).
+  constructor(budget = 2e6) { this.list = []; this.used = 0; this.budget = budget; this.maxArea = 300 * 190; this.wanted = 0; this.seen = 0; this.n = 0; this.room = Infinity; }
   // Shares the budget among `n` pictures: smaller pictures rather than only
   // the first ones (an illustrated book has hundreds). If even at the
   // smallest useful size they don't all fit, keep ones spread evenly
   // through the book.
   plan(n) {
     this.n = n;
-    this.maxArea = Math.max(140 * 90, Math.min(300 * 190, 1e6 / Math.max(1, n)));
-    this.room = Math.floor(1e6 / this.maxArea);
+    this.maxArea = Math.max(140 * 90, Math.min(300 * 190, this.budget / 2 / Math.max(1, n)));
+    this.room = Math.floor(this.budget / 2 / this.maxArea);
   }
   // Called once per candidate, in book order: is this one among those kept?
   pick() {
     const i = this.seen++;
     return this.n <= this.room || Math.floor(i * this.room / this.n) !== Math.floor((i + 1) * this.room / this.n);
   }
-  full() { return this.used > 2e6; }
+  full() { return this.used > this.budget; }
   // Adds the region (sx, sy, sw, sh) of any drawable; returns "{image:N}" or "".
   add(src, sx, sy, sw, sh) {
     if (sw < 48 || sh < 48) return ''; // rules, bullets, icons
     let k = Math.min(300 / sw, 190 / sh, 1);
     if (sw * k * sh * k > this.maxArea) k *= Math.sqrt(this.maxArea / (sw * k * sh * k));
     const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
-    if (this.used + w * h * 2 > 2e6) return '';
+    if (this.used + w * h * 2 > this.budget) return '';
     const cv = new OffscreenCanvas(w, h), g = cv.getContext('2d');
     g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
     g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
@@ -323,11 +324,27 @@ class Pictures {
     this.used += w * h * 2;
     return `{image:${this.list.length - 1}}`;
   }
+  // Version 2: a table of (width, height, offset) first, so the reader can
+  // fetch any one picture from its card without reading the others.
   blob() {
     if (!this.list.length) return null;
-    const n = new Uint8Array(2); new DataView(n.buffer).setUint16(0, this.list.length, true);
-    return new Blob([new Uint8Array([10, 0, 70, 82, 73, 77, 71, 49]), n, ...this.list]);
+    const n = this.list.length, head = new Uint8Array(4 + 8 * n), dv = new DataView(head.buffer);
+    dv.setUint16(0, n, true);
+    let off = head.length;
+    this.list.forEach((px, k) => {
+      const v = new DataView(px.buffer);
+      dv.setUint16(4 + 8 * k, v.getUint16(0, true), true);
+      dv.setUint16(6 + 8 * k, v.getUint16(2, true), true);
+      dv.setUint32(8 + 8 * k, off, true);
+      off += px.length - 4;
+    });
+    return new Blob([new Uint8Array([10, 0, 70, 82, 73, 77, 71, 50]), head, ...this.list.map(px => px.subarray(4))]);
   }
+}
+
+// With an SD card in the reader, a book keeps every picture at full size.
+function pictureBudget() {
+  return S && S.card ? Math.max(2e6, (S.upload_limit || 0) - 4e6) : 2e6;
 }
 
 // Paragraphs a page break cut mid-sentence: the first doesn't end a sentence
@@ -452,7 +469,7 @@ async function pdfToMarkup(file, progress) {
   for (const p of pages) for (const l of p.lines) if (edge(p, l)) repeats.set(key(l), (repeats.get(key(l)) || 0) + 1);
 
   // 3. Lines → paragraphs, headings and pictures.
-  const pics = new Pictures();
+  const pics = new Pictures(pictureBudget());
   pics.plan(pages.reduce((n, p) => n + p.boxes.length, 0));
   const out = [];
   let para = [];
@@ -541,7 +558,7 @@ async function epubToMarkup(file) {
   }
   let text = parts.filter(Boolean).join('\n\n');
   // Pictures: scaled to the reader's stage, RGB565, after the text.
-  const pics = new Pictures(), ids = {};
+  const pics = new Pictures(pictureBudget()), ids = {};
   for (const m of [...text.matchAll(/\u0000IMG:([^\u0000]*)\u0000/g)]) {
     const path = m[1];
     if (path in ids) continue;
@@ -568,7 +585,8 @@ $('file').onchange = async () => {
       : name.endsWith('.pdf') ? await pdfToMarkup(f, msg => $('upmsg').textContent = msg)
       : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
     const kb = Math.round((new Blob([pending.text]).size + (pending.images?.size || 0)) / 1024);
-    if (kb > 3 * 1024) { $('upmsg').textContent = `${pending.title}: ${kb} KB, more than the 3 MB a book can be`; return; }
+    const limit = (S && S.upload_limit) || 3 * 1024 * 1024;
+    if (kb * 1024 > limit) { $('upmsg').textContent = `${pending.title}: ${Math.round(kb / 1024)} MB, more than the ${Math.round(limit / 1048576)} MB there is room for`; return; }
     const pics = pending.pictures ? `, ${pending.pictures}${pending.wanted > pending.pictures ? ' of ' + pending.wanted : ''} pictures` : '';
     $('upmsg').textContent = `${pending.title}: ${kb} KB${pics} ready`;
     $('send').disabled = false;
