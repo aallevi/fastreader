@@ -326,8 +326,24 @@ def pdf(path: Path, images: Images):
                 for s in spans
             )
             para.append(line.strip())
-        end_para()  # a page break ends the paragraph only if the block ends; good enough
-    return title, "\n\n".join(out)
+        end_para()
+    return title, "\n\n".join(join_broken(out))
+
+
+def join_broken(paras):
+    """Rejoins paragraphs a page break cut mid-sentence: the first doesn't
+    end a sentence and the next starts in lower case (e.g. "codesto tuo" |
+    "fatterello. Eh, …")."""
+    out = []
+    for p in paras:
+        prev = out[-1] if out else ""
+        start = p.lstrip("*_ ")
+        if (prev and not prev.startswith(("# ", "{image:")) and not p.startswith(("# ", "{image:"))
+                and not re.search(r"[.!?…:;»”\"')\]]\**$", prev) and start[:1].islower()):
+            out[-1] = prev + " " + p
+        else:
+            out.append(p)
+    return out
 
 
 # ---------------------------------------------------------------- main

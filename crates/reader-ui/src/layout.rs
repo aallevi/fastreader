@@ -111,7 +111,7 @@ pub fn paper(th: &crate::theme::Theme, l: &Layout) -> Rect {
 pub fn bookmark_corner(app: &App, l: &Layout) -> Button {
     // Right in the paper's corner, small, so the page stays free.
     let p = paper(crate::themes::theme(app.settings.theme), l);
-    let size = l.i(22.0);
+    let size = l.i(28.0);
     let rect = Rect::new(p.right() - size, p.y, size, size);
     Button { rect, hit_rect: Rect::new(p.right() - l.i(36.0), p.y, l.i(36.0), l.i(32.0)), hit: Hit::Bookmark, icon: Icon::Menu, primary: false }
 }

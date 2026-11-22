@@ -318,32 +318,23 @@ fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
         draw_corner_98(cv, th, r);
         return;
     }
-    // The corner folds down over the page along the diagonal: the cut-off
-    // triangle shows what lies behind, the flap (the paper's back) lies on
-    // the page and casts a soft shadow; light catches it along the crease.
+    // What lies behind the page shows where the corner was.
     let behind = match th.chrome {
         Chrome::Scrivener => th.desktop[0].1,
         _ => mix(th.page, BLACK, 95),
     };
     cv.polygon(&[(x0, y0), (x0 + s, y0), (x0 + s, y0 + s)], behind);
-    let (a, b, tip) = ((x0, y0), (x0 + s, y0 + s), (x0, y0 + s));
-    // Shadow: under the flap, spilling down-left onto the page.
-    cv.clip(Rect::new(r.x - l.i(14.0), r.y, r.w + l.i(14.0), r.h + l.i(14.0)));
-    cv.glow(x0 + s * 0.25, y0 + s * 0.8, s * 0.85, s * 0.6, BLACK, 120);
+    // Soft shadow under the flap, then the flap itself (the paper's back side).
+    cv.clip(Rect::new(r.x - l.i(10.0), r.y, r.w + l.i(10.0), r.h + l.i(10.0)));
+    cv.glow(x0 + s * 0.3, y0 + s * 0.78, s * 0.8, s * 0.55, BLACK, 110);
     cv.unclip();
-    // Flap: a little darker at the tip, brightening toward the crease.
-    let back = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 30) };
-    let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-    for k in 0..6 {
-        let t = 1.0 - k as f32 * 0.16;
-        let p3 = (mid.0 + (tip.0 - mid.0) * t, mid.1 + (tip.1 - mid.1) * t);
-        cv.polygon(&[a, b, p3], mix(back, WHITE, (k * 22) as u8));
-    }
-    // The glare: a thin bright line right on the fold.
-    cv.line((a.0 + 0.5, a.1 + 0.5), (b.0 - 0.5, b.1 - 0.5), l.px(1.0), mix(th.page, WHITE, 170));
+    let flap = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 38) };
+    cv.polygon(&[(x0, y0), (x0 + s, y0 + s), (x0, y0 + s)], flap);
+    // The crease catches the light.
+    cv.line((x0 + 0.5, y0 + 0.5), (x0 + s - 0.5, y0 + s - 0.5), l.px(1.0), mix(th.page, WHITE, 120));
     if th.chrome == Chrome::Ink {
-        cv.line(a, tip, 1.0, th.text);
-        cv.line(tip, b, 1.0, th.text);
+        cv.line((x0, y0), (x0, y0 + s), 1.0, th.text);
+        cv.line((x0, y0 + s), (x0 + s, y0 + s), 1.0, th.text);
     }
 }
 

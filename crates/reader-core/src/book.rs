@@ -107,9 +107,6 @@ impl Word {
         // Titles are the signposts of a book: they stay longer (2× by default).
         let w = if self.style.heading() { w * p.title as u32 / 10 } else { w };
         let w = if self.style.slow() { w * 14 / 10 } else { w };
-        // An aside in brackets has its own speed (pauses keep their length).
-        let pause_extra = self.pause.weight(p).saturating_sub(100);
-        let w = if self.style.paren() { (w - pause_extra) * p.aside as u32 / 10 + pause_extra } else { w };
         w + self.style.beats() * 100
     }
 }
@@ -170,7 +167,7 @@ pub struct Book {
 
 impl Book {
     pub fn new(title: impl Into<String>, source: &str) -> Self {
-        let (text, words) = tokenize(source);
+        let (text, mut words) = tokenize(source);
         let mut chapters: Vec<(u32, String)> = Vec::new();
         let mut i = 0;
         while i < words.len() {
@@ -193,6 +190,7 @@ impl Book {
                 i += 1;
             }
         }
+        mark_asides(&text, &mut words);
         let mut b = Book { title: title.into(), images: Vec::new(), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
@@ -451,8 +449,6 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
     let mut style = Style::PLAIN;
     let mut scratch = String::new();
     let mut verse = false;
-    // How many ( … ) we are inside; reset at paragraph ends (unbalanced text).
-    let mut depth = 0u32;
 
     for line in source.lines() {
         let mut tokens = line.split_whitespace().peekable();
@@ -461,7 +457,6 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
             if let Some(last) = words.last_mut() {
                 last.pause = Pause::Paragraph;
             }
-            depth = 0;
             continue;
         };
         let heading = (1..=6).contains(&first.len()) && first.bytes().all(|b| b == b'#') && line.trim_start().len() > first.len();
@@ -516,16 +511,15 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                 cut -= 1;
             }
             let shown = &scratch[..cut];
-            let opens = shown.chars().filter(|c| OPENERS.contains(c)).count() as u32;
-            let closes = shown.chars().filter(|c| CLOSERS.contains(c)).count() as u32;
-            let inside = depth > 0 || opens > 0;
+            let closes = shown.chars().any(|c| CLOSERS.contains(&c));
+            // Which words are inside brackets is worked out once the whole
+            // text is read (`mark_asides`): an aside may cross a page break.
             words.push(Word {
                 start: text.push(shown),
                 len: shown.len() as u16,
                 pause: classify(shown),
-                style: style.with(Style::HEADING, heading).with(Style::PAREN, inside),
+                style: style.with(Style::HEADING, heading),
             });
-            depth = (depth + opens).saturating_sub(closes);
             // Brackets are punctuation: a breath as the aside opens and closes.
             if shown.starts_with(OPENERS) && words.len() >= 2 {
                 let n = words.len();
@@ -534,7 +528,7 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
                     words.set(n - 2, Word { pause: Pause::Clause, ..before });
                 }
             }
-            if closes > 0 && shown.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\'', '”', '’']).ends_with(CLOSERS) {
+            if closes && shown.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\'', '”', '’']).ends_with(CLOSERS) {
                 let n = words.len();
                 let me = words.get(n - 1).unwrap();
                 if me.pause < Pause::Clause {
@@ -612,6 +606,50 @@ impl Iterator for MarkerIter<'_> {
 /// Brackets that open and close an aside: ( ), < > (also << >>), « », ‹ ›.
 pub const OPENERS: [char; 4] = ['(', '<', '«', '‹'];
 pub const CLOSERS: [char; 4] = [')', '>', '»', '›'];
+
+/// Longest aside (in words) a bracket pair may span; past that, a "closer"
+/// is more likely a stray (a list's "a)") than the end of this aside.
+const MAX_ASIDE: usize = 1500;
+
+/// Flags every word inside brackets. Each closer is paired with the latest
+/// opener of its own kind, across paragraph breaks (books and PDF page
+/// breaks split asides). Openers never closed reach only to the end of
+/// their paragraph; closers without an opener ("1)", "a)") are ignored.
+fn mark_asides(text: &crate::chunked::ChunkedText, words: &mut Chunked<Word>) {
+    let kind = |c: char, set: &[char; 4]| set.iter().position(|&k| k == c);
+    let mut open: Vec<(usize, usize)> = Vec::new(); // (kind, word)
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for i in 0..words.len() {
+        let w = words.get(i).unwrap();
+        for c in text.get(w.start, w.len as usize).chars() {
+            if let Some(k) = kind(c, &OPENERS) {
+                open.push((k, i));
+            } else if let Some(k) = kind(c, &CLOSERS) {
+                if let Some(at) = open.iter().rposition(|&(ok, _)| ok == k) {
+                    let start = open[at].1;
+                    // Openers left inside were never closed: they end here too.
+                    open.truncate(at);
+                    if i - start <= MAX_ASIDE {
+                        spans.push((start, i));
+                    }
+                }
+            }
+        }
+    }
+    for (_, start) in open {
+        let mut end = start;
+        while end + 1 < words.len() && words.get(end).unwrap().pause != Pause::Paragraph {
+            end += 1;
+        }
+        spans.push((start, end));
+    }
+    for (a, z) in spans {
+        for i in a..=z {
+            let w = words.get(i).unwrap();
+            words.set(i, Word { style: w.style.with(Style::PAREN, true), ..w });
+        }
+    }
+}
 
 /// The bracket pair the aside around word `i` uses, found by walking back
 /// to its opener (doubled ASCII << >> shows as « »).
@@ -860,19 +898,14 @@ mod tests {
     }
 
     #[test]
-    fn brackets_pause_like_commas_and_asides_have_their_own_speed() {
+    fn brackets_pause_like_commas() {
         let b = Book::new("t", "She said (quietly, almost to herself) nothing more");
         let pauses: Vec<Pause> = (0..b.len()).map(|i| b.word(i).unwrap().pause).collect();
         assert_eq!(pauses[1], Pause::Clause, "a breath before the aside opens");
         assert_eq!(pauses[5], Pause::Clause, "and as it closes");
         assert_eq!(pauses[6], Pause::Normal);
         let p = Pacing { long_words: false, ..Pacing::default() };
-        assert_eq!(b.word(3).unwrap().weight(&p), 100 * p.aside as u32 / 10, "aside words go at the aside speed");
-        assert_eq!(b.word(6).unwrap().weight(&p), 100);
-        let even = Pacing { aside: 10, ..p };
-        assert_eq!(b.word(3).unwrap().weight(&even), 100);
-        let clause = Pause::Clause.weight(&p);
-        assert_eq!(b.word(5).unwrap().weight(&p), 100 * p.aside as u32 / 10 + clause - 100, "the closing pause keeps its length");
+        assert_eq!(b.word(3).unwrap().weight(&p), 100, "asides go at the normal speed");
     }
 
     #[test]
@@ -895,7 +928,14 @@ mod tests {
         assert_eq!(p, [false, true, true, true, true, true, false, true]);
         assert_eq!(words(&b)[1], "(inside", "the text itself is unchanged");
         let b = Book::new("t", "Open (never closed\n\nnext paragraph");
-        assert!(!b.word(3).unwrap().style.paren(), "a paragraph ends an unclosed bracket");
+        assert!(!b.word(3).unwrap().style.paren(), "a paragraph ends a bracket that never closes");
+        // Cancroregina, 53%: a page break splits the aside; it still holds.
+        let b = Book::new("t", "passato. (Pomposo esordio, per codesto tuo\n\nfatterello. Eh, pensi ciò che vuole). Egualmente");
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        assert_eq!(p, [false, true, true, true, true, true, true, true, true, true, true, true, false]);
+        let b = Book::new("t", "Items: a) one, b) two (and more) three.");
+        let p: Vec<bool> = (0..b.len()).map(|i| b.word(i).unwrap().style.paren()).collect();
+        assert_eq!(p, [false, false, false, false, false, true, true, false], "list closers are not asides");
     }
 
     #[test]
