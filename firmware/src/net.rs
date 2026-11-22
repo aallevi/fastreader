@@ -41,7 +41,7 @@ use crate::mk_static;
 pub const SSID: &str = "FastReader";
 pub const IP: Ipv4Addr = Ipv4Addr::new(192, 168, 4, 1);
 /// Shown in Device info.
-pub const ADDRESS: &str = "Wi-Fi FastReader → http://192.168.4.1";
+pub const ADDRESS: &str = "Wi-Fi FastReader, http://192.168.4.1";
 
 const HTTP_WORKERS: usize = 3;
 
