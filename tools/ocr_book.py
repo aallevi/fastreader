@@ -66,7 +66,13 @@ def ocr_pages(pdf: Path, cache: Path, pages):
             done += 1
             per = (time.time() - t0) / done
             left = sum(1 for k in pages if not (cache / f"p{k:04d}.md").exists())
-            print(f"page {n}: {per:.1f} s/page, {left} to go, about {left * per / 60:.0f} min left", flush=True)
+            if sys.stdout.isatty():
+                # In a terminal: one loading bar, redrawn in place.
+                total, frac = len(pages), (len(pages) - left) / len(pages)
+                fill = int(frac * 40)
+                print(f"\r[{'█' * fill}{'░' * (40 - fill)}] {frac * 100:5.1f}%  page {total - left}/{total}  {per:.0f} s/page  ~{left * per / 60:.0f} min left ", end="", flush=True)
+            else:
+                print(f"page {n}: {per:.1f} s/page, {left} to go, about {left * per / 60:.0f} min left", flush=True)
         out[n] = f.read_text()
     return out
 
@@ -238,6 +244,8 @@ def main():
     pages = list(range(lo, min(hi, doc.page_count) + 1))
     cache = a.out.with_suffix(".ocr-cache")
     md = ocr_pages(a.pdf, cache, pages)
+    if sys.stdout.isatty():
+        print()
     figdir = cache / "figures"
     figdir.mkdir(exist_ok=True)
     blocks = []
