@@ -4,7 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Fast Reader</title>
-<link rel="stylesheet" id="theme" href="/theme.css">
+<style>
+  /* Readable fallback colours, in case the theme below is ever missing. */
+  :root { --bg: #e9e9e9; --bg2: #d8d8d8; --page: #fbfbfb; --edge: #c8c8c8; --text: #1e1e1e; --dim: #6a6a6a;
+          --heading: #1e1e1e; --bar: #3a3a3a; --bar2: #2a2a2a; --bartext: #f2f2f2; --accent: #3a6ea5;
+          --mark: #f3e3a0; --marktext: #1e1e1e; --btn: #f2f2f2; --btnedge: #b8b8b8; --font: system-ui, sans-serif; }
+</style>
+<!-- The device's theme, written into the page so one request brings it all. -->
+<style id="theme" data-id="/*THEME_ID*/">/*THEME*/</style>
 <style>
   /* Colours come from /theme.css, generated from the device's active theme. */
   * { box-sizing: border-box; }
@@ -84,7 +91,7 @@
 // Click any word to jump the device there. The page follows the device.
 // Big books load in pieces: the text around the reader first, more as you
 // scroll towards either end (the device can't send 5 MB of HTML at once).
-let cur = -1, theme = -1, book = -1, len = 0, from = 0, to = 0, busy = false;
+let cur = -1, theme = +document.getElementById('theme').dataset.id, book = -1, len = 0, from = 0, to = 0, busy = false;
 const $ = id => document.getElementById(id);
 const WINDOW = 3000;
 async function fetchRange(a, count) {
@@ -135,7 +142,11 @@ async function poll() {
     $('title').textContent = s.title; $('wpm').textContent = s.wpm + ' wpm';
     $('pct').textContent = Math.floor(s.permille / 10) + '%'; $('prog').style.width = s.permille / 10 + '%';
     $('play').textContent = s.playing ? '❚❚' : '▶';
-    if (s.theme !== theme) { theme = s.theme; $('theme').href = '/theme.css?' + theme; }
+    if (s.theme !== theme) {
+      // Theme changed on the reader: fetch its colours; on failure, try again next poll.
+      theme = s.theme;
+      fetch('/theme.css').then(r => r.ok ? r.text() : Promise.reject()).then(css => $('theme').textContent = css).catch(() => theme = -1);
+    }
     if (s.book !== book) { book = s.book; await loadAround(s.pos); }
     await mark(s.pos);
     document.querySelectorAll('span.bm').forEach(e => e.classList.remove('bm'));
@@ -273,18 +284,38 @@ function toMarkup(doc, docPath) {
 // Pictures go after the text: "\n\0FRIMG1", count, then width, height and
 // RGB565 pixels per picture, scaled to fit the reader's stage (300×190).
 class Pictures {
-  constructor() { this.list = []; this.used = 0; }
+  constructor() { this.list = []; this.used = 0; this.maxArea = 300 * 190; this.wanted = 0; this.seen = 0; this.n = 0; this.room = Infinity; }
+  // Shares the budget among `n` pictures: smaller pictures rather than only
+  // the first ones (an illustrated book has hundreds). If even at the
+  // smallest useful size they don't all fit, keep ones spread evenly
+  // through the book.
+  plan(n) {
+    this.n = n;
+    this.maxArea = Math.max(140 * 90, Math.min(300 * 190, 1e6 / Math.max(1, n)));
+    this.room = Math.floor(1e6 / this.maxArea);
+  }
+  // Called once per candidate, in book order: is this one among those kept?
+  pick() {
+    const i = this.seen++;
+    return this.n <= this.room || Math.floor(i * this.room / this.n) !== Math.floor((i + 1) * this.room / this.n);
+  }
   full() { return this.used > 2e6; }
   // Adds the region (sx, sy, sw, sh) of any drawable; returns "{image:N}" or "".
   add(src, sx, sy, sw, sh) {
     if (sw < 48 || sh < 48) return ''; // rules, bullets, icons
-    const k = Math.min(300 / sw, 190 / sh, 1);
+    let k = Math.min(300 / sw, 190 / sh, 1);
+    if (sw * k * sh * k > this.maxArea) k *= Math.sqrt(this.maxArea / (sw * k * sh * k));
     const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
     if (this.used + w * h * 2 > 2e6) return '';
     const cv = new OffscreenCanvas(w, h), g = cv.getContext('2d');
     g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
     g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
     const rgba = g.getImageData(0, 0, w, h).data, px = new Uint8Array(4 + w * h * 2);
+    // Nearly all white: an empty stretch of page, not a picture.
+    let ink = 0;
+    for (let i = 0; i < rgba.length; i += 16) if (rgba[i] + rgba[i + 1] + rgba[i + 2] < 600) ink++;
+    if (ink < rgba.length / 16 * 0.03) return '';
+    this.wanted++;
     const dv = new DataView(px.buffer);
     dv.setUint16(0, w, true); dv.setUint16(2, h, true);
     for (let i = 0, o = 4; i < rgba.length; i += 4, o += 2) dv.setUint16(o, (rgba[i] >> 3) << 11 | (rgba[i + 1] >> 2) << 5 | rgba[i + 2] >> 3, true);
@@ -353,7 +384,7 @@ async function pdfToMarkup(file, progress) {
       const t = it.transform, size = Math.hypot(t[2], t[3]) || Math.hypot(t[0], t[1]);
       const [x, y] = toView(t[4], t[5]);
       if (!line || Math.abs(y - line.y) > size * 0.5) {
-        line = {y, x, size, spans: [], indent: 0, started: false};
+        line = {y, x, size, spans: [], indent: 0, started: false, chars: 0, weighted: 0};
         lines.push(line);
       }
       // Blank space before the first letters (some PDFs indent with spaces).
@@ -364,7 +395,11 @@ async function pdfToMarkup(file, progress) {
       }
       if (it.str) {
         line.spans.push({text: it.str, ...fontStyle(it.fontName)});
-        line.size = Math.max(line.size, size);
+        // The line's size is what most of its letters are set in: OCR text
+        // gives single letters odd sizes, and the largest would mislead.
+        const k = it.str.trim().length;
+        line.chars += k; line.weighted += size * k;
+        line.size = line.chars ? line.weighted / line.chars : size;
         if (it.str.trim()) sizes.set(Math.round(size), (sizes.get(Math.round(size)) || 0) + it.str.length);
       }
       if (it.hasEOL) line = null;
@@ -388,8 +423,25 @@ async function pdfToMarkup(file, progress) {
         if (x1 - x0 > vp.width * 0.15 && y1 - y0 > vp.height * 0.08) boxes.push([x0, y0, x1 - x0, y1 - y0]);
       }
     });
-    pages.push({page, h: vp.height, lines, boxes});
+    // A scanned book: each page is one big photo with the OCR text on top.
+    // That photo is the page itself, not an illustration: keep the text only.
+    const hasText = lines.some(l => l.spans.some(sp => sp.text.trim()));
+    const scan = b => b[2] * b[3] > vp.width * vp.height * 0.6;
+    const scanned = hasText && boxes.some(scan);
+    const kept = hasText ? boxes.filter(b => !scan(b)) : boxes;
+    if (scanned) {
+      // Illustrations inside a scanned page are part of its photo: a tall
+      // stretch without text lines is one. Cut it out of the page.
+      const ys = lines.filter(l => l.spans.some(sp => sp.text.trim())).map(l => [l.y - l.size, l.y + l.size * 0.3]).sort((a, b) => a[0] - b[0]);
+      let top = vp.height * 0.06;
+      for (const [a, b] of [...ys, [vp.height * 0.94, vp.height]]) {
+        if (a - top > vp.height * 0.2) kept.push([vp.width * 0.06, top, vp.width * 0.88, a - top]);
+        top = Math.max(top, b);
+      }
+    }
+    pages.push({page, h: vp.height, lines, boxes: kept});
   }
+  if (!sizes.size) throw new Error('this PDF is scanned pages without text: run OCR on it first (e.g. in Acrobat or ocrmypdf)');
   let body = 11, best = 0;
   sizes.forEach((count, size) => { if (count > best) { best = count; body = size; } });
 
@@ -401,6 +453,7 @@ async function pdfToMarkup(file, progress) {
 
   // 3. Lines → paragraphs, headings and pictures.
   const pics = new Pictures();
+  pics.plan(pages.reduce((n, p) => n + p.boxes.length, 0));
   const out = [];
   let para = [];
   const endPara = () => {
@@ -418,7 +471,7 @@ async function pdfToMarkup(file, progress) {
     progress(`Laying out page ${n + 1} of ${pages.length}…`);
     const lines = p.lines.filter(l => {
       const t = l.spans.map(s => s.text).join('').trim();
-      if (!t) return false;
+      if (!t || !/[\p{L}\p{N}]/u.test(t)) return false; // empty or pure symbols (OCR noise in pictures)
       if (edge(p, l) && (/^[\divxlcIVXLC\s.\-–—]{1,8}$/.test(t) || (repeats.get(key(l)) || 0) >= 3)) return false;
       return true;
     });
@@ -430,7 +483,7 @@ async function pdfToMarkup(file, progress) {
     let render = null;
     const boxes = p.boxes.slice().sort((a, b) => a[1] - b[1]);
     const picture = async box => {
-      if (pics.full()) return '';
+      if (!pics.pick() || pics.full()) return '';
       if (!render) {
         const scale = 2, vp = p.page.getViewport({scale});
         const cv = new OffscreenCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
@@ -447,7 +500,8 @@ async function pdfToMarkup(file, progress) {
         if (mark) { endPara(); out.push(mark); }
       }
       const t = l.spans.map(s => s.text).join('').replace(/\s+/g, ' ').trim();
-      if (tocTitles.has(norm(t)) || (l.size >= body * 1.25 && t.length < 120)) {
+      const letters = (t.match(/\p{L}/gu) || []).length;
+      if (tocTitles.has(norm(t)) || (l.size >= body * 1.25 && letters >= 3 && t.length < 90 && !/[-‐]$/.test(t))) {
         endPara();
         out.push('# ' + t.replace(/[*_]/g, ''));
         prev = null;
@@ -468,7 +522,7 @@ async function pdfToMarkup(file, progress) {
   }
   // A short paragraph all in bold is a heading too ("CHAPTER I").
   const paras = out.map(t => (t.length < 60 && /^(\*\*[^*]+\*\*\s*)+$/.test(t)) ? '# ' + t.replace(/\*/g, '') : t);
-  return {title, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length};
+  return {title, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length, wanted: pics.wanted};
 }
 
 async function epubToMarkup(file) {
@@ -514,7 +568,8 @@ $('file').onchange = async () => {
       : name.endsWith('.pdf') ? await pdfToMarkup(f, msg => $('upmsg').textContent = msg)
       : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
     const kb = Math.round((new Blob([pending.text]).size + (pending.images?.size || 0)) / 1024);
-    const pics = pending.pictures ? `, ${pending.pictures} pictures` : '';
+    if (kb > 3 * 1024) { $('upmsg').textContent = `${pending.title}: ${kb} KB, more than the 3 MB a book can be`; return; }
+    const pics = pending.pictures ? `, ${pending.pictures}${pending.wanted > pending.pictures ? ' of ' + pending.wanted : ''} pictures` : '';
     $('upmsg').textContent = `${pending.title}: ${kb} KB${pics} ready`;
     $('send').disabled = false;
   } catch (e) { console.error(e); $('upmsg').textContent = 'Could not read this file: ' + (e.message || e); }

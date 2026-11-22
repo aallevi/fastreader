@@ -67,7 +67,14 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
     let param = |name: &str| query.split('&').find_map(|kv| kv.strip_prefix(name)?.strip_prefix('='));
     let num = |name: &str| param(name).and_then(|v| v.parse::<usize>().ok());
     match (method, path) {
-        ("GET", "/") | ("GET", "/index.html") => Response::ok("text/html; charset=utf-8", Body::Static(PAGE)),
+        // The theme's colours go inside the page: a phone that has just joined
+        // fires many requests at once, and a lost /theme.css left the page
+        // without colours.
+        ("GET", "/") | ("GET", "/index.html") => {
+            let t = app.settings.theme;
+            let page = PAGE.replacen("/*THEME*/", &theme(t).css_vars(), 1).replacen("/*THEME_ID*/", &alloc::format!("{t}"), 1);
+            Response::ok("text/html; charset=utf-8", Body::Text(page))
+        }
         // RFC 8908 captive-portal API (advertised through DHCP option 114).
         ("GET", "/captive-portal-api") => Response::ok(
             "application/captive+json",
@@ -353,6 +360,15 @@ mod tests {
             at = book_piece(&a, at, a.reader.book.len(), &mut pieces);
         }
         assert_eq!(pieces, whole);
+    }
+
+    #[test]
+    fn the_page_carries_its_theme() {
+        let mut a = App::new(reader_core::Book::new("t", "x"), crate::CATALOG, Settings { theme: 2, ..Settings::default() });
+        let Body::Text(page) = respond(&mut a, "GET", "/", 0).body else { panic!() };
+        assert!(!page.contains("/*THEME*/") && !page.contains("/*THEME_ID*/"));
+        assert!(page.contains(&crate::themes::theme(2).css_vars()), "colours inline, no second request needed");
+        assert!(page.contains("data-id=\"2\""));
     }
 
     #[test]
