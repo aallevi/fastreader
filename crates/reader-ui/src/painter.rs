@@ -920,27 +920,38 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     let space = f.measure(face, px, " ");
     let shown = app.reader.shown();
     let start = book.sentence_start(shown.start);
-    // Room for the ▲▼ on the right, the same on the left so the text stays centred.
-    let max_w = r.w as f32 - 2.0 * l.px(30.0);
-    let mut lines: Vec<Vec<(usize, f32)>> = alloc::vec![Vec::new()];
-    let mut lw = 0.0;
-    let mut i = start;
-    while i < book.len() {
-        let w = book.word(i).unwrap();
-        let ww = f.measure(fam.face(w.style), px, running_text(book, w));
-        if lw + ww > max_w && !lines.last().unwrap().is_empty() {
-            if lines.len() == 40 {
+    // The sentence uses the whole width, edge to edge; when it needs the
+    // ▲▼ (more than two lines), it leaves their column free on the right.
+    let edge = l.px(8.0);
+    let arrows = l.px(30.0);
+    let wrap = |f: &mut Fonts, max_w: f32| -> Vec<Vec<(usize, f32)>> {
+        let mut lines: Vec<Vec<(usize, f32)>> = alloc::vec![Vec::new()];
+        let mut lw = 0.0;
+        let mut i = start;
+        while i < book.len() {
+            let w = book.word(i).unwrap();
+            let ww = f.measure(fam.face(w.style), px, running_text(book, w));
+            if lw + ww > max_w && !lines.last().unwrap().is_empty() {
+                if lines.len() == 40 {
+                    break;
+                }
+                lines.push(Vec::new());
+                lw = 0.0;
+            }
+            lines.last_mut().unwrap().push((i, ww));
+            lw += ww + space;
+            if w.pause >= Pause::Sentence && i + 1 >= shown.end {
                 break;
             }
-            lines.push(Vec::new());
-            lw = 0.0;
+            i += 1;
         }
-        lines.last_mut().unwrap().push((i, ww));
-        lw += ww + space;
-        if w.pause >= Pause::Sentence && i + 1 >= shown.end {
-            break;
-        }
-        i += 1;
+        lines
+    };
+    let mut lines = wrap(f, r.w as f32 - 2.0 * edge);
+    let mut area = (r.x as f32 + edge, r.right() as f32 - edge);
+    if lines.len() > 2 {
+        lines = wrap(f, r.w as f32 - edge - arrows);
+        area.1 = r.right() as f32 - arrows;
     }
     // Two lines at a time: the current word's line first, then as scrolled.
     const ROWS: usize = 2;
@@ -962,7 +973,7 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     }
     for (n, line) in visible.iter().enumerate() {
         let width: f32 = line.iter().map(|w| w.1).sum::<f32>() + space * (line.len().saturating_sub(1)) as f32;
-        let x0 = r.cx() - width / 2.0;
+        let x0 = (area.0 + area.1) / 2.0 - width / 2.0;
         let y = top + n as f32 * lh;
         // One highlight shape around the whole group on this line.
         let mut x = x0;
