@@ -156,6 +156,19 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
                 let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
                 let _ = std::fs::write(bookmarks_path(), list.join(" "));
             }
+            Effect::DeleteBook(i) => {
+                // Only uploaded or card books; the simulator's book folders stay.
+                let mut list = books.lock().unwrap();
+                let i = i as usize;
+                match list.get(i) {
+                    Some(p) if p.starts_with(UPLOADS) || p.starts_with(SIM_CARD) => {
+                        let _ = std::fs::remove_file(p);
+                        list.remove(i);
+                        a.book_removed(i, 0);
+                    }
+                    _ => a.cant_delete(0),
+                }
+            }
             Effect::FormatCard => {
                 // The simulator's card is a folder: formatting empties it.
                 let _ = std::fs::remove_dir_all(SIM_CARD);

@@ -74,6 +74,9 @@ pub enum Icon {
     Close,
     Up,
     Down,
+    /// Thin chevrons: one word back / forward.
+    WordBack,
+    WordForward,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -151,25 +154,49 @@ pub fn toolbar(app: &App, l: &Layout) -> (Vec<Button>, Option<Label>) {
     let bh = l.i(34.0);
     let cy = t.cy() as i32;
     let at = |x: i32, w: i32| Rect::new(x, cy - bh / 2, w, bh);
-    let small = l.i(38.0);
-    let play_w = l.i(58.0);
-    let gap = l.i(5.0);
+    let small = l.i(34.0);
+    let play_w = l.i(52.0);
+    let thin = l.i(20.0);
+    let gap = l.i(4.0);
     let pad = l.i(6.0);
     let key = |k: Key| Hit::Key(k);
     let mut v: Vec<(Rect, Hit, Icon, bool)> = Vec::new();
 
-    // Transport, right-aligned.
-    let x2 = t.right() - pad - small;
-    let x1 = x2 - gap - play_w;
-    let x0 = x1 - gap - small;
+    // Transport, right-aligned: ⏮ ‹ ▶ › ⏭. The thin ones (one word) look
+    // slim but each sits in a full finger-wide slot, like the others.
+    let slot = l.i(34.0);
+    let _ = gap;
+    let s4 = t.right() - l.i(4.0) - slot;
+    let s3 = s4 - slot;
+    let s2 = s3 - play_w - l.i(4.0);
+    let s1 = s2 - slot;
+    let s0 = s1 - slot;
+    let centre = |x: i32, slot: i32, w: i32| x + (slot - w) / 2;
+    let (x0, x1, x2, x3, x4) = (centre(s0, slot, small), centre(s1, slot, thin), s2 + l.i(2.0), centre(s3, slot, thin), centre(s4, slot, small));
     // Same bar in every mode: speed on the left, transport on the right.
     // In Page mode ⏮/⏭ turn pages, so they show page arrows.
     let page = app.screen == Screen::Page;
     let play = if app.reader.is_playing() { Icon::Pause } else { Icon::Play };
     let (back, fwd) = if page { (Icon::PageBack, Icon::PageForward) } else { (Icon::SentenceBack, Icon::SentenceForward) };
-    v.push((at(x0, small), key(Key::Left), back, false));
-    v.push((at(x1, play_w), key(Key::Select), play, true));
-    v.push((at(x2, small), key(Key::Right), fwd, false));
+    // Room for − wpm + and all five transport buttons, each a finger wide?
+    let needed = l.i(6.0) + l.i(34.0) * 2 + l.i(46.0) + l.i(4.0) + slot * 4 + play_w + l.i(4.0) + l.i(4.0);
+    let wide = t.w >= needed;
+    if wide {
+        v.push((at(x0, small), key(Key::Left), back, false));
+        v.push((at(x1, thin), Hit::StepWord { forward: false }, Icon::WordBack, false));
+        v.push((at(x2, play_w), key(Key::Select), play, true));
+        v.push((at(x3, thin), Hit::StepWord { forward: true }, Icon::WordForward, false));
+        v.push((at(x4, small), key(Key::Right), fwd, false));
+    } else {
+        // A narrow screen: no room for the word steps; the earlier layout.
+        let (small, play_w, gap) = (l.i(38.0), l.i(58.0), l.i(5.0));
+        let x2 = t.right() - pad - small;
+        let x1 = x2 - gap - play_w;
+        let x0 = x1 - gap - small;
+        v.push((at(x0, small), key(Key::Left), back, false));
+        v.push((at(x1, play_w), key(Key::Select), play, true));
+        v.push((at(x2, small), key(Key::Right), fwd, false));
+    }
     let sw = l.i(34.0);
     let lw = l.i(46.0);
     v.push((at(pad, sw), key(Key::Down), Icon::Minus, false));
@@ -180,12 +207,18 @@ pub fn toolbar(app: &App, l: &Layout) -> (Vec<Button>, Option<Label>) {
         small: String::from("wpm"),
     });
     v.sort_by_key(|e| e.0.x);
-    // Hit areas: full bar height, split halfway between neighbours (Fitts),
+    // Hit areas: full bar height, split between neighbours (Fitts),
     // never over the label between − and +.
     let mut out = Vec::new();
     for (i, &(rect, hit, icon, primary)) in v.iter().enumerate() {
-        let mut lo = if i == 0 { t.x } else { (v[i - 1].0.right() + rect.x) / 2 };
-        let mut hi = if i + 1 == v.len() { t.right() } else { (rect.right() + v[i + 1].0.x) / 2 };
+        // Halfway between button centres, so a slim button gets as fair a
+        // share as a wide one.
+        let c = |r: Rect| r.x + r.w / 2;
+        let (mut lo, mut hi) = if wide {
+            (if i == 0 { t.x } else { (c(v[i - 1].0) + c(rect)) / 2 }, if i + 1 == v.len() { t.right() } else { (c(rect) + c(v[i + 1].0)) / 2 })
+        } else {
+            (if i == 0 { t.x } else { (v[i - 1].0.right() + rect.x) / 2 }, if i + 1 == v.len() { t.right() } else { (rect.right() + v[i + 1].0.x) / 2 })
+        };
         if let Some(lb) = &label {
             if rect.right() <= lb.rect.x && hi > lb.rect.x {
                 hi = lb.rect.x;
@@ -407,6 +440,14 @@ mod tests {
             assert!(l.word.h > 20, "{w}x{h}: word area {}", l.word.h);
             assert_eq!(l.status.bottom(), l.stage.bottom());
         }
+    }
+
+    #[test]
+    fn the_reader_screen_has_the_word_steps() {
+        let a = app();
+        let (bs, _) = toolbar(&a, &Layout::new(320, 240));
+        let hits: Vec<Hit> = bs.iter().map(|b| b.hit).collect();
+        assert!(hits.contains(&Hit::StepWord { forward: false }) && hits.contains(&Hit::StepWord { forward: true }), "{hits:?}");
     }
 
     #[test]

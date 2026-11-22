@@ -49,6 +49,12 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] A normal PDF or EPUB from the phone goes to the card.
 - [ ] Switch off and on: the card books are still in 📚.
 
+## Deleting books on the reader
+- [ ] 📖 Book → Delete a book… → pick one → "Keep it" is chosen first; ◀ goes back to the list; "Delete «title»" removes it and the Library updates.
+
+## Word steps
+- [ ] The thin ‹ › beside play move exactly one word and pause (reading and page view): use them to place the highlight or a bookmark.
+
 ## Deleting books (web view → Settings → Books on the reader)
 - [ ] Each book shows where it is (SD card / reader's memory) and its size; Delete asks once more and the question disappears by itself after a few seconds.
 - [ ] More… → delete everything in one place asks you to type DELETE (anything else deletes nothing).

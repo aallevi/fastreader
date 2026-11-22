@@ -44,6 +44,7 @@ pub enum MenuItem {
     Bookmarks,
     GoTo,
     Restart,
+    DeleteBook,
     Size,
     Font,
     Theme,
@@ -66,7 +67,7 @@ pub enum MenuItem {
 /// selection is in.
 pub const MENU: [(&str, &[MenuItem]); 4] = [
     ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
-    ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart]),
+    ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
     ("Library", &[MenuItem::Library]),
     ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
 ];
@@ -93,7 +94,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 26;
+pub const MENU_LEN: u8 = 27;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -130,6 +131,7 @@ impl MenuItem {
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Wifi => "Web view (Wi-Fi)",
             MenuItem::Card => "SD card",
+            MenuItem::DeleteBook => "Delete a book…",
             MenuItem::Info => "Device info",
             MenuItem::Sleep => "Sleep",
         }
@@ -153,6 +155,7 @@ impl MenuItem {
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::Position => PickKind::Position,
             MenuItem::Card => PickKind::Card,
+            MenuItem::DeleteBook => PickKind::DeleteWhich,
             MenuItem::GoTo => PickKind::GoTo,
             MenuItem::Size => PickKind::Size,
             MenuItem::Font => PickKind::Font,
@@ -171,6 +174,8 @@ pub enum PickKind {
     Pictures,
     Position,
     Card,
+    DeleteWhich,
+    DeleteConfirm,
     Pace,
     Mode,
     Spacing,
@@ -196,6 +201,8 @@ impl PickKind {
             PickKind::Pictures => "Picture time",
             PickKind::Position => "Word position",
             PickKind::Card => "SD card",
+            PickKind::DeleteWhich => "Delete a book",
+            PickKind::DeleteConfirm => "Delete this book?",
             PickKind::Pace => "Speed means",
             PickKind::Mode => "Reading mode",
             PickKind::Spacing => "Line spacing",
@@ -355,6 +362,9 @@ pub enum Hit {
     Group(u8),
     /// The Description button on a picture (while paused): show or hide it.
     Caption,
+    /// The thin arrows beside play: one word back or forward (and pause),
+    /// to place the highlight or a bookmark exactly.
+    StepWord { forward: bool },
     /// The small ▲▼ beside the sentence under the word (while paused);
     /// `room`: whether there is more of the sentence that way.
     ContextScroll { down: bool, room: bool },
@@ -398,6 +408,9 @@ pub enum Msg {
     BookmarkRemoved,
     NoBookmarks,
     NoCard,
+    NoBooks,
+    Deleting,
+    CantDelete,
     /// Reading waits on a picture ("Until I press play").
     PictureHeld,
     CaptionShown,
@@ -444,6 +457,9 @@ pub enum Effect {
     SaveBookmarks,
     /// Erase the SD card and format it (FAT32); then call `card_formatted`.
     FormatCard,
+    /// Delete library book N from storage; then call `book_removed`
+    /// (or `cant_delete`).
+    DeleteBook(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -525,6 +541,8 @@ pub struct App {
     pub bookmarks: Vec<(u8, u32)>,
     /// The SD card, if one is in.
     pub card: Option<Card>,
+    /// The book chosen in "Delete a book…", waiting for the confirmation.
+    pub delete_pending: Option<u8>,
     /// Lines the sentence under the word is scrolled from where it starts
     /// (the renderer keeps it in range and resets it when the word changes).
     pub context_scroll: i16,
@@ -565,6 +583,7 @@ impl App {
             bookmarks: Vec::new(),
             card: None,
             context_scroll: 0,
+            delete_pending: None,
             toast: None,
             serial: 0,
             flash: None,
@@ -681,6 +700,16 @@ impl App {
                 } else {
                     self.screen = Screen::Menu { sel };
                     Feedback::ok(Msg::Shown)
+                };
+                self.feedback(fb, now)
+            }
+            (Hit::StepWord { forward }, Screen::Reading | Screen::Page) => {
+                self.reader.pause();
+                let fb = if self.reader.step_word(forward, now) {
+                    self.settings.pos = self.reader.pos() as u32;
+                    Feedback::ok(Msg::Shown)
+                } else {
+                    Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart })
                 };
                 self.feedback(fb, now)
             }
@@ -869,6 +898,11 @@ impl App {
         self.positions.resize(self.library.len(), 0);
         let fb = Feedback::ok(Msg::BookAdded);
         self.feedback(fb, now);
+    }
+
+    /// The platform couldn't delete a book (e.g. one built into the program).
+    pub fn cant_delete(&mut self, now: u64) {
+        self.feedback(Feedback::limit(Msg::CantDelete), now);
     }
 
     /// One book was deleted (the platform already removed it from storage).
@@ -1110,6 +1144,12 @@ impl App {
                 self.close_menu(now);
                 Feedback::ok(Msg::Shown)
             }
+            (Screen::Pick { kind: PickKind::DeleteConfirm, .. }, Action::Back) => {
+                // One step back: the list of books again, nothing deleted.
+                let sel = self.delete_pending.take().unwrap_or(0);
+                self.screen = Screen::Pick { kind: PickKind::DeleteWhich, sel, original: sel };
+                Feedback::ok(Msg::Kept)
+            }
             (Screen::Pick { kind: PickKind::Book, .. }, Action::Back) => {
                 // The library has its own button: back closes it.
                 self.close_menu(now);
@@ -1141,6 +1181,9 @@ impl App {
             }
             if kind == PickKind::Card && self.card.is_none() {
                 return Feedback::limit(Msg::NoCard);
+            }
+            if kind == PickKind::DeleteWhich && self.library.is_empty() {
+                return Feedback::limit(Msg::NoBooks);
             }
             let cur = self.current_pick(kind);
             self.screen = Screen::Pick { kind, sel: cur, original: cur };
@@ -1185,6 +1228,24 @@ impl App {
     }
 
     fn choose(&mut self, kind: PickKind, sel: u8, now: u64) -> Feedback {
+        if kind == PickKind::DeleteWhich {
+            // Second step: ask, with "Keep it" chosen until you move.
+            self.delete_pending = Some(sel);
+            self.screen = Screen::Pick { kind: PickKind::DeleteConfirm, sel: 0, original: 0 };
+            return Feedback::ok(Msg::Shown);
+        }
+        if kind == PickKind::DeleteConfirm {
+            let which = self.delete_pending.take();
+            self.screen = Screen::Menu { sel: menu_index(MenuItem::DeleteBook) };
+            return match (sel, which) {
+                (1, Some(b)) => {
+                    self.effect(Effect::DeleteBook(b));
+                    self.close_menu(now);
+                    Feedback::ok(Msg::Deleting)
+                }
+                _ => Feedback::ok(Msg::Kept),
+            };
+        }
         if kind == PickKind::Card {
             // Erasing needs the second, explicit row; the first keeps everything.
             self.screen = Screen::Menu { sel: menu_index(MenuItem::Card) };
@@ -1272,7 +1333,8 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm => 2,
+            PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
@@ -1299,6 +1361,18 @@ impl App {
             PickKind::Pictures => PICTURE_NAMES[i.min(4)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
+            PickKind::DeleteWhich => {
+                let place = match self.library_info.get(i).map(|b| b.place) {
+                    Some(Place::Card) => "  · SD card",
+                    Some(Place::Flash) => "  · reader",
+                    _ => "",
+                };
+                format!("{}{place}", self.library.get(i).map_or("", |t| t.as_str()))
+            }
+            PickKind::DeleteConfirm => match i {
+                0 => "Keep it".into(),
+                _ => format!("Delete “{}”", self.delete_pending.and_then(|b| self.library.get(b as usize)).map_or("", |t| t.as_str())),
+            },
             PickKind::Pace => PACE_NAMES[i].into(),
             PickKind::Mode => MODE_NAMES[i].into(),
             PickKind::Spacing => SPACING_NAMES[i].into(),
@@ -1351,6 +1425,8 @@ impl App {
             PickKind::Pictures => self.settings.pacing.picture.min(4),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
+            PickKind::DeleteWhich => self.settings.book,
+            PickKind::DeleteConfirm => 0,
             PickKind::Pace => self.settings.true_pace as u8,
             PickKind::Mode => self.settings.mode,
             PickKind::Spacing => self.settings.spacing,
@@ -1862,6 +1938,46 @@ mod tests {
         assert_eq!(a.screen, Screen::Reading);
         assert_eq!(a.tap(Hit::Bookmark, 0).msg, Msg::BookmarkRemoved, "tapping the corner again removes it");
         assert_eq!(a.book_marks(), [2]);
+    }
+
+    #[test]
+    fn deleting_a_book_on_the_reader_asks_first() {
+        let mut a = app();
+        a.library = alloc::vec!["A".into(), "B".into()];
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::DeleteBook) };
+        a.handle(Select, 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::DeleteWhich, .. }));
+        a.handle(Down, 0);
+        a.handle(Select, 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::DeleteConfirm, sel: 0, .. }), "Keep it is chosen first");
+        assert_eq!(a.pick_label(PickKind::DeleteConfirm, 1), "Delete “B”");
+        a.handle(Left, 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::DeleteWhich, sel: 1, .. }), "back: the list again");
+        a.handle(Select, 0);
+        a.handle(Select, 0);
+        assert!(core::iter::from_fn(|| a.take_effect()).all(|e| !matches!(e, Effect::DeleteBook(_))), "Keep it deletes nothing");
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::DeleteBook) };
+        a.handle(Select, 0);
+        a.handle(Down, 0);
+        a.handle(Select, 0);
+        a.handle(Down, 0);
+        assert_eq!(a.handle(Select, 0).msg, Msg::Deleting);
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::DeleteBook(1)));
+    }
+
+    #[test]
+    fn thin_arrows_step_one_word_and_pause() {
+        let mut a = app();
+        a.reader.seek(3, 0);
+        a.reader.play(0);
+        assert_eq!(a.tap(Hit::StepWord { forward: true }, 10).msg, Msg::Shown);
+        assert_eq!(a.reader.pos(), 4);
+        assert!(!a.reader.is_playing(), "stepping pauses, to place things exactly");
+        a.tap(Hit::StepWord { forward: false }, 20);
+        a.tap(Hit::StepWord { forward: false }, 30);
+        assert_eq!(a.reader.pos(), 2);
+        a.reader.seek(0, 0);
+        assert_eq!(a.tap(Hit::StepWord { forward: false }, 40).tone, Tone::Limit);
     }
 
     #[test]

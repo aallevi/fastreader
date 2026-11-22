@@ -145,6 +145,20 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.shot("paused-with-sentence-context");
     r.tap_icon(Icon::Book);
     r.shot("menu-book");
+    r.app.library = vec!["The Quiet Machine".into(), "La storia dell'arte".into()];
+    r.app.library_info = vec![
+        reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes: 1_200 },
+        reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes: 29_601_778 },
+    ];
+    r.tap_row("Delete a book…");
+    r.shot("delete-which");
+    r.key(Key::Select);
+    r.key(Key::Down);
+    r.shot("delete-confirm");
+    r.tap_icon(Icon::Back);
+    r.shot("delete-back-to-list");
+    r.tap_icon(Icon::Close);
+    r.tap_icon(Icon::Book);
     r.tap_icon(Icon::Close);
     r.tap_icon(Icon::Gear);
     r.shot("menu-settings");

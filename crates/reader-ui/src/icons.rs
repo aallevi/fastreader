@@ -43,6 +43,14 @@ pub fn draw(cv: &mut Canvas, icon: Icon, cx: f32, cy: f32, s: f32, c: Rgb) {
                 bar(cv, -5.5, y, 11.0, 2.0);
             }
         }
+        Icon::WordBack => {
+            cv.line(p(1.8, -5.0), p(-1.8, 0.0), 1.6 * u, c);
+            cv.line(p(-1.8, 0.0), p(1.8, 5.0), 1.6 * u, c);
+        }
+        Icon::WordForward => {
+            cv.line(p(-1.8, -5.0), p(1.8, 0.0), 1.6 * u, c);
+            cv.line(p(1.8, 0.0), p(-1.8, 5.0), 1.6 * u, c);
+        }
         Icon::Gear => {
             // Eight teeth around a ring.
             for k in 0..8 {

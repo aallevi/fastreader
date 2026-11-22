@@ -7,7 +7,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 - Library of several books, each remembering where you stopped (saved in flash, survives power-off).
 - **Bookmarks:** tap the page's top-right corner to dog-ear the place; the corner folds down with a soft shadow. Tap again to remove. Menu → Bookmarks lists them; the web view marks them too.
 - **Pictures and charts** from EPUBs and PDFs (vector charts included) fill the screen for 4× a word's time; in page view they sit in the text.
-- **Four menus in the title bar:** ⚙ Settings (speed, pace, skip, theme, brightness, rotation, Wi-Fi, info, sleep) · 📖 Book (resume, chapters, bookmarks, go to %, start over) · 📚 Library (the book list) · Aa Text (mode, size, font, words per flash, word position, spacing, paragraphs, alignment, parentheses). The ▲▼ keys run through all four in order.
+- **Four menus in the title bar:** ⚙ Settings (speed, pace, skip, theme, brightness, rotation, Wi-Fi, info, sleep) · 📖 Book (resume, chapters, bookmarks, go to %, start over, delete a book…) · 📚 Library (the book list) · Aa Text (mode, size, font, words per flash, word position, spacing, paragraphs, alignment, parentheses). The ▲▼ keys run through all four in order.
 - **Word position:** Centred (default) or Recognition point. With the recognition point, words over 13 letters come in two flashes split at a syllable ("contempo-" "raneamente"), as Spritz does, so the point never moves.
 - **Picture time** (Aa Text): 2, 4, 8 or 15 seconds, or until you press play; counted from when the picture is on screen.
 - **The sentence under the word** (while paused) follows the word; when it is longer than two lines, small ▲▼ beside it scroll through it.
@@ -29,6 +29,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 | − / + | ▼ / ▲ | speed ∓25 wpm (hold repeats) | speed ∓25 wpm | move |
 | ⏮ / ⏭ | ◀ / ▶ | jump back/forward (amount in menu) · **hold: scroll line** | previous / next page (hold repeats) | back / open |
 | page corner (top-right) | – | bookmark here / remove | bookmark this page / remove | – |
+| ‹ › (thin, beside play) | – | one word back / forward, and pause | the same | – |
 | ▶ ❚❚ | BOOT short press | play / pause | play / pause the moving highlight | choose |
 
 **Optional physical buttons:** wire momentary switches from these pins to GND (no resistors needed): GPIO 2 = ▲, GPIO 3 = ▼, GPIO 14 = ◀, GPIO 21 = ▶. They behave exactly like the on-screen buttons, including hold-to-repeat and hold-to-scroll; BOOT stays select (short) / menu (long).

@@ -542,6 +542,8 @@ async fn main(spawner: Spawner) -> ! {
                     low_power.sleep_deep(esp_hal::rtc_cntl::sleep::RtcSleepConfig::deep());
                 }
                 Effect::SaveBookmarks => save_bookmarks(&mut flash, &app.bookmarks),
+                // The same path as a delete confirmed on the web page (next turn of the loop).
+                Effect::DeleteBook(i) => inbox.borrow_mut().delete = Some(i as usize),
                 Effect::FormatCard => {
                     // Show "Formatting the card…" first: clearing the FATs takes a while.
                     let damage = ui.paint(app, now, &mut cv);
