@@ -609,7 +609,8 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         }
     }
     right -= l.px(8.0);
-    if app.screen == Screen::Page {
+    // The highlight dot steps aside while a message shows, like the battery.
+    if app.screen == Screen::Page && app.toast().is_none() {
         // The highlight dot: a ring when off, filled when on.
         let hb = highlight_button(l);
         let (cx, cy, rad) = (hb.rect.cx(), hb.rect.cy(), hb.rect.w as f32 / 2.0);
@@ -1087,6 +1088,10 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
 /// A thin progress line always; the numbers only while paused.
 fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let (th, l, app) = (c.th, c.l, c.app);
+    if th.chrome == Chrome::Win98 {
+        draw_status_98(f, cv, c);
+        return;
+    }
     clear(cv, th, l, l.status);
     let p = paper(th, l);
     let pad = l.i(12.0);
@@ -1103,15 +1108,6 @@ fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let base = bar.y as f32 - l.px(4.0);
     let px = l.px(10.5);
     let b = &app.reader.book;
-    if th.chrome == Chrome::Win98 {
-        // A 98 status bar: the numbers in a sunken panel.
-        let panel = Rect::new(p.x + l.i(4.0), (base - l.px(11.0)) as i32, p.w - l.i(8.0), l.i(15.0));
-        cv.fill(panel, W98_FACE);
-        cv.fill(Rect::new(panel.x, panel.y, panel.w, 1), 0x808080);
-        cv.fill(Rect::new(panel.x, panel.y, 1, panel.h), 0x808080);
-        cv.fill(Rect::new(panel.x, panel.bottom() - 1, panel.w, 1), WHITE);
-        cv.fill(Rect::new(panel.right() - 1, panel.y, 1, panel.h), WHITE);
-    }
     let left = match (app.screen, app.page_index()) {
         (Screen::Page, Some(i)) if app.pages_done => format!("Page {} of {}  ·  {}%", i + 1, app.pages.len(), app.reader.permille() / 10),
         (Screen::Page, Some(i)) => format!("Page {}  ·  {}%", i + 1, app.reader.permille() / 10),
@@ -1129,6 +1125,69 @@ fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         let w = f.measure(th.ui.0, px, &s);
         if w < bar.w as f32 - lw - l.px(12.0) {
             f.draw(cv, th.ui.0, px, &s, bar.right() as f32 - w, base, th.dim);
+        }
+    }
+}
+
+/// The bottom of the Windows 98 screen as one strip, full width, resting on
+/// the button bar: a thin 98 progress bar (sunken, filled with blocks) and,
+/// while paused, the numbers in a sunken panel of the same width above it.
+fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let r = l.status;
+    // The status area is part of the page box: grey 98 face behind the panels.
+    clear(cv, th, l, r);
+    let sunken = |cv: &mut Canvas, b: Rect| {
+        cv.fill(Rect::new(b.x, b.y, b.w, 1), 0x808080);
+        cv.fill(Rect::new(b.x, b.y, 1, b.h), 0x808080);
+        cv.fill(Rect::new(b.x, b.bottom() - 1, b.w, 1), WHITE);
+        cv.fill(Rect::new(b.right() - 1, b.y, 1, b.h), WHITE);
+    };
+    let x = l.stage.x;
+    let w = l.stage.w;
+    let bar_h = l.i(9.0);
+    let bar = Rect::new(x, l.stage.bottom() - bar_h, w, bar_h);
+    let info = Rect::new(x, bar.y - l.i(16.0), w, l.i(16.0));
+    // The strip is grey 98 face, like a window's status bar.
+    cv.fill(Rect::new(x, info.y, w, bar.bottom() - info.y), W98_FACE);
+    // Progress: blocks with a pixel between, the classic 98 look.
+    cv.fill(bar, W98_FACE);
+    sunken(cv, bar);
+    let inner = bar.inset(2, 2);
+    let filled = (app.reader.permille() as i32 * inner.w) / 1000;
+    let block = l.i(6.0);
+    let mut bx = inner.x;
+    while bx < inner.x + filled {
+        let bw = block.min(inner.x + filled - bx);
+        cv.fill(Rect::new(bx, inner.y, bw, inner.h), th.fill);
+        bx += block + 1;
+    }
+    if app.reader.is_playing() {
+        return;
+    }
+    cv.fill(info, W98_FACE);
+    sunken(cv, info);
+    let px = l.px(10.5);
+    let base = info.cy() + l.px(3.5);
+    let b = &app.reader.book;
+    let left = match (app.screen, app.page_index()) {
+        (Screen::Page, Some(i)) if app.pages_done => format!("Page {} of {}  ·  {}%", i + 1, app.pages.len(), app.reader.permille() / 10),
+        (Screen::Page, Some(i)) => format!("Page {}  ·  {}%", i + 1, app.reader.permille() / 10),
+        (Screen::Page, None) => format!("Page …  ·  {}%  ·  counting pages", app.reader.permille() / 10),
+        _ => {
+            let mins = app.reader.ms_left() / 60_000;
+            let left = if mins == 0 { String::from("< 1 min left") } else { format!("{mins} min left") };
+            format!("{}%  ·  word {} of {}  ·  {left}", app.reader.permille() / 10, group(app.reader.pos() + 1), group(b.len()))
+        }
+    };
+    let pad = l.px(5.0);
+    let avail = info.w as f32 - 2.0 * pad;
+    let lw = f.draw_fit(cv, th.ui.0, px, &left, info.x as f32 + pad, base, avail, BLACK);
+    if let Some(ci) = b.chapter_index(app.reader.pos()) {
+        let s = format!("ch. {} / {}", ci + 1, b.chapters().len());
+        let cw = f.measure(th.ui.0, px, &s);
+        if cw < avail - lw - l.px(12.0) {
+            f.draw(cv, th.ui.0, px, &s, info.right() as f32 - pad - cw, base, BLACK);
         }
     }
 }
