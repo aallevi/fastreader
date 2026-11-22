@@ -224,6 +224,9 @@ impl Ui {
                 if o.context != view.context {
                     room = Some(draw_context(f, cv, &ctx));
                     damage.push(l.context);
+                    if th.chrome == Chrome::Win98 {
+                        damage.push(l.status); // one pane with the numbers
+                    }
                 }
                 if o.status != view.status {
                     draw_status(f, cv, &ctx);
@@ -998,6 +1001,13 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     if app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w)) {
         return None; // a picture fills the stage; no sentence under it
     }
+    // Windows 98: the sentence and the numbers share one sunken pane, above
+    // the progress bar; its text is black on the grey face.
+    let win98 = th.chrome == Chrome::Win98;
+    if win98 {
+        pane_98(f, cv, c);
+    }
+    let text_c = if win98 { BLACK } else { th.dim };
     let book = &app.reader.book;
     let fam = family(app.settings.font);
     let px = l.px(12.5);
@@ -1071,11 +1081,11 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
         let mut x = area.0;
         for (k, &(idx, ww)) in line.iter().enumerate() {
             let w = book.word(idx).unwrap();
-            f.draw(cv, fam.face(w.style), px, running_text(book, w), x, y, th.dim);
+            f.draw(cv, fam.face(w.style), px, running_text(book, w), x, y, text_c);
             // After the last word on screen: the reading line.
             if idx + 1 == shown.end {
                 let cx = if k + 1 < line.len() { x + ww + gap / 2.0 } else { x + ww + l.px(3.0) };
-                cv.line((cx, y - lh * 0.72), (cx, y + lh * 0.18), l.px(1.5), th.dim);
+                cv.line((cx, y - lh * 0.72), (cx, y + lh * 0.18), l.px(1.5), text_c);
             }
             x += ww + gap;
         }
@@ -1163,8 +1173,39 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     if app.reader.is_playing() {
         return;
     }
+    if context_shown(app) {
+        // One pane with the sentence above: drawn together.
+        let _ = draw_context(f, cv, c);
+        return;
+    }
     cv.fill(info, W98_FACE);
     sunken(cv, info);
+    numbers_98(f, cv, c, info);
+}
+
+/// The sunken pane of the Windows 98 screen while paused: from the sentence
+/// down to the progress bar, full width, with the numbers on its last row.
+fn pane_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+    let l = c.l;
+    let bar_top = l.stage.bottom() - l.i(9.0);
+    let pane = Rect::new(l.stage.x, l.context.y, l.stage.w, bar_top - l.context.y);
+    cv.fill(pane, W98_FACE);
+    cv.fill(Rect::new(pane.x, pane.y, pane.w, 1), 0x808080);
+    cv.fill(Rect::new(pane.x, pane.y, 1, pane.h), 0x808080);
+    cv.fill(Rect::new(pane.x, pane.bottom() - 1, pane.w, 1), WHITE);
+    cv.fill(Rect::new(pane.right() - 1, pane.y, 1, pane.h), WHITE);
+    numbers_98(f, cv, c, Rect::new(pane.x, pane.bottom() - l.i(16.0), pane.w, l.i(16.0)));
+}
+
+/// Whether the sentence under the word is on screen.
+fn context_shown(app: &App) -> bool {
+    let on_picture = app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w));
+    app.screen == Screen::Reading && !app.reader.is_playing() && !app.reader.book.is_empty() && app.settings.context && !on_picture
+}
+
+/// The numbers (%, words, time left, chapter) in a 98 status row.
+fn numbers_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, info: Rect) {
+    let (th, l, app) = (c.th, c.l, c.app);
     let px = l.px(10.5);
     let base = info.cy() + l.px(3.5);
     let b = &app.reader.book;
@@ -1571,6 +1612,9 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         }
         _ => bar_bg(cv, th, g.header, false),
     }
+    if th.chrome == Chrome::Win98 {
+        bevel(cv, g.header, false); // raised, like the reading screen's title bar
+    }
     let title_c = match th.chrome {
         Chrome::Vista | Chrome::Win98 => WHITE,
         _ => th.bar_text,
@@ -1598,6 +1642,16 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     };
     let fam_list = layout::is_font_list(app);
     let text_c = th.row.text;
+    // Windows 98: read-only facts sit in a sunken white box, like a
+    // properties panel.
+    if th.chrome == Chrome::Win98 {
+        let infos: Vec<Rect> = g.rows.iter().filter(|r| matches!(r.kind, RowKind::Info(..))).map(|r| r.rect).collect();
+        if let (Some(a), Some(z)) = (infos.first(), infos.last()) {
+            let bx = Rect::new(a.x - l.i(4.0), a.y - l.i(4.0), a.w + l.i(8.0), z.bottom() - a.y + l.i(8.0));
+            cv.fill(bx, WHITE);
+            bevel(cv, bx, true);
+        }
+    }
     for row in &g.rows {
         let r = row.rect;
         match &row.kind {
@@ -1656,7 +1710,20 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             let fg = button(cv, th, l, b.rect, Kind::Row, hot);
             icons::draw(cv, b.icon, b.rect.cx(), b.rect.cy(), l.px(16.0), fg);
         }
-        if let Some((a, z)) = g.thumb {
+        if let (Some((a, z)), Chrome::Win98) = (g.thumb, th.chrome) {
+            // The 98 scrollbar: a checkered track between the arrow buttons,
+            // a raised thumb on it.
+            let track = Rect::new(upb.rect.x, upb.rect.bottom(), upb.rect.w, downb.rect.y - upb.rect.bottom());
+            for y in track.y..track.bottom() {
+                for x in track.x..track.right() {
+                    cv.fill(Rect::new(x, y, 1, 1), if (x + y) % 2 == 0 { WHITE } else { W98_FACE });
+                }
+            }
+            let h = track.h as f32;
+            let thumb = Rect::new(track.x, track.y + (a * h) as i32, track.w, ((z - a) * h).max(10.0) as i32);
+            cv.fill(thumb, W98_FACE);
+            bevel(cv, thumb, false);
+        } else if let Some((a, z)) = g.thumb {
             let col = upb.hit_rect;
             let x = col.x + col.w / 2 - l.i(1.5);
             let y0 = upb.rect.bottom() + l.i(3.0);
