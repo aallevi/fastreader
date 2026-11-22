@@ -63,8 +63,8 @@
 <header><h1 id="title">Fast Reader</h1><span class="stat" id="wpm"></span><span class="stat" id="pct"></span><button id="gear" aria-controls="settings">Settings</button></header>
 <aside id="settings" aria-label="Reader settings"><button class="toggle close" id="closeSet">Close</button>
   <h3>Add a book</h3>
-  <div class="row"><label for="file">EPUB, Markdown or text<small>PDFs: convert on the computer first (tools/convert.py)</small></label></div>
-  <div class="row"><input type="file" id="file" accept=".epub,.md,.txt,text/plain"></div>
+  <div class="row"><label for="file">EPUB, PDF, Markdown or text<small>Converted here on the phone: chapters, bold/italic and pictures kept</small></label></div>
+  <div class="row"><input type="file" id="file" accept=".epub,.pdf,.md,.txt,text/plain,application/pdf"></div>
   <div class="row"><button class="toggle" id="send" disabled>Send to the reader</button><small id="upmsg" role="status"></small></div>
   <div class="row"><button class="toggle" id="clearBooks">Remove uploaded books</button></div>
   <div id="setBody">Loading…</div></aside>
@@ -270,6 +270,207 @@ function toMarkup(doc, docPath) {
   }
   return out.join('\n\n');
 }
+// Pictures go after the text: "\n\0FRIMG1", count, then width, height and
+// RGB565 pixels per picture, scaled to fit the reader's stage (300×190).
+class Pictures {
+  constructor() { this.list = []; this.used = 0; }
+  full() { return this.used > 2e6; }
+  // Adds the region (sx, sy, sw, sh) of any drawable; returns "{image:N}" or "".
+  add(src, sx, sy, sw, sh) {
+    if (sw < 48 || sh < 48) return ''; // rules, bullets, icons
+    const k = Math.min(300 / sw, 190 / sh, 1);
+    const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+    if (this.used + w * h * 2 > 2e6) return '';
+    const cv = new OffscreenCanvas(w, h), g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+    const rgba = g.getImageData(0, 0, w, h).data, px = new Uint8Array(4 + w * h * 2);
+    const dv = new DataView(px.buffer);
+    dv.setUint16(0, w, true); dv.setUint16(2, h, true);
+    for (let i = 0, o = 4; i < rgba.length; i += 4, o += 2) dv.setUint16(o, (rgba[i] >> 3) << 11 | (rgba[i + 1] >> 2) << 5 | rgba[i + 2] >> 3, true);
+    this.list.push(px);
+    this.used += w * h * 2;
+    return `{image:${this.list.length - 1}}`;
+  }
+  blob() {
+    if (!this.list.length) return null;
+    const n = new Uint8Array(2); new DataView(n.buffer).setUint16(0, this.list.length, true);
+    return new Blob([new Uint8Array([10, 0, 70, 82, 73, 77, 71, 49]), n, ...this.list]);
+  }
+}
+
+// Paragraphs a page break cut mid-sentence: the first doesn't end a sentence
+// and the next starts in lower case. Same rule as tools/convert.py.
+function joinBroken(paras) {
+  const out = [];
+  for (const p of paras) {
+    const prev = out[out.length - 1];
+    const special = t => t.startsWith('# ') || t.startsWith('{image:');
+    if (prev && !special(prev) && !special(p) && !/[.!?…:;»”"')\]]\**$/.test(prev) && /^[*_ ]*\p{Ll}/u.test(p))
+      out[out.length - 1] = prev + ' ' + p;
+    else out.push(p);
+  }
+  return out;
+}
+
+// ---- PDFs, with pdf.js served by the reader itself (no internet needed).
+async function pdfToMarkup(file, progress) {
+  const pdfjs = await import('/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs';
+  const doc = await pdfjs.getDocument({data: new Uint8Array(await file.arrayBuffer()), fontExtraProperties: true}).promise;
+  const meta = await doc.getMetadata().catch(() => null);
+  const title = (meta?.info?.Title || file.name.replace(/\.pdf$/i, '').split(' -- ')[0]).trim();
+  const norm = t => t.trim().toLowerCase().replace(/\s+/g, ' ');
+  const tocTitles = new Set();
+  const walkToc = items => (items || []).forEach(o => { tocTitles.add(norm(o.title)); walkToc(o.items); });
+  walkToc(await doc.getOutline().catch(() => null));
+
+  // 1. Every page's lines: text spans with size, style, position.
+  const pages = [], sizes = new Map();
+  for (let n = 1; n <= doc.numPages; n++) {
+    progress(`Reading page ${n} of ${doc.numPages}…`);
+    const page = await doc.getPage(n);
+    const vp = page.getViewport({scale: 1});
+    const ops = await page.getOperatorList();
+    // PDF space → page pixels (top-left origin), whatever the page's offset or rotation.
+    const toView = (x, y) => { const m = vp.transform; return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]; };
+    const fontStyle = name => {
+      // pdf.js reads bold/italic from the font itself (descriptor flags, weight, name).
+      try {
+        if (page.commonObjs.has(name)) {
+          // The real name ("AAAAAD+Arial-ItalicMT") needs fontExtraProperties.
+          const f = page.commonObjs.get(name), real = f.name || '';
+          return {bold: !!(f.bold || f.black) || /bold|black|heavy|semibold|demi/i.test(real), italic: !!f.italic || /italic|oblique/i.test(real)};
+        }
+      } catch (e) {}
+      return {bold: false, italic: false};
+    };
+    const tc = await page.getTextContent();
+    const lines = [];
+    let line = null;
+    for (const it of tc.items) {
+      if (!it.str && !it.hasEOL) continue;
+      const t = it.transform, size = Math.hypot(t[2], t[3]) || Math.hypot(t[0], t[1]);
+      const [x, y] = toView(t[4], t[5]);
+      if (!line || Math.abs(y - line.y) > size * 0.5) {
+        line = {y, x, size, spans: [], indent: 0, started: false};
+        lines.push(line);
+      }
+      // Blank space before the first letters (some PDFs indent with spaces).
+      if (it.str && !line.started) {
+        const lead = it.str.length - it.str.trimStart().length;
+        line.indent += it.str.length ? it.width * lead / it.str.length : 0;
+        line.started = lead < it.str.length;
+      }
+      if (it.str) {
+        line.spans.push({text: it.str, ...fontStyle(it.fontName)});
+        line.size = Math.max(line.size, size);
+        if (it.str.trim()) sizes.set(Math.round(size), (sizes.get(Math.round(size)) || 0) + it.str.length);
+      }
+      if (it.hasEOL) line = null;
+    }
+    // Pictures: follow the drawing state to find where each image lands.
+    const boxes = [];
+    let ctm = [1, 0, 0, 1, 0, 0];
+    const stack = [];
+    const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+    const O = pdfjs.OPS;
+    ops.fnArray.forEach((fn, i) => {
+      if (fn === O.save) stack.push(ctm);
+      else if (fn === O.restore) ctm = stack.pop() || ctm;
+      else if (fn === O.transform) ctm = mul(ctm, ops.argsArray[i]);
+      else if (fn === O.paintImageXObject || fn === O.paintInlineImageXObject || fn === O.paintImageXObjectRepeat) {
+        const xs = [ctm[4], ctm[4] + ctm[0], ctm[4] + ctm[2], ctm[4] + ctm[0] + ctm[2]];
+        const ys = [ctm[5], ctm[5] + ctm[1], ctm[5] + ctm[3], ctm[5] + ctm[1] + ctm[3]];
+        const pts = xs.map((x, k) => toView(x, ys[k]));
+        const [x0, x1] = [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0]))];
+        const [y0, y1] = [Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))];
+        if (x1 - x0 > vp.width * 0.15 && y1 - y0 > vp.height * 0.08) boxes.push([x0, y0, x1 - x0, y1 - y0]);
+      }
+    });
+    pages.push({page, h: vp.height, lines, boxes});
+  }
+  let body = 11, best = 0;
+  sizes.forEach((count, size) => { if (count > best) { best = count; body = size; } });
+
+  // 2. Running heads and feet repeat across pages: drop them.
+  const key = l => l.spans.map(s => s.text).join('').trim().toLowerCase().replace(/\d+/g, '#');
+  const edge = (p, l) => l.y < p.h * 0.1 || l.y > p.h * 0.9;
+  const repeats = new Map();
+  for (const p of pages) for (const l of p.lines) if (edge(p, l)) repeats.set(key(l), (repeats.get(key(l)) || 0) + 1);
+
+  // 3. Lines → paragraphs, headings and pictures.
+  const pics = new Pictures();
+  const out = [];
+  let para = [];
+  const endPara = () => {
+    const t = para.join(' ').replace(/\s+/g, ' ').replace(/(\p{L})- (\p{Ll})/gu, '$1$2').trim();
+    if (t) out.push(t);
+    para = [];
+  };
+  const styled = s => s.text.split(/(\s+)/).map(w => {
+    if (!w.trim()) return w;
+    const m = s.bold && s.italic ? '***' : s.bold ? '**' : s.italic ? '*' : '';
+    return m + w.replace(/[*_]/g, '') + m;
+  }).join('');
+  for (let n = 0; n < pages.length; n++) {
+    const p = pages[n];
+    progress(`Laying out page ${n + 1} of ${pages.length}…`);
+    const lines = p.lines.filter(l => {
+      const t = l.spans.map(s => s.text).join('').trim();
+      if (!t) return false;
+      if (edge(p, l) && (/^[\divxlcIVXLC\s.\-–—]{1,8}$/.test(t) || (repeats.get(key(l)) || 0) >= 3)) return false;
+      return true;
+    });
+    const lefts = lines.map(l => Math.round(l.x));
+    const left = lefts.length ? lefts.sort((a, b) => a - b)[Math.floor(lefts.length * 0.2)] : 0;
+    const gaps = lines.slice(1).map((l, i) => l.y - lines[i].y).filter(g => g > 0).sort((a, b) => a - b);
+    const lineGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : body * 1.2;
+    // Pictures go before the first line below their top.
+    let render = null;
+    const boxes = p.boxes.slice().sort((a, b) => a[1] - b[1]);
+    const picture = async box => {
+      if (pics.full()) return '';
+      if (!render) {
+        const scale = 2, vp = p.page.getViewport({scale});
+        const cv = new OffscreenCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
+        await p.page.render({canvasContext: cv.getContext('2d'), viewport: vp, canvas: cv}).promise;
+        render = {cv, scale};
+      }
+      const k = render.scale;
+      return pics.add(render.cv, box[0] * k, box[1] * k, box[2] * k, box[3] * k);
+    };
+    let prev = null;
+    for (const l of lines) {
+      while (boxes.length && boxes[0][1] <= l.y) {
+        const mark = await picture(boxes.shift());
+        if (mark) { endPara(); out.push(mark); }
+      }
+      const t = l.spans.map(s => s.text).join('').replace(/\s+/g, ' ').trim();
+      if (tocTitles.has(norm(t)) || (l.size >= body * 1.25 && t.length < 120)) {
+        endPara();
+        out.push('# ' + t.replace(/[*_]/g, ''));
+        prev = null;
+        continue;
+      }
+      const indented = l.x + l.indent > left + body * 0.6;
+      const gap = prev ? l.y - prev.y : 0;
+      if (!prev || indented || gap > lineGap * 1.6) endPara();
+      para.push(l.spans.map(styled).join('').trim());
+      prev = l;
+    }
+    for (const box of boxes) {
+      const mark = await picture(box);
+      if (mark) { endPara(); out.push(mark); }
+    }
+    endPara();
+    p.page.cleanup();
+  }
+  // A short paragraph all in bold is a heading too ("CHAPTER I").
+  const paras = out.map(t => (t.length < 60 && /^(\*\*[^*]+\*\*\s*)+$/.test(t)) ? '# ' + t.replace(/\*/g, '') : t);
+  return {title, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length};
+}
+
 async function epubToMarkup(file) {
   const files = await unzip(await file.arrayBuffer());
   const xml = s => new DOMParser().parseFromString(new TextDecoder().decode(s), 'application/xhtml+xml');
@@ -286,41 +487,20 @@ async function epubToMarkup(file) {
   }
   let text = parts.filter(Boolean).join('\n\n');
   // Pictures: scaled to the reader's stage, RGB565, after the text.
-  const pics = [], ids = {};
-  let used = 0;
+  const pics = new Pictures(), ids = {};
   for (const m of [...text.matchAll(/\u0000IMG:([^\u0000]*)\u0000/g)]) {
     const path = m[1];
     if (path in ids) continue;
     ids[path] = '';
     const data = files[path];
-    if (!data || used > 2e6) continue;
+    if (!data || pics.full()) continue;
     try {
       const bmp = await createImageBitmap(new Blob([data]));
-      if (bmp.width < 48 || bmp.height < 48) continue;
-      const k = Math.min(300 / bmp.width, 190 / bmp.height, 1);
-      const w = Math.max(1, Math.round(bmp.width * k)), h = Math.max(1, Math.round(bmp.height * k));
-      if (used + w * h * 2 > 2e6) continue;
-      const cv = new OffscreenCanvas(w, h), g = cv.getContext('2d');
-      g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
-      g.drawImage(bmp, 0, 0, w, h);
-      const rgba = g.getImageData(0, 0, w, h).data, px = new Uint8Array(4 + w * h * 2);
-      new DataView(px.buffer).setUint16(0, w, true); new DataView(px.buffer).setUint16(2, h, true);
-      for (let i = 0, o = 4; i < rgba.length; i += 4, o += 2) {
-        const v = (rgba[i] >> 3) << 11 | (rgba[i + 1] >> 2) << 5 | rgba[i + 2] >> 3;
-        px[o] = v & 255; px[o + 1] = v >> 8;
-      }
-      ids[path] = `{image:${pics.length}}`;
-      pics.push(px);
-      used += w * h * 2;
+      ids[path] = pics.add(bmp, 0, 0, bmp.width, bmp.height);
     } catch (e) { /* not a picture the browser can read */ }
   }
   text = text.replace(/\u0000IMG:([^\u0000]*)\u0000/g, (_, p) => ids[p] || '').replace(/\n{3,}/g, '\n\n');
-  let images = null;
-  if (pics.length) {
-    // "\n\0FRIMG1", count, then (w, h, pixels) per picture.
-    images = new Blob([new Uint8Array([10, 0, 70, 82, 73, 77, 71, 49]), new Uint16Array([pics.length]), ...pics]);
-  }
-  return {title, text, images, pictures: pics.length};
+  return {title, text, images: pics.blob(), pictures: pics.list.length};
 }
 let pending = null;
 $('file').onchange = async () => {
@@ -329,14 +509,15 @@ $('file').onchange = async () => {
   $('send').disabled = true;
   $('upmsg').textContent = 'Reading…';
   try {
-    pending = f.name.toLowerCase().endsWith('.epub')
-      ? await epubToMarkup(f)
+    const name = f.name.toLowerCase();
+    pending = name.endsWith('.epub') ? await epubToMarkup(f)
+      : name.endsWith('.pdf') ? await pdfToMarkup(f, msg => $('upmsg').textContent = msg)
       : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
     const kb = Math.round((new Blob([pending.text]).size + (pending.images?.size || 0)) / 1024);
     const pics = pending.pictures ? `, ${pending.pictures} pictures` : '';
     $('upmsg').textContent = `${pending.title}: ${kb} KB${pics} ready`;
     $('send').disabled = false;
-  } catch (e) { $('upmsg').textContent = 'Could not read this file'; }
+  } catch (e) { console.error(e); $('upmsg').textContent = 'Could not read this file: ' + (e.message || e); }
 };
 $('send').onclick = async () => {
   if (!pending) return;

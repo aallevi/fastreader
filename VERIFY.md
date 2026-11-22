@@ -35,4 +35,5 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] The phone opens the page by itself on joining (captive portal); otherwise http://192.168.4.1.
 - [ ] Settings drawer changes the reader live (incl. Word position, Parentheses).
 - [ ] Add a book (EPUB with pictures) → it appears in 📚 with its pictures.
+- [ ] Add a **PDF** from the phone: progress shows page by page; the book appears in 📚 with chapters, bold/italic and pictures; no page numbers or running heads in the text.
 - [ ] Bookmarked words show a small dog-ear in the web text.

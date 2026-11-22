@@ -6,6 +6,7 @@
 //! The mouse is a finger: press lights a button, release acts, slide off
 //! cancels, hold ◀◀ / ▶▶ / − / + repeats. Keyboard: arrows, Space/Enter,
 //! M or Esc for the menu. The web view runs at http://localhost:8080.
+//! `--headless`: only the web view, no window.
 
 mod walkthrough;
 mod web;
@@ -47,7 +48,7 @@ fn main() {
         Some("4") => Scale::X4,
         _ => Scale::X2,
     };
-    run_window(book, size, scale);
+    run_window(book, size, scale, args.iter().any(|a| a == "--headless"));
 }
 
 pub fn load_book(path: &Path) -> Book {
@@ -131,7 +132,38 @@ fn present(cv: &Canvas, out: &mut [u32], s: &Settings) {
     }
 }
 
-fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
+/// Carries out what the app asked for (saving, opening books...). Returns
+/// true when the whole screen must be redrawn.
+fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
+    let mut redraw = false;
+    while let Some(e) = a.take_effect() {
+        match e {
+            Effect::SaveSettings => {
+                let _ = std::fs::write(settings_path(), a.settings.to_bytes());
+            }
+            Effect::Display => {
+                redraw = true;
+                let _ = std::fs::write(settings_path(), a.settings.to_bytes());
+            }
+            Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+            Effect::SaveBookmarks => {
+                let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
+                let _ = std::fs::write(bookmarks_path(), list.join(" "));
+            }
+            Effect::Wifi(on) => println!("(web view {}: the simulator always serves http://localhost:8080)", if on { "on" } else { "off" }),
+            Effect::OpenBook(i) => {
+                let path = books.lock().unwrap().get(i as usize).cloned().unwrap_or_default();
+                a.open_book(load_book(&path), i);
+                let list: Vec<String> = a.positions.iter().map(|p| p.to_string()).collect();
+                let _ = std::fs::write(positions_path(), list.join(" "));
+                redraw = true;
+            }
+        }
+    }
+    redraw
+}
+
+fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless: bool) {
     let books = Arc::new(Mutex::new(library(first)));
     let first_count = books.lock().unwrap().len();
     let mut settings = std::fs::read(settings_path()).ok().and_then(|b| Settings::from_bytes(&b)).unwrap_or_default();
@@ -157,6 +189,18 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
     let start = Instant::now();
     web::serve(app.clone(), books.clone(), "127.0.0.1:8080", start);
     println!("Web view: http://localhost:8080");
+    if headless {
+        // Only the web view and the reader's clock: no window.
+        loop {
+            let now = start.elapsed().as_millis() as u64;
+            {
+                let mut a = app.lock().unwrap();
+                a.tick(now);
+                apply_effects(&mut a, &books);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     let mut cv = Canvas::new(w, h);
     let mut ui = Ui::new(w, h);
@@ -210,31 +254,9 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale) {
                 None => {}
             }
             a.tick(now);
-            while let Some(e) = a.take_effect() {
-                match e {
-                    Effect::SaveSettings => {
-                        let _ = std::fs::write(settings_path(), a.settings.to_bytes());
-                    }
-                    Effect::Display => {
-                        ui.invalidate();
-                        dirty = true;
-                        let _ = std::fs::write(settings_path(), a.settings.to_bytes());
-                    }
-                    Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
-                    Effect::SaveBookmarks => {
-                        let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
-                        let _ = std::fs::write(bookmarks_path(), list.join(" "));
-                    }
-                    Effect::Wifi(on) => println!("(web view {}: the simulator always serves http://localhost:8080)", if on { "on" } else { "off" }),
-                    Effect::OpenBook(i) => {
-                        let path = books.lock().unwrap().get(i as usize).cloned().unwrap_or_default();
-                        let book = load_book(&path);
-                        a.open_book(book, i);
-                        let list: Vec<String> = a.positions.iter().map(|p| p.to_string()).collect();
-                        let _ = std::fs::write(positions_path(), list.join(" "));
-                        ui.invalidate();
-                    }
-                }
+            if apply_effects(&mut a, &books) {
+                ui.invalidate();
+                dirty = true;
             }
             if !ui.paint(&mut a, now, &mut cv).is_empty() || dirty {
                 present(&cv, &mut out, &a.settings);

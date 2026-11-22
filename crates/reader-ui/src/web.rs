@@ -36,7 +36,14 @@ pub enum Body {
     /// Book words `from..to` as HTML; write it with [`book_piece`] in steps.
     Book { from: usize, to: usize },
     Bytes(Vec<u8>),
+    /// Bytes built into the program (pdf.js, gzip-compressed).
+    Raw(&'static [u8]),
 }
+
+/// pdf.js, for turning PDFs into books on the phone (it has no internet on
+/// the reader's Wi-Fi). Apache-2.0, see assets/web/.
+pub const PDFJS: &[u8] = include_bytes!("../../../assets/web/pdf.min.mjs.gz");
+pub const PDFJS_WORKER: &[u8] = include_bytes!("../../../assets/web/pdf.worker.min.mjs.gz");
 
 pub struct Response {
     pub status: &'static str,
@@ -89,6 +96,12 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
         ("GET", p) if p.starts_with("/img/") => match p[5..].parse::<usize>().ok().and_then(|n| app.reader.book.images.get(n)) {
             Some(img) => Response::ok("image/bmp", Body::Bytes(bmp(img))),
             None => Response::text("404 Not Found", "no such image"),
+        },
+        ("GET", "/pdfjs/pdf.min.mjs") | ("GET", "/pdfjs/pdf.worker.min.mjs") => Response {
+            status: "200 OK",
+            ctype: "text/javascript",
+            extra_header: Some("Content-Encoding: gzip".into()),
+            body: Body::Raw(if path.contains("worker") { PDFJS_WORKER } else { PDFJS }),
         },
         ("GET", "/state") => Response::ok("application/json", Body::Text(state_json(app))),
         ("GET", "/theme.css") => Response::ok("text/css", Body::Text(theme(app.settings.theme).css_vars())),
@@ -340,6 +353,18 @@ mod tests {
             at = book_piece(&a, at, a.reader.book.len(), &mut pieces);
         }
         assert_eq!(pieces, whole);
+    }
+
+    #[test]
+    fn pdfjs_is_served_compressed() {
+        let mut a = App::new(reader_core::Book::new("t", "x"), crate::CATALOG, Settings::default());
+        for p in ["/pdfjs/pdf.min.mjs", "/pdfjs/pdf.worker.min.mjs"] {
+            let r = respond(&mut a, "GET", p, 0);
+            assert_eq!((r.status, r.ctype), ("200 OK", "text/javascript"));
+            assert_eq!(r.extra_header.as_deref(), Some("Content-Encoding: gzip"));
+            let Body::Raw(b) = r.body else { panic!() };
+            assert_eq!(&b[..2], &[0x1f, 0x8b], "gzip data");
+        }
     }
 
     #[test]

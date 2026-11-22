@@ -14,6 +14,7 @@ A one-word-at-a-time (RSVP) speed reader for the **LCDWIKI ES3C28P** (ESP32-S3, 
 - **Brackets** — ( ), < >, << >>, « », ‹ › — read as punctuation: a short breath as an aside opens and closes. Each closing bracket is matched with its opening one across the whole book, even when a page break splits the aside. Optionally the brackets (of the right kind) become marks at the screen's sides in word/phrase modes (Menu → Parentheses).
 - Six themes (Vista, macOS, Scrivener, Windows 98, E-Ink, Night), six reading fonts, anti-aliased.
 - Four reading modes: word by word, phrases (fixed groups of 1–3 words that end at sentences, starting at the same left point, as on the original e-reader), ticker (the line steps word by word like a typewriter carriage; nothing glides), page (normal text with a moving phrase highlight).
+- **Add books from the phone:** EPUB, PDF, Markdown or text, converted in the phone's browser (chapters, bold/italic, pictures, running heads and page numbers removed, page-split sentences rejoined). pdf.js is served by the reader itself, so no internet is needed.
 - A browser view of the book plus every setting: on the device, Menu → Web view, join Wi-Fi "FastReader", open http://192.168.4.1.
 
 ## Controls: one meaning per key, on every screen
@@ -58,6 +59,7 @@ The converter keeps chapters (table of contents, larger or all-bold lines, EPUB 
 
 ```sh
 cargo run -p reader-sim --release                 # window + browser view at http://localhost:8080
+cargo run -p reader-sim --release -- --headless   # only the browser view
 cargo run -p reader-sim --release -- walkthrough out/   # PNG of every function in every theme
 cargo test --workspace                            # 129 tests: logic, layout, rendering, efficiency
 cargo bench -p reader-ui
