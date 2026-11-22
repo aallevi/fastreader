@@ -133,7 +133,11 @@ impl Card {
         let State::Mounted { vm, dir, .. } = &self.state else { return Vec::new() };
         let mut found: Vec<(String, u32)> = Vec::new();
         let _ = vm.iterate_dir(*dir, |e| {
-            if e.name.extension() == b"BK" && !e.attributes.is_directory() {
+            // Only our own BKnnnnnn.BK: a computer may leave hidden companions
+            // ("._BK000001.BK" shows here as "_BK000~1.BK").
+            let base = e.name.base_name();
+            let ours = base.len() == 8 && base.starts_with(b"BK") && base[2..].iter().all(u8::is_ascii_digit);
+            if ours && e.name.extension() == b"BK" && !e.attributes.is_directory() {
                 found.push((alloc::format!("{}", e.name), e.size));
             }
             core::ops::ControlFlow::Continue(())
