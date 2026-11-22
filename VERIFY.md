@@ -33,7 +33,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
 ## SD card
 - [ ] ⚙ Settings → SD card shows "Needs formatting" (your card is exFAT). Choose it → **Erase and format** → "SD card ready", then it shows the free space (~14.8 GB).
-- [ ] Upload Gombrich from the phone: it goes to the card (31 MB, 368 pictures; a few minutes to convert and send). It appears in 📚; pictures show as you read and in page view.
+- [ ] Gombrich from the phone: the phone warns it's too heavy (scanned, 702 pages) and suggests a computer.
+- [ ] Gombrich via the computer: card in the Mac, `tools/convert.py gombrich-storia-arte.pdf --sd /Volumes/FASTREADER`, eject, card back in the reader, restart. It appears in 📚; pictures (422) show as you read and in page view.
+- [ ] A normal PDF or EPUB from the phone goes to the card.
 - [ ] Switch off and on: the card books are still in 📚.
 
 ## Web view (⚙ → Web view, join "FastReader")

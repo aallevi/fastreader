@@ -121,15 +121,19 @@ class XhtmlText(HTMLParser):
 # to upload and to hold in the reader's memory.
 
 IMG_W, IMG_H = 300, 190
-IMG_BUDGET = 2_000_000  # bytes of pixels per book
+IMG_BUDGET = 2_000_000  # bytes of pixels per book (reader's flash, no SD card)
+CARD_BUDGET = 200_000_000  # writing to the SD card: keep every picture
 IMG_MIN = 48  # smaller pictures are decoration (rules, bullets, icons)
-IMAGES_MAGIC = b"\n\0FRIMG1"
+# Version 2: a table of (width, height, offset) first, so the reader can
+# fetch one picture from the card without reading the others.
+IMAGES_MAGIC2 = b"\n\0FRIMG2"
 
 
 class Images:
-    def __init__(self):
+    def __init__(self, budget=IMG_BUDGET):
         self.items = []
         self.used = 0
+        self.budget = budget
 
     def add_pixmap(self, pm):
         """Adds a pymupdf Pixmap; returns the {image:N} mark or ""."""
@@ -142,25 +146,21 @@ class Images:
             pm = pymupdf.Pixmap(pm, 0)
         scale = min(IMG_W / pm.width, IMG_H / pm.height, 1.0)
         w, h = max(1, int(pm.width * scale)), max(1, int(pm.height * scale))
-        if self.used + w * h * 2 > IMG_BUDGET:
+        if self.used + w * h * 2 > self.budget:
             return ""
-        if (w, h) != (pm.width, pm.height):
-            # Area-average downscale (pymupdf's shrink halves; finish with nearest).
-            while pm.width >= 2 * w and pm.height >= 2 * h:
-                pm.shrink(1)
-        src, sw, sh, n = pm.samples, pm.width, pm.height, pm.n
-        out = bytearray(w * h * 2)
-        k = 0
-        for y in range(h):
-            row = (y * sh // h) * pm.stride
-            for x in range(w):
-                i = row + (x * sw // w) * n
-                r, g, b = src[i], src[i + 1], src[i + 2]
-                v = (r >> 3) << 11 | (g >> 2) << 5 | b >> 3
-                out[k] = v & 0xFF
-                out[k + 1] = v >> 8
-                k += 2
-        self.items.append((w, h, bytes(out)))
+        import numpy as np
+        a = np.frombuffer(pm.samples, np.uint8).reshape(pm.height, pm.stride)[:, : pm.width * pm.n].reshape(pm.height, pm.width, pm.n)[:, :, :3]
+        # Nearly all white: an empty stretch of page, not a picture.
+        if (a.astype(np.uint16).sum(axis=2) < 600)[::4, ::4].mean() < 0.03:
+            return ""
+        # Area-average downscale to the reader's size.
+        ys = (np.arange(h + 1) * pm.height // h)
+        xs = (np.arange(w + 1) * pm.width // w)
+        c = np.add.reduceat(np.add.reduceat(a.astype(np.uint32), ys[:-1], axis=0), xs[:-1], axis=1)
+        c = (c / ((ys[1:] - ys[:-1])[:, None, None] * (xs[1:] - xs[:-1])[None, :, None])).astype(np.uint16)
+        v = (c[:, :, 0] >> 3) << 11 | (c[:, :, 1] >> 2) << 5 | c[:, :, 2] >> 3
+        out = v.astype("<u2").tobytes()
+        self.items.append((w, h, out))
         self.used += w * h * 2
         return f"{{image:{len(self.items) - 1}}}"
 
@@ -174,10 +174,14 @@ class Images:
     def section(self) -> bytes:
         if not self.items:
             return b""
-        out = bytearray(IMAGES_MAGIC)
-        out += struct.pack("<H", len(self.items))
+        n = len(self.items)
+        out = bytearray(IMAGES_MAGIC2) + struct.pack("<HH", n, 0)
+        off = 4 + 8 * n
         for w, h, px in self.items:
-            out += struct.pack("<HH", w, h) + px
+            out += struct.pack("<HHI", w, h, off)
+            off += len(px)
+        for _, _, px in self.items:
+            out += px
         return bytes(out)
 
 
@@ -240,23 +244,45 @@ def pdf(path: Path, images: Images):
     for pg in d:
         page_lines = []
         pictures = []
-        for b in pg.get_text("dict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_PRESERVE_IMAGES)["blocks"]:
-            if b.get("type") == 1:
-                pictures.append((b["bbox"], ("image", b.get("image"))))
+        area = pg.rect.width * pg.rect.height
+        # Where images sit (no decoding needed); each is cut from the
+        # rendered page, which also applies masks and clipping.
+        for info in pg.get_image_info():
+            r = pymupdf.Rect(info["bbox"]) & pg.rect
+            if r.width > pg.rect.width * 0.15 and r.height > pg.rect.height * 0.08:
+                pictures.append((tuple(r), ("drawing", r), r.width * r.height > area * 0.6))
+        for b in pg.get_text("dict", flags=pymupdf.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+            if b.get("type") != 0:
                 continue
             for ln in b.get("lines", []):
                 spans = [s for s in ln["spans"] if s["text"].strip()]
-                if not spans:
-                    continue
+                if not spans or not re.search(r"\w", "".join(s["text"] for s in spans)):
+                    continue  # empty, or pure symbols (OCR noise in pictures)
                 for s in spans:
                     sizes[round(s["size"])] += len(s["text"])
                 page_lines.append((b["number"], ln["bbox"], spans))
+        # A scanned book: each page is one big photo with the OCR text on
+        # top. That photo is the page itself: keep the text; illustrations
+        # are the tall stretches without text lines, cut from the page.
+        if page_lines and any(big for _, _, big in pictures):
+            pictures = [p for p in pictures if not p[2]]
+            h = pg.rect.height
+            top = h * 0.06
+            for y0, y1 in sorted((ln[1][1], ln[1][3]) for ln in page_lines) + [(h * 0.94, h)]:
+                if y0 - top > h * 0.2:
+                    r = pymupdf.Rect(pg.rect.width * 0.06, top, pg.rect.width * 0.94, y0)
+                    pictures.append((tuple(r), ("drawing", r), False))
+                top = max(top, y1)
+        elif not page_lines and any(big for _, _, big in pictures):
+            # A page without text in a scanned book: a plate or the cover.
+            pictures = [(tuple(pg.rect), ("drawing", pg.rect), False)]
+        pictures = [(bbox, pic) for bbox, pic, _ in pictures]
         # Charts and diagrams drawn as vectors: render each cluster as a picture.
         try:
             clusters = pg.cluster_drawings()
         except Exception:
             clusters = []
-        for r in clusters:
+        for r in clusters if len(clusters) < 40 else []:
             if r.width > pg.rect.width * 0.2 and r.height > pg.rect.height * 0.08:
                 pictures.append((tuple(r), ("drawing", r)))
         # Each picture goes before the first text line below its top; text
@@ -299,7 +325,7 @@ def pdf(path: Path, images: Images):
                 if kind == "image" and what:
                     mark = images.add_bytes(what)
                 else:
-                    mark = images.add_pixmap(pg.get_pixmap(clip=what, dpi=150)) if kind == "drawing" else ""
+                    mark = images.add_pixmap(pg.get_pixmap(clip=what, dpi=150, colorspace=pymupdf.csRGB)) if kind == "drawing" else ""
                 if mark:
                     end_para()
                     out.append(mark)
@@ -311,9 +337,13 @@ def pdf(path: Path, images: Images):
                 continue  # page number
             if (bbox[1] < h * 0.1 or bbox[3] > h * 0.9) and norm(raw) in noise:
                 continue
-            size = max(round(s["size"]) for s in spans)
+            # The line's size is what most of its letters are set in (OCR text
+            # gives single letters odd sizes).
+            chars = sum(len(s["text"].strip()) for s in spans) or 1
+            size = sum(s["size"] * len(s["text"].strip()) for s in spans) / chars
+            letters = len(re.findall(r"[^\W\d_]", t))
             is_toc = (pno, re.sub(r"\s+", " ", t.lower())) in toc_titles
-            if is_toc or (size >= body * 1.25 and len(t) < 120):
+            if is_toc or (size >= body * 1.25 and letters >= 3 and len(t) < 90 and not t.endswith(("-", "‐"))):
                 end_para()
                 out.append("# " + clean(t).strip())
                 last_block = None
@@ -357,11 +387,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("files", nargs="+", type=Path)
     ap.add_argument("--out", type=Path, default=Path("books/private"))
+    ap.add_argument("--sd", type=Path, help="write straight to the reader's SD card (its mount point, e.g. /Volumes/FASTREADER), every picture kept")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     for f in a.files:
         ext = f.suffix.lower()
-        images = Images()
+        images = Images(CARD_BUDGET if a.sd else IMG_BUDGET)
         if ext == ".epub":
             title, text = epub(f, images)
         elif ext == ".pdf":
@@ -378,7 +409,14 @@ def main():
         text = "\n\n".join(promote(p.strip()) for p in text.split("\n\n"))
         # Collapse 3+ blank lines; first line carries the title for the library.
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
-        dest = a.out / f"{slug(title)}.md"
+        if a.sd:
+            # The reader's card: BOOKS/BKnnnnnn.BK (8.3 names; the title is inside).
+            books = a.sd / "BOOKS"
+            books.mkdir(exist_ok=True)
+            taken = [int(p.stem[2:]) for p in books.glob("BK*.BK") if p.stem[2:].isdigit()]
+            dest = books / f"BK{max(taken, default=0) + 1:06d}.BK"
+        else:
+            dest = a.out / f"{slug(title)}.md"
         dest.write_bytes(f"<!-- title: {title} -->\n{text}".encode() + images.section())
         words = len(text.split())
         heads = text.count("\n# ") + text.startswith("# ")
