@@ -239,6 +239,8 @@ pub struct Book {
     pub title: String,
     /// Pictures referenced by `{image:N}` marks in the text.
     pub images: Pictures,
+    /// Descriptions of pictures, by the picture's word index, in order.
+    captions: Vec<(u32, String)>,
     /// All words, cleaned of markup, in 64 KB blocks.
     text: ChunkedText,
     words: Chunked<Word>,
@@ -252,7 +254,7 @@ pub struct Book {
 
 impl Book {
     pub fn new(title: impl Into<String>, source: &str) -> Self {
-        let (text, mut words) = tokenize(source);
+        let (text, mut words, captions) = tokenize(source);
         let mut chapters: Vec<(u32, String)> = Vec::new();
         let mut i = 0;
         while i < words.len() {
@@ -276,7 +278,7 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), images: Pictures::Memory(Vec::new()), text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
     }
@@ -293,6 +295,12 @@ impl Book {
         let mut book = Book::parse(&String::from_utf8_lossy(&bytes[..end]), fallback);
         book.images = Pictures::Memory(images);
         book
+    }
+
+    /// The description of the picture at word `i`, if it has one.
+    pub fn caption(&self, i: usize) -> Option<&str> {
+        let k = self.captions.binary_search_by_key(&(i as u32), |c| c.0).ok()?;
+        Some(&self.captions[k].1)
     }
 
     /// Which picture an image word stands for.
@@ -496,7 +504,14 @@ impl Book {
             let (b, it) = (w.style.bold() && !w.style.heading(), w.style.italic());
             if self.is_image(w) {
                 let n = &self.text_of(w)[IMAGE_MARK.len_utf8()..];
-                write!(out, "<span id=\"w{i}\"><img src=\"/img/{n}\" alt=\"\"></span>")?;
+                match self.caption(i) {
+                    Some(c) => {
+                        write!(out, "<figure id=\"w{i}\"><img src=\"/img/{n}\" alt=\"\"><figcaption>")?;
+                        escape_html(c, out)?;
+                        out.write_str("</figcaption></figure>")?;
+                    }
+                    None => write!(out, "<span id=\"w{i}\"><img src=\"/img/{n}\" alt=\"\"></span>")?,
+                }
                 out.write_str(if open { "</p>\n" } else { "\n" })?;
                 open = false;
                 continue;
@@ -538,12 +553,18 @@ fn escape_html(s: &str, out: &mut impl Write) -> fmt::Result {
 
 const TRAILING_PUNCT: &[char] = &['.', ',', ';', ':', '!', '?', '…', '"', '\'', ')', ']', '»', '”', '’', '—', '–'];
 
-fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
+/// Pictures' descriptions: (word index of the picture, text).
+type Captions = Vec<(u32, String)>;
+
+fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
     let mut text = ChunkedText::default();
     let mut words: Chunked<Word> = Chunked::new();
     let mut style = Style::PLAIN;
     let mut scratch = String::new();
     let mut verse = false;
+    let mut captions: Captions = Vec::new();
+    // Inside {caption}…{/caption}: words go to the last picture's description.
+    let mut caption: Option<String> = None;
 
     for line in source.lines() {
         let mut tokens = line.split_whitespace().peekable();
@@ -561,6 +582,28 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
         let first_word = words.len();
 
         for tok in tokens {
+            // A picture's description: kept with the picture, not read as words.
+            if tok == "{caption}" {
+                caption = Some(String::new());
+                continue;
+            }
+            if tok == "{/caption}" {
+                if let Some(c) = caption.take() {
+                    let pic = (0..words.len()).rev().find(|&i| text.get(words[i].start, words[i].len as usize).starts_with(IMAGE_MARK));
+                    match pic {
+                        Some(i) if !c.is_empty() => captions.push((i as u32, c)),
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            if let Some(c) = caption.as_mut() {
+                if !c.is_empty() {
+                    c.push(' ');
+                }
+                c.push_str(tok);
+                continue;
+            }
             // Timing marks (SSML-like): they shape pauses, they aren't words.
             match tok {
                 "{slow}" | "{/slow}" => {
@@ -649,7 +692,7 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>) {
     }
     text.shrink_to_fit();
     words.shrink_to_fit();
-    (text, words)
+    (text, words, captions)
 }
 
 #[derive(Clone, Copy)]
@@ -1012,6 +1055,19 @@ mod tests {
         let mut html = String::new();
         b.write_html(&mut html).unwrap();
         assert!(html.contains("<img src=\"/img/1\""), "{html}");
+    }
+
+    #[test]
+    fn captions_belong_to_their_picture() {
+        let b = Book::new("t", "Text before.\n\n{image:0}\n\n{caption} 20 Altamira (Spagna), *Bisonte* dipinto. {/caption}\n\nAfter.");
+        assert_eq!(b.len(), 4, "the description isn't read as words");
+        assert_eq!(b.caption(2), Some("20 Altamira (Spagna), *Bisonte* dipinto."));
+        assert_eq!(b.caption(1), None);
+        let mut html = String::new();
+        b.write_html(&mut html).unwrap();
+        assert!(html.contains("<figcaption>20 Altamira"), "{html}");
+        let b = Book::new("t", "No picture {caption} stray {/caption} here");
+        assert_eq!(b.len(), 3, "a stray caption is dropped, not read");
     }
 
     #[test]

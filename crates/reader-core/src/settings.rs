@@ -98,6 +98,8 @@ pub struct Settings {
     pub brackets: bool,
     /// Where words sit: 0 centred, 1 on a fixed recognition point.
     pub position: u8,
+    /// Show a picture's description (when paused on it).
+    pub captions: bool,
     /// Index into [`SKIPS`].
     pub skip: u8,
     /// Show the sentence under the word when paused.
@@ -112,23 +114,25 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            wpm: 475,
-            theme: 0,
+            // The owner's own choices (read from the reader, 2026-11-22).
+            wpm: 500,
+            theme: 3, // Windows 98
             font: 0,
             size: 1,
             chunk: 1,
-            brightness: 4,
+            brightness: 1,
             flipped: false,
             mode: 0,
             phrase: 3,
             spacing: 1,
-            indent: false,
-            justify: false,
+            indent: true,
+            justify: true,
             highlight: true,
             wifi: false,
             true_pace: false,
             brackets: true,
-            position: 0,
+            position: 1,
+            captions: false,
             skip: 0,
             context: true,
             book: 0,
@@ -138,13 +142,22 @@ impl Default for Settings {
     }
 }
 
-const MAGIC: [u8; 2] = *b"FR";
-const VERSION: u8 = 15;
-/// magic 2 + version + wpm 2 + pos 4 + one byte per other field + checksum.
-pub const SETTINGS_LEN: usize = 9 + FIELDS.len();
+/// The settings record: "FRS2", length (u16), then `name=value;` for every
+/// field and `pos=…`, then a checksum. Stored by name, so updates that add or
+/// reorder settings keep everything the reader already has (new ones start
+/// at their default) instead of starting over.
+const MAGIC2: [u8; 4] = *b"FRS2";
+pub const SETTINGS_LEN: usize = 512;
+/// The old fixed layout (version 15), read once to carry settings over.
+const OLD_MAGIC: [u8; 2] = *b"FR";
+const OLD_VERSION: u8 = 15;
+const OLD_FIELDS: [&str; 27] = [
+    "wpm", "theme", "font", "size", "chunk", "brightness", "flipped", "mode", "skip", "context", "comma", "sentence", "paragraph", "title",
+    "long_words", "ramp", "picture", "book", "phrase", "spacing", "indent", "justify", "highlight", "wifi", "true_pace", "brackets", "position",
+];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 27] = [
+pub const FIELDS: [(&str, u16, u16); 28] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -172,6 +185,7 @@ pub const FIELDS: [(&str, u16, u16); 27] = [
     ("true_pace", 0, 1),
     ("brackets", 0, 1),
     ("position", 0, 1),
+    ("captions", 0, 1),
 ];
 
 impl Settings {
@@ -203,6 +217,7 @@ impl Settings {
             "true_pace" => self.true_pace as u16,
             "brackets" => self.brackets as u16,
             "position" => self.position as u16,
+            "captions" => self.captions as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
             "comma" => p.comma as u16,
@@ -241,6 +256,7 @@ impl Settings {
             "true_pace" => self.true_pace = v != 0,
             "brackets" => self.brackets = v != 0,
             "position" => self.position = b,
+            "captions" => self.captions = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,
             "comma" => p.comma = b,
@@ -257,31 +273,54 @@ impl Settings {
     }
 
     pub fn to_bytes(&self) -> [u8; SETTINGS_LEN] {
-        let mut b = [0u8; SETTINGS_LEN];
-        b[0..2].copy_from_slice(&MAGIC);
-        b[2] = VERSION;
-        b[3..5].copy_from_slice(&self.wpm.to_le_bytes());
-        b[5..9].copy_from_slice(&self.pos.to_le_bytes());
-        for (i, (name, _, _)) in FIELDS.iter().enumerate().skip(1) {
-            b[8 + i] = self.get(name).unwrap() as u8;
+        use core::fmt::Write;
+        let mut text = String::new();
+        for (name, _, _) in FIELDS.iter() {
+            let _ = write!(text, "{name}={};", self.get(name).unwrap_or(0));
         }
-        b[SETTINGS_LEN - 1] = checksum(&b[..SETTINGS_LEN - 1]);
+        let _ = write!(text, "pos={};", self.pos);
+        let mut b = [0xFFu8; SETTINGS_LEN];
+        let n = text.len().min(SETTINGS_LEN - 7);
+        b[0..4].copy_from_slice(&MAGIC2);
+        b[4..6].copy_from_slice(&(n as u16).to_le_bytes());
+        b[6..6 + n].copy_from_slice(&text.as_bytes()[..n]);
+        b[6 + n] = checksum(&b[..6 + n]);
         b
     }
 
     /// Reads a record; every value goes through [`Settings::set`], so a bad
-    /// byte is clamped and can never produce an unusable device.
+    /// value is clamped and can never produce an unusable device. Unknown
+    /// names are skipped; missing ones keep their default.
     pub fn from_bytes(b: &[u8]) -> Option<Self> {
-        if b.len() < SETTINGS_LEN || b[0..2] != MAGIC || b[2] != VERSION || b[SETTINGS_LEN - 1] != checksum(&b[..SETTINGS_LEN - 1]) {
-            return None;
+        if b.len() >= 7 && b[0..4] == MAGIC2 {
+            let n = u16::from_le_bytes([b[4], b[5]]) as usize;
+            if 7 + n > b.len() || b[6 + n] != checksum(&b[..6 + n]) {
+                return None;
+            }
+            let text = core::str::from_utf8(&b[6..6 + n]).ok()?;
+            let mut s = Settings::default();
+            for pair in text.split(';').filter(|p| !p.is_empty()) {
+                let (k, v) = pair.split_once('=')?;
+                if k == "pos" {
+                    s.pos = v.parse().ok()?;
+                } else if let Ok(v) = v.parse::<u16>() {
+                    let _ = s.set(k, v);
+                }
+            }
+            return Some(s);
         }
-        let mut s = Settings::default();
-        s.set("wpm", u16::from_le_bytes([b[3], b[4]])).ok()?;
-        s.pos = u32::from_le_bytes([b[5], b[6], b[7], b[8]]);
-        for (i, (name, _, _)) in FIELDS.iter().enumerate().skip(1) {
-            s.set(name, b[8 + i] as u16).ok()?;
+        // The old fixed layout (one byte per field in a set order).
+        let len = 9 + OLD_FIELDS.len();
+        if b.len() >= len && b[0..2] == OLD_MAGIC && b[2] == OLD_VERSION && b[len - 1] == checksum(&b[..len - 1]) {
+            let mut s = Settings::default();
+            s.set("wpm", u16::from_le_bytes([b[3], b[4]])).ok()?;
+            s.pos = u32::from_le_bytes([b[5], b[6], b[7], b[8]]);
+            for (i, name) in OLD_FIELDS.iter().enumerate().skip(1) {
+                let _ = s.set(name, b[8 + i] as u16);
+            }
+            return Some(s);
         }
-        Some(s)
+        None
     }
 }
 
@@ -303,9 +342,35 @@ mod tests {
     }
 
     #[test]
+    fn the_old_layout_carries_over() {
+        // Read from the reader on 2026-11-22 (version 15, fixed layout).
+        let old: [u8; 36] = [
+            0x46, 0x52, 0x0f, 0xf4, 0x01, 0x15, 0x97, 0x00, 0x00, 0x03, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0f, 0x16, 0x1e,
+            0x14, 0x01, 0x01, 0x01, 0x07, 0x03, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0x01, 0x86,
+        ];
+        let s = Settings::from_bytes(&old).expect("the reader's own record reads");
+        assert_eq!((s.wpm, s.theme, s.brightness, s.book, s.position, s.pos), (500, 3, 1, 7, 1, 38_677));
+        assert_eq!(Settings::from_bytes(&s.to_bytes()), Some(s), "and is kept in the new format");
+    }
+
+    #[test]
+    fn new_settings_start_at_their_default() {
+        // A record from before a setting existed: everything else is kept.
+        let mut b = [0xFFu8; SETTINGS_LEN];
+        let text = b"wpm=600;theme=2;pos=42;";
+        b[0..4].copy_from_slice(b"FRS2");
+        b[4..6].copy_from_slice(&(text.len() as u16).to_le_bytes());
+        b[6..6 + text.len()].copy_from_slice(text);
+        b[6 + text.len()] = checksum(&b[..6 + text.len()]);
+        let s = Settings::from_bytes(&b).unwrap();
+        assert_eq!((s.wpm, s.theme, s.pos), (600, 2, 42));
+        assert_eq!(s.pacing.picture, Settings::default().pacing.picture);
+    }
+
+    #[test]
     fn rejects_corruption() {
         let mut b = Settings::default().to_bytes();
-        b[6] ^= 1;
+        b[8] ^= 1;
         assert_eq!(Settings::from_bytes(&b), None);
         assert_eq!(Settings::from_bytes(&[0xFF; SETTINGS_LEN]), None, "erased flash");
         assert_eq!(Settings::from_bytes(&[]), None);

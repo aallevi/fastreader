@@ -269,7 +269,14 @@ function toMarkup(doc, docPath) {
     }
     return t;
   };
-  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,img,image')) {
+  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,img,image,figcaption')) {
+    if (el.localName === 'figcaption') {
+      // A picture's description: kept with the picture, not read as text.
+      const t = walk(el, false, false).replace(/\s+/g, ' ').trim();
+      if (t) out.push(/^\u0000IMG:/.test(out[out.length - 1] || '') ? '{caption} ' + t + ' {/caption}' : t);
+      continue;
+    }
+    if (el.closest('figcaption')) continue;
     if (el.localName === 'img' || el.localName === 'image') {
       const src = el.getAttribute('src') || el.getAttribute('xlink:href') || el.getAttribute('href');
       if (src) out.push('\u0000IMG:' + resolve(src) + '\u0000');

@@ -79,6 +79,10 @@ class XhtmlText(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         classes = set((dict(attrs).get("class") or "").split())
+        if tag == "figcaption" and not self.skip:
+            # A picture's description: kept with the picture, not read as text.
+            self.flush()
+            self.caption = True
         if tag in ("img", "image") and self.picture and not self.skip:
             a = dict(attrs)
             mark = self.picture(a.get("src") or a.get("xlink:href") or a.get("href") or "")
@@ -97,6 +101,15 @@ class XhtmlText(HTMLParser):
             self.stack.append((tag, classes))
 
     def handle_endtag(self, tag):
+        if tag == "figcaption" and getattr(self, "caption", False):
+            text = re.sub(r"\s+", " ", "".join(self.line)).strip()
+            self.line = []
+            self.caption = False
+            if text and self.out and self.out[-1].startswith("{image:"):
+                self.out.append("{caption} " + text + " {/caption}")
+            elif text:
+                self.out.append(text)
+            return
         if tag in self.SKIP:
             self.skip = max(0, self.skip - (tag not in ("br", "img")))
             return

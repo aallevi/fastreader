@@ -53,7 +53,7 @@ struct View {
     look: Settings,
     frame: Frame,
     header: (String, Option<Battery>, Option<u32>, bool),
-    word: (usize, u8, bool, u16),
+    word: (usize, u8, bool, u16, bool),
     context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
@@ -78,11 +78,13 @@ pub struct Ui {
     context_room: Option<(bool, bool)>,
     /// The word the sentence's scroll belongs to (a new word starts afresh).
     context_for: usize,
+    /// The Description button on a picture, while it is shown.
+    caption_button: Option<Rect>,
 }
 
 impl Ui {
     pub fn new(w: u32, h: u32) -> Self {
-        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None, context_room: None, context_for: usize::MAX }
+        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None, context_room: None, context_for: usize::MAX, caption_button: None }
     }
 
     /// Forces a full repaint next time (after wake-up, rotation...).
@@ -93,6 +95,11 @@ impl Ui {
 
     /// The touch target under a point, in screen coordinates.
     pub fn hit(&self, app: &App, x: i32, y: i32) -> Option<Hit> {
+        if let (Some(b), Screen::Reading, false) = (self.caption_button, app.screen, app.reader.is_playing()) {
+            if b.inset(-6, -6).contains(x, y) {
+                return Some(Hit::Caption);
+            }
+        }
         if let (Some((up, down)), Screen::Reading, false) = (self.context_room, app.screen, app.reader.is_playing()) {
             let [a, b] = layout::context_arrows(&self.layout);
             if a.contains(x, y) {
@@ -146,6 +153,8 @@ impl Ui {
                 matches!(app.screen, Screen::Line { .. }),
                 // While the ticker glides, every frame is a new picture.
                 if app.animating() { (app.reader.progress(now) * 256.0) as u16 } else { 0 },
+                // A picture shows its Description button only while paused.
+                paused && app.reader.on_picture(),
             ),
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some((app.reader.pos(), app.context_scroll)),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
@@ -206,7 +215,10 @@ impl Ui {
                     // Clear just the previous word, draw the new one, push both boxes.
                     clear(cv, th, &l, *word_box);
                     let new_box = draw_word(f, cv, &ctx);
-                    damage.push(word_box.union(&new_box).intersect(&l.word));
+                    // A picture covers the sentence area too: push its whole box
+                    // (not just the word area), or its lower half never reaches
+                    // the panel and lingers under the next words.
+                    damage.push(word_box.union(&new_box).intersect(&l.stage));
                     *word_box = new_box;
                 }
                 if o.context != view.context {
@@ -234,6 +246,13 @@ impl Ui {
         }
         if app.screen != Screen::Reading || app.reader.is_playing() {
             self.context_room = None;
+        }
+        // The Description button is live only on a paused picture that has one.
+        self.caption_button = None;
+        if app.screen == Screen::Reading && !app.reader.is_playing() && app.reader.on_picture() && app.reader.book.caption(app.reader.pos()).is_some() {
+            let p = paper(th, &l);
+            let area = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
+            self.caption_button = Some(caption_button_rect(&l, area, &mut self.fonts, th));
         }
         self.last = Some(view);
         damage
@@ -654,6 +673,11 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         match book.image_of(book.word(shown.start).unwrap()) {
             Some(img) => {
                 cv.image(area.inset(l.i(10.0), l.i(4.0)), img.w, img.h, &img.px);
+                if !app.reader.is_playing() {
+                    if let Some(text) = book.caption(shown.start) {
+                        draw_caption(f, cv, c, area, text);
+                    }
+                }
             }
             None => {
                 let msg = up(th, "[figure missing]");
@@ -764,6 +788,63 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
 
 /// Phrase and ticker text size relative to the single-word size.
 const PHRASE_SCALE: f32 = 0.62;
+
+/// Where the Description button sits on a picture (bottom right).
+fn caption_button_rect(l: &Layout, area: Rect, f: &mut Fonts, th: &Theme) -> Rect {
+    let label_w = f.measure(th.ui.1, l.px(11.0), "Description");
+    let (w, h) = ((label_w + l.px(16.0)) as i32, l.i(20.0));
+    Rect::new(area.right() - w - l.i(6.0), area.bottom() - h - l.i(4.0), w, h)
+}
+
+/// A picture's description over its lower part (when turned on), and the
+/// button that shows or hides it.
+fn draw_caption(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect, text: &str) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let button = caption_button_rect(l, area, f, th);
+    if app.settings.captions {
+        // Wrap to the full width, at most four lines, on a band of page colour.
+        let px = l.px(12.0);
+        let face = family(app.settings.font).face(Style::PLAIN);
+        let max_w = area.w as f32 - l.px(16.0);
+        let space = f.measure(face, px, " ");
+        let mut lines: Vec<String> = alloc::vec![String::new()];
+        let mut lw = 0.0;
+        for word in text.split_whitespace() {
+            let word = word.trim_matches('*');
+            let ww = f.measure(face, px, word);
+            if lw + ww > max_w && !lines.last().unwrap().is_empty() {
+                lines.push(String::new());
+                lw = 0.0;
+            }
+            let line = lines.last_mut().unwrap();
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+            lw += ww + space;
+        }
+        if lines.len() > 4 {
+            lines.truncate(4);
+            lines[3].push('…');
+        }
+        let lh = l.px(15.0);
+        let band_h = (lh * lines.len() as f32 + l.px(10.0)) as i32 + button.h + l.i(6.0);
+        let band = Rect::new(area.x, area.bottom() - band_h, area.w, band_h);
+        cv.fill(band, th.page);
+        cv.fill(Rect::new(band.x, band.y, band.w, 1), mix(th.page, th.dim, 90));
+        for (k, line) in lines.iter().enumerate() {
+            let y = band.y as f32 + l.px(5.0) + lh * (k as f32 + 0.78);
+            f.draw(cv, face, px, line, band.x as f32 + l.px(8.0), y, th.text);
+        }
+    }
+    // The button: a small pill, filled while the description is shown.
+    let on = app.settings.captions;
+    cv.rrect(button, button.h as f32 / 2.0, Paint::Solid(if on { th.fill } else { mix(th.page, th.dim, 40) }));
+    cv.rrect_stroke(button, button.h as f32 / 2.0, mix(th.page, th.dim, 140));
+    let label = up(th, if on { "Hide" } else { "Description" });
+    let lw = f.measure(th.ui.1, l.px(11.0), &label);
+    f.draw(cv, th.ui.1, l.px(11.0), &label, button.cx() - lw / 2.0, button.cy() + l.px(4.0), if on { WHITE } else { th.text });
+}
 
 /// Distance from a word's start to the middle of its recognition letter.
 /// Measured with the letter (and the one before it) together, so kerning
@@ -1116,6 +1197,8 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Bookmarked => "Bookmarked".into(),
         Msg::NoCard => "No SD card in the reader".into(),
         Msg::PictureHeld => "Picture: press play to go on".into(),
+        Msg::CaptionShown => "Description shown".into(),
+        Msg::CaptionHidden => "Description hidden".into(),
         Msg::Formatting => "Formatting the card…".into(),
         Msg::CardReady => "SD card ready".into(),
         Msg::CardFailed => "Could not format the card".into(),

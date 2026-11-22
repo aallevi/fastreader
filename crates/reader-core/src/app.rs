@@ -353,6 +353,8 @@ pub enum Hit {
     Bookmark,
     /// One of the four title-bar buttons: open that menu (see [`MENU`]).
     Group(u8),
+    /// The Description button on a picture (while paused): show or hide it.
+    Caption,
     /// The small ▲▼ beside the sentence under the word (while paused);
     /// `room`: whether there is more of the sentence that way.
     ContextScroll { down: bool, room: bool },
@@ -397,6 +399,8 @@ pub enum Msg {
     NoCard,
     /// Reading waits on a picture ("Until I press play").
     PictureHeld,
+    CaptionShown,
+    CaptionHidden,
     Formatting,
     CardReady,
     CardFailed,
@@ -658,6 +662,11 @@ impl App {
                     self.screen = Screen::Menu { sel };
                     Feedback::ok(Msg::Shown)
                 };
+                self.feedback(fb, now)
+            }
+            (Hit::Caption, Screen::Reading) => {
+                self.settings.captions = !self.settings.captions;
+                let fb = Feedback::ok(if self.settings.captions { Msg::CaptionShown } else { Msg::CaptionHidden });
                 self.feedback(fb, now)
             }
             (Hit::ContextScroll { down, room }, Screen::Reading) => {
@@ -1345,11 +1354,17 @@ mod tests {
     use super::*;
     use crate::input::Key::*;
 
+    /// A fixed baseline for the tests (the shipped defaults follow the
+    /// owner's choices and may change).
+    fn base() -> Settings {
+        Settings { wpm: 475, theme: 0, brightness: 4, position: 0, indent: false, justify: false, ..Settings::default() }
+    }
+
     const CAT: Catalog = Catalog { themes: &["A", "B", "C"], fonts: &["x", "y"] };
     const TEXT: &str = "# One\nAlpha beta. Gamma delta.\n# Two\nEpsilon zeta eta. Theta.";
 
     fn app() -> App {
-        App::new(Book::new("t", TEXT), CAT, Settings::default())
+        App::new(Book::new("t", TEXT), CAT, base())
     }
 
     /// Everything the user could see, to check that each key does *something*.
@@ -1522,7 +1537,7 @@ mod tests {
 
     #[test]
     fn no_chapters_is_explained() {
-        let mut a = App::new(Book::new("t", "plain text only"), CAT, Settings::default());
+        let mut a = App::new(Book::new("t", "plain text only"), CAT, base());
         a.screen = Screen::Menu { sel: menu_index(MenuItem::Chapters) };
         assert_eq!(a.handle(Select, 0), Feedback::limit(Msg::NoChapters));
     }
@@ -1562,7 +1577,7 @@ mod tests {
 
     #[test]
     fn page_view_turns_whole_pages_like_a_book() {
-        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, Settings::default());
+        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, base());
         choose_mode(&mut a, Mode::Page);
         // As the renderer measured them: pages start at words 0, 4 and 8.
         a.pages = alloc::vec![0, 4, 8];
@@ -1586,7 +1601,7 @@ mod tests {
 
     #[test]
     fn pages_not_yet_counted_turn_with_the_renderers_hint() {
-        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, Settings::default());
+        let mut a = App::new(Book::new("t", "w0 w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11."), CAT, base());
         choose_mode(&mut a, Mode::Page);
         a.pages = alloc::vec![0, 4];
         a.reader.seek(5, 0);
@@ -1611,7 +1626,7 @@ mod tests {
 
     #[test]
     fn each_mode_groups_words_its_own_way() {
-        let mut a = App::new(Book::new("t", "She walked into the old house of the family."), CAT, Settings { chunk: 2, ..Settings::default() });
+        let mut a = App::new(Book::new("t", "She walked into the old house of the family."), CAT, Settings { chunk: 2, ..base() });
         assert_eq!(a.reader.shown(), 0..2, "word mode: 2 words per flash");
         choose_mode(&mut a, Mode::Phrase);
         assert_eq!(a.screen, Screen::Reading);
@@ -1683,7 +1698,7 @@ mod tests {
 
     #[test]
     fn finishing_saves_and_says_so() {
-        let mut a = App::new(Book::new("t", "a b"), CAT, Settings::default());
+        let mut a = App::new(Book::new("t", "a b"), CAT, base());
         a.handle(Select, 0);
         let mut now = 0;
         while a.reader.is_playing() {
@@ -1705,7 +1720,7 @@ mod tests {
 
     #[test]
     fn skip_setting_changes_what_the_skip_buttons_do() {
-        let mut a = App::new(Book::new("t", "a b c d e f g h i j k l m n o p."), CAT, Settings::default());
+        let mut a = App::new(Book::new("t", "a b c d e f g h i j k l m n o p."), CAT, base());
         a.handle(Right, 0);
         assert_eq!(a.reader.pos(), 0, "one sentence: nowhere to go");
         a.set_setting("skip", 2).unwrap();
@@ -1792,6 +1807,16 @@ mod tests {
     }
 
     #[test]
+    fn the_description_button_toggles_and_is_remembered() {
+        let mut a = App::new(Book::new("t", "A.\n\n{image:0}\n\n{caption} Altamira {/caption}"), CAT, base());
+        assert!(!a.settings.captions);
+        assert_eq!(a.tap(Hit::Caption, 0).msg, Msg::CaptionShown);
+        assert!(a.settings.captions);
+        assert_eq!(a.tap(Hit::Caption, 0).msg, Msg::CaptionHidden);
+        assert_eq!(Settings::from_bytes(&a.settings.to_bytes()).unwrap().captions, a.settings.captions);
+    }
+
+    #[test]
     fn formatting_the_card_needs_the_explicit_row() {
         let mut a = app();
         a.screen = Screen::Menu { sel: menu_index(MenuItem::Card) };
@@ -1824,7 +1849,7 @@ mod tests {
 
     #[test]
     fn saved_view_and_chunk_are_restored() {
-        let s = Settings { mode: 3, chunk: 2, theme: 200, ..Settings::default() };
+        let s = Settings { mode: 3, chunk: 2, theme: 200, ..base() };
         let a = App::new(Book::new("t", TEXT), CAT, s);
         assert_eq!(a.screen, Screen::Page);
         assert_eq!(a.reader.chunk(), 2);

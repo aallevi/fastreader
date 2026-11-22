@@ -294,7 +294,7 @@ fn page_deep_in_a_long_book_shows_without_counting_first() {
 #[test]
 fn centred_words_are_centred() {
     let th = THEMES[0];
-    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 0, chunk: 1, ..Settings::default() });
+    let mut a = app_with(&TEXT.repeat(3), Settings { mode: 0, chunk: 1, position: 0, ..Settings::default() });
     let mut cv = Canvas::new(320, 240);
     let mut ui = Ui::new(320, 240);
     let l = ui.layout;
