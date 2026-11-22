@@ -396,14 +396,10 @@ fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
     cv.clip(Rect::new(r.x - l.i(10.0), r.y, r.w + l.i(10.0), r.h + l.i(10.0)));
     cv.glow(x0 + s * 0.3, y0 + s * 0.78, s * 0.8, s * 0.55, BLACK, 110);
     cv.unclip();
-    let flap = if th.chrome == Chrome::Ink { th.page } else { mix(th.page, BLACK, 38) };
+    let flap = mix(th.page, BLACK, 38);
     cv.polygon(&[(x0, y0), (x0 + s, y0 + s), (x0, y0 + s)], flap);
     // The crease catches the light.
     cv.line((x0 + 0.5, y0 + 0.5), (x0 + s - 0.5, y0 + s - 0.5), l.px(1.0), mix(th.page, WHITE, 120));
-    if th.chrome == Chrome::Ink {
-        cv.line((x0, y0), (x0, y0 + s), 1.0, th.text);
-        cv.line((x0, y0 + s), (x0 + s, y0 + s), 1.0, th.text);
-    }
 }
 
 /// The dog-ear the Windows 98 way: whole pixels, no blur. The desktop teal
@@ -507,9 +503,6 @@ fn button(cv: &mut Canvas, th: &Theme, l: &Layout, r: Rect, kind: Kind, hot: boo
         (Kind::Row, true) => th.row_sel,
     };
     let rad = l.px(th.radius.max(2.0)) + if kind == Kind::Row { 0.0 } else { l.px(1.0) };
-    if th.chrome == Chrome::Mac && !hot {
-        cv.rrect_alpha(Rect::new(r.x, r.y + 1, r.w, r.h), rad, Paint::Solid(BLACK), 22);
-    }
     cv.rrect(r, rad, Paint::Solid(style.edge));
     let inner = r.inset(1, 1);
     cv.rrect(inner, (rad - 1.0).max(0.0), Paint::Vertical(style.face));
@@ -536,11 +529,6 @@ fn bar_bg(cv: &mut Canvas, th: &Theme, r: Rect, top_edge: bool) {
             let seam = if top_edge { r.y } else { r.bottom() - 1 };
             cv.fill(Rect::new(r.x, seam, r.w, 1), 0x071521);
         }
-        Chrome::Mac => {
-            cv.paint_rect(r, Paint::Vertical(th.bar));
-            let seam = if top_edge { r.y } else { r.bottom() - 1 };
-            cv.fill(Rect::new(r.x, seam, r.w, 1), 0xD1D1D1);
-        }
         Chrome::Scrivener => cv.paint_rect(r, Paint::Vertical(th.bar)),
         Chrome::Win98 => {
             if top_edge {
@@ -551,11 +539,6 @@ fn bar_bg(cv: &mut Canvas, th: &Theme, r: Rect, top_edge: bool) {
                 cv.fill(r, W98_FACE);
                 cv.paint_rect(r.inset(2, 2), Paint::Horizontal(th.bar));
             }
-        }
-        Chrome::Ink => {
-            cv.fill(r, th.page);
-            let seam = if top_edge { r.y } else { r.bottom() - 2 };
-            cv.fill(Rect::new(r.x + 8, seam, r.w - 16, 1), th.text);
         }
     }
 }
@@ -585,6 +568,9 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             cv.fill(Rect::new(0, r.bottom() - 1, r.w, 1), 0x0B1B28);
         }
         _ => bar_bg(cv, th, r, false),
+    }
+    if th.chrome == Chrome::Win98 {
+        bevel(cv, r, false); // a raised panel, like 98's window parts
     }
     let title_c = match th.chrome {
         Chrome::Vista | Chrome::Win98 => WHITE,
@@ -1069,29 +1055,28 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
             crate::icons::draw(cv, icon, rect.cx(), rect.cy(), l.px(12.0), col);
         }
     }
+    // One colour, flush left (or justified, as the text alignment says); a
+    // thin line right after the word(s) on screen marks where you are.
+    let last_line = lines.len().saturating_sub(1);
     for (n, line) in visible.iter().enumerate() {
         let width: f32 = line.iter().map(|w| w.1).sum::<f32>() + space * (line.len().saturating_sub(1)) as f32;
-        let x0 = (area.0 + area.1) / 2.0 - width / 2.0;
+        let full = area.1 - area.0;
+        let gap = if app.settings.justify && first as usize + n != last_line && line.len() > 1 {
+            space + (full - width).max(0.0) / (line.len() - 1) as f32
+        } else {
+            space
+        };
         let y = top + n as f32 * lh;
-        // One highlight shape around the whole group on this line.
-        let mut x = x0;
-        let mut span: Option<(f32, f32)> = None;
-        for &(idx, ww) in line {
-            if shown.contains(&idx) {
-                span = Some(span.map_or((x, x + ww), |(a, _)| (a, x + ww)));
-            }
-            x += ww + space;
-        }
-        if let Some((a, z)) = span {
-            let hr = Rect::new((a - 2.0) as i32, (y - lh * 0.78) as i32, (z - a + 4.0) as i32, (lh * 0.98) as i32);
-            cv.rrect(hr, th.radius.min(3.0), Paint::Solid(th.mark));
-        }
-        let mut x = x0;
-        for &(idx, ww) in line {
+        let mut x = area.0;
+        for (k, &(idx, ww)) in line.iter().enumerate() {
             let w = book.word(idx).unwrap();
-            let here = shown.contains(&idx);
-            f.draw(cv, fam.face(w.style), px, running_text(book, w), x, y, if here { th.mark_text } else { th.dim });
-            x += ww + space;
+            f.draw(cv, fam.face(w.style), px, running_text(book, w), x, y, th.dim);
+            // After the last word on screen: the reading line.
+            if idx + 1 == shown.end {
+                let cx = if k + 1 < line.len() { x + ww + gap / 2.0 } else { x + ww + l.px(3.0) };
+                cv.line((cx, y - lh * 0.72), (cx, y + lh * 0.18), l.px(1.5), th.dim);
+            }
+            x += ww + gap;
         }
     }
     (lines.len() > ROWS).then_some((up, down, first - base))
@@ -1118,6 +1103,15 @@ fn draw_status(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let base = bar.y as f32 - l.px(4.0);
     let px = l.px(10.5);
     let b = &app.reader.book;
+    if th.chrome == Chrome::Win98 {
+        // A 98 status bar: the numbers in a sunken panel.
+        let panel = Rect::new(p.x + l.i(4.0), (base - l.px(11.0)) as i32, p.w - l.i(8.0), l.i(15.0));
+        cv.fill(panel, W98_FACE);
+        cv.fill(Rect::new(panel.x, panel.y, panel.w, 1), 0x808080);
+        cv.fill(Rect::new(panel.x, panel.y, 1, panel.h), 0x808080);
+        cv.fill(Rect::new(panel.x, panel.bottom() - 1, panel.w, 1), WHITE);
+        cv.fill(Rect::new(panel.right() - 1, panel.y, 1, panel.h), WHITE);
+    }
     let left = match (app.screen, app.page_index()) {
         (Screen::Page, Some(i)) if app.pages_done => format!("Page {} of {}  ·  {}%", i + 1, app.pages.len(), app.reader.permille() / 10),
         (Screen::Page, Some(i)) => format!("Page {}  ·  {}%", i + 1, app.reader.permille() / 10),
@@ -1157,6 +1151,9 @@ fn group(n: usize) -> String {
 fn draw_toolbar(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let (th, l, app) = (c.th, c.l, c.app);
     bar_bg(cv, th, l.toolbar, true);
+    if th.chrome == Chrome::Win98 {
+        bevel(cv, l.toolbar, false);
+    }
     let (buttons, label) = toolbar(app, l);
     let lit = app.lit(c.now);
     for b in &buttons {
@@ -1244,9 +1241,7 @@ fn draw_toast(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect) {
     let limit = t.feedback.tone == Tone::Limit;
     let (bg, fg) = if limit { (th.limit, th.limit_text) } else { (th.toast, th.toast_text) };
     let radius = match th.chrome {
-        Chrome::Mac => h / 2.0,
         Chrome::Win98 => 0.0,
-        Chrome::Ink => 2.0,
         _ => l.px(4.0),
     };
     let edge = if limit && th.chrome != Chrome::Win98 { mix(th.limit, BLACK, 50) } else { th.toast_edge };

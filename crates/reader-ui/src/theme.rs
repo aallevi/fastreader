@@ -11,12 +11,8 @@ pub type Stops = &'static [(u8, Rgb)];
 pub enum Chrome {
     /// Windows Vista / Photo Gallery: glossy split gradients, aurora glass.
     Vista,
-    /// macOS: traffic lights, light toolbar, blue accent.
-    Mac,
     /// Scrivener composition mode: paper column on a dark backdrop.
     Scrivener,
-    /// E-ink: flat, hairlines, uppercase mono labels, inverted selection.
-    Ink,
     /// Windows 98: grey embossed bevels, navy title bar, square corners.
     Win98,
 }
@@ -111,7 +107,6 @@ impl Theme {
         }
         let family = match self.chrome {
             Chrome::Vista | Chrome::Win98 => "'Segoe UI',Selawik,Tahoma,sans-serif",
-            Chrome::Ink => "'IBM Plex Mono',Menlo,monospace",
             _ => "-apple-system,'IBM Plex Sans','Helvetica Neue',sans-serif",
         };
         let _ = write!(s, "--radius:{}px;--font:{family};}}", self.radius);

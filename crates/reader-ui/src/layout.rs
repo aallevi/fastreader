@@ -101,8 +101,9 @@ pub struct Label {
 
 /// The paper the text sits on: the whole reading area, edge to edge, in
 /// every theme (no side bands; the screen is small).
-pub fn paper(_th: &crate::theme::Theme, l: &Layout) -> Rect {
-    l.stage
+pub fn paper(th: &crate::theme::Theme, l: &Layout) -> Rect {
+    // Windows 98: the page is a sunken box, its 2-pixel frame just inside.
+    if th.chrome == crate::theme::Chrome::Win98 { l.stage.inset(2, 2) } else { l.stage }
 }
 
 /// The page's top-right corner: tap to dog-ear (bookmark) the current place.
