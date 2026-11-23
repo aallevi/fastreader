@@ -57,7 +57,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
 ## Guide lines
-- [ ] Aa → Guide lines → On: a line above and below the word across the page, with a tick at the centre letter (etched in Windows 98, thin grey elsewhere); word and phrase modes.
+- [ ] Aa → Guide lines → On: a line above and below the word across the page, with a tick at the centre letter (a groove in Windows 98, thin grey elsewhere); gone while a picture shows, back with the next word; word and phrase modes.
 
 ## Jump counts
 - [ ] Press ⏭ four times and ⏮ once quickly: the message counts 1, 2, 3, 4 and ends on "3 sentences forward"; after it disappears the count starts again. The same for page turns and the thin ‹ ›.

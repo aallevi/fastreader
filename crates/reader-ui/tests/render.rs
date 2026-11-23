@@ -438,3 +438,68 @@ fn every_menu_entry_and_option_list_draws_in_every_theme() {
         }
     }
 }
+
+#[test]
+fn guide_lines_give_way_to_pictures_and_come_back() {
+    // A word, a picture, a word: the lines are hidden by the picture and back after.
+    let mut file = b"Before the figure.\n\n{image:0}\n\nAfter it.".to_vec();
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&[100, 0, 60, 0]);
+    file.extend(std::iter::repeat_n(0x00, 100 * 60 * 2)); // a black picture
+    for theme in [0u8, 3] {
+        let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { theme, guides: true, mode: 0, chunk: 1, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        let l = ui.layout;
+        // Find a guide row: a row of the word area that is drawn across nearly
+        // the whole width (the line), well away from the word itself.
+        let line_rows = |cv: &Canvas| -> Vec<i32> {
+            let page = cv.pixel(160, l.word.y + 2);
+            (l.word.y..l.word.bottom())
+                .filter(|&y| (20..300).filter(|&x| cv.pixel(x, y) != page).count() > 250)
+                .collect()
+        };
+        a.reader.seek(1, 0);
+        ui.paint(&mut a, 0, &mut cv);
+        let before = line_rows(&cv);
+        assert!(!before.is_empty(), "theme {theme}: guide lines drawn");
+        a.reader.seek(3, 10); // the picture
+        ui.paint(&mut a, 10, &mut cv);
+        let pic_rows = line_rows(&cv);
+        assert!(before.iter().all(|y| !pic_rows.contains(y)), "theme {theme}: the picture hides the lines");
+        a.reader.seek(4, 20);
+        ui.paint(&mut a, 20, &mut cv);
+        assert_eq!(line_rows(&cv), before, "theme {theme}: the lines come back after the picture");
+    }
+}
+
+#[test]
+#[ignore]
+fn guide_lines_pictures_sheet() {
+    // cargo test -p reader-ui --test render guide_lines_pictures_sheet -- --ignored
+    let mut file = b"Before the figure.\n\n{image:0}\n{caption} A small grey square. {/caption}\n\nAfter it.".to_vec();
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&[60, 0, 40, 0]);
+    file.extend(std::iter::repeat_n(0x84, 60 * 40 * 2));
+    let dir = std::env::var("SHEET_DIR").unwrap();
+    for theme in [0u8, 3] {
+        let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { theme, guides: true, mode: 0, chunk: 1, position: 1, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        a.settings.captions = true;
+        for (k, (pos, t)) in [(1usize, 0u64), (3, 10), (4, 20)].into_iter().enumerate() {
+            a.reader.seek(pos, t);
+            ui.paint(&mut a, t, &mut cv);
+            let mut ppm = format!("P6 320 240 255\n").into_bytes();
+            for y in 0..240 {
+                for x in 0..320 {
+                    let c = cv.pixel(x, y);
+                    ppm.extend_from_slice(&[(c >> 16) as u8, (c >> 8) as u8, c as u8]);
+                }
+            }
+            std::fs::write(format!("{dir}/t{theme}-{k}.ppm"), ppm).unwrap();
+        }
+    }
+}

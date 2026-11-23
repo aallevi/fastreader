@@ -884,7 +884,7 @@ pub fn recognition_x(f: &mut Fonts, face: Face, px: f32, s: &str) -> f32 {
 /// the word, each with a short tick pointing at the centre letter (the
 /// recognition letter, or the middle of a centred word). Both stay put from
 /// word to word, so they are drawn once and never get in the word's way.
-/// Windows 98 draws them etched (grey with a white line under).
+/// Windows 98 draws them as a groove (grey with a light grey line under).
 fn draw_guides(cv: &mut Canvas, c: &Ctx, base: f32, ascent: f32, descent: f32) {
     let (th, l, app) = (c.th, c.l, c.app);
     let p = paper(th, l);
@@ -898,11 +898,13 @@ fn draw_guides(cv: &mut Canvas, c: &Ctx, base: f32, ascent: f32, descent: f32) {
     let tx = cx.round() as i32;
     if th.chrome == Chrome::Win98 {
         for (y, down) in [(top, true), (bottom, false)] {
+            // A groove: on the white page an etch's white half would vanish,
+            // so the light half is the 98 light grey.
             cv.fill(Rect::new(x, y, w, 1), 0x808080);
-            cv.fill(Rect::new(x, y + 1, w, 1), WHITE);
+            cv.fill(Rect::new(x, y + 1, w, 1), 0xDFDFDF);
             let (ty, th_) = if down { (y + 2, tick as i32) } else { (y - tick as i32, tick as i32) };
             cv.fill(Rect::new(tx, ty, 1, th_), 0x808080);
-            cv.fill(Rect::new(tx + 1, ty, 1, th_), WHITE);
+            cv.fill(Rect::new(tx + 1, ty, 1, th_), 0xDFDFDF);
         }
     } else {
         let grey = mix(th.page, th.dim, 170);
