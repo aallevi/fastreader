@@ -1,0 +1,86 @@
+# Credits and bibliography
+
+## Inspiration
+
+- **[AllanBinder/ereader](https://github.com/AllanBinder/ereader)** (Apache-2.0): the
+  e-paper speed reader this project started from. Its phrase grouping (up to 3
+  words, ending at sentences) and its fixed left edge for phrases, with the
+  reasoning behind them, are followed here.
+- **Spritz** and the open readers that documented its rule:
+  [OpenSpritz](https://github.com/Miserlou/OpenSpritz),
+  [Jetzt](https://github.com/ds300/jetzt).
+
+## Hardware
+
+- **LCDWIKI ES3C28P** (ESP32-S3, 2.8" ILI9341V IPS, FT6336 touch, microSD):
+  [module page](https://www.lcdwiki.com/2.8inch_ESP32-S3_Display),
+  [user manual](https://www.lcdwiki.com/res/ES3C28P/2.8inch_IPS_ESP32-S3_ES3C28P_ES3N28P_User_Manual.pdf).
+
+## Software used
+
+| Part | What | Licence |
+|---|---|---|
+| Firmware | [esp-hal, esp-radio, esp-rtos, esp-alloc, esp-storage](https://github.com/esp-rs) (Espressif and the esp-rs community) | MIT / Apache-2.0 |
+| | [Embassy](https://embassy.dev) executor, net, time, sync | MIT / Apache-2.0 |
+| | [edge-dhcp, edge-nal](https://github.com/ivmarkov/edge-net) | MIT / Apache-2.0 |
+| | [embedded-sdmmc](https://github.com/rust-embedded-community/embedded-sdmmc-rs), [mipidsi](https://github.com/almindor/mipidsi), [embedded-graphics](https://github.com/embedded-graphics/embedded-graphics), embedded-hal | MIT / Apache-2.0 |
+| Rendering | [ab_glyph](https://github.com/alexheretic/ab-glyph) (TrueType outlines), libm, core_maths | Apache-2.0 / MIT |
+| Simulator | [minifb](https://github.com/emoon/rust_minifb), [png](https://github.com/image-rs/image-png) | MIT / Apache-2.0 |
+| Phone page | [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla), served by the reader | Apache-2.0 |
+| Tools | [PyMuPDF](https://pymupdf.readthedocs.io), [fontTools](https://github.com/fonttools/fonttools), NumPy | AGPL-3.0 / MIT / BSD |
+| OCR | [LightOnOCR-2-1B (bbox)](https://huggingface.co/lightonai/LightOnOCR-2-1B-bbox-soup) by LightOn, run through [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) via the Scan Studio add-on | Apache-2.0 |
+| Testing | [Playwright](https://playwright.dev) (the phone page in WebKit and Chromium) | Apache-2.0 |
+
+Fonts (SIL Open Font License 1.1, subsets): Atkinson Hyperlegible (Braille
+Institute), Literata (TypeTogether), IBM Plex (IBM), Crimson Pro, Courier
+Prime, Gelasio. See [assets/fonts/LICENSE.md](assets/fonts/LICENSE.md).
+
+## Bibliography
+
+Reading and RSVP
+
+- Forster, K. I. (1970). Visual perception of rapidly presented word sequences
+  of varying complexity. *Perception & Psychophysics*, 8(4), 215–221.
+- Potter, M. C. (1984). Rapid serial visual presentation (RSVP): A method for
+  studying language processing. In D. E. Kieras & M. A. Just (Eds.), *New
+  Methods in Reading Comprehension Research* (pp. 91–118). Erlbaum.
+- McConkie, G. W., & Rayner, K. (1975). The span of the effective stimulus
+  during a fixation in reading. *Perception & Psychophysics*, 17(6), 578–586.
+  — about 3–4 letters left and 14–15 right of the fixation: the basis for the
+  phrase start and the recognition point.
+- O'Regan, J. K., & Jacobs, A. M. (1992). Optimal viewing position effect in
+  word recognition: A challenge to current theory. *Journal of Experimental
+  Psychology: Human Perception and Performance*, 18(1), 185–197.
+- Rayner, K. (1998). Eye movements in reading and information processing: 20
+  years of research. *Psychological Bulletin*, 124(3), 372–422.
+- Rayner, K., Schotter, E. R., Masson, M. E. J., Potter, M. C., & Treiman, R.
+  (2016). So much to read, so little time: How do we read, and can speed
+  reading help? *Psychological Science in the Public Interest*, 17(1), 4–34.
+  — a sober review of what speed reading can and cannot do.
+- Spritz. *Methods and systems for displaying text using RSVP*. US Patent
+  [9,483,109 B2](https://patents.google.com/patent/US9483109B2/en). — the recognition-letter rule by word length and
+  splitting words over 13 letters.
+
+Interface
+
+- Fitts, P. M. (1954). The information capacity of the human motor system in
+  controlling the amplitude of movement. *Journal of Experimental Psychology*,
+  47(6), 381–391. — touch areas split between buttons.
+- Bayer, B. E. (1973). An optimum method for two-level rendition of
+  continuous-tone pictures. *IEEE International Conference on Communications*.
+  — the ordered dithering to the panel's 16-bit colour.
+
+Standards
+
+- W3C. *Speech Synthesis Markup Language (SSML) Version 1.1* (2010). — the
+  model for the pause marks (`{pause}`, `{slow}`).
+- Kumari, W., & Kline, E. *Captive-Portal Identification in DHCP and Router
+  Advertisements*. RFC 8910 (2020). — the phone opening the reader's page.
+- Microsoft. *FAT: General Overview of On-Disk Format* (FAT32 specification,
+  2000). — the SD card formatter.
+- IDPF / W3C. *EPUB 3*. — the books the converters read and `ocr_book.py` writes.
+
+OCR
+
+- LightOn (2026). LightOnOCR: A 1B end-to-end multilingual vision-language
+  model for state-of-the-art OCR. [arXiv:2601.14251](https://arxiv.org/abs/2601.14251).

@@ -74,6 +74,8 @@ Optional buttons on GPIO 2, 3, 14, 21 to GND.
 [VERIFY.md](VERIFY.md) on-device checklist · [AUDIT.md](AUDIT.md) how
 everything was checked · [PLAN.md](PLAN.md) what's next
 
-Inspired by [AllanBinder/ereader](https://github.com/AllanBinder/ereader).
-Code MIT ([LICENSE](LICENSE)); fonts SIL OFL 1.1 ([assets/fonts](assets/fonts/LICENSE.md));
+Inspired by [AllanBinder/ereader](https://github.com/AllanBinder/ereader);
+built on esp-rs, Embassy, pdf.js and more, and on reading research from
+McConkie & Rayner to Rayner et al. (2016): see **[CREDITS.md](CREDITS.md)**
+for credits and bibliography. Code MIT ([LICENSE](LICENSE)); fonts SIL OFL 1.1 ([assets/fonts](assets/fonts/LICENSE.md));
 pdf.js Apache-2.0 ([assets/web](assets/web)).
