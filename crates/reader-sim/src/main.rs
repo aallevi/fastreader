@@ -38,7 +38,7 @@ fn main() {
         .map(|(_, a)| a)
         .collect();
     if positional.first().map(|s| s.as_str()) == Some("record") {
-        // record <book> <dir> [--theme N] [--wpm N]: frames for a GIF.
+        // record <book> <dir> [--theme N] [--wpm N] [--blue] [--demo]: frames for a GIF.
         let book = PathBuf::from(positional.get(1).expect("record <book> <dir>").as_str());
         let dir = PathBuf::from(positional.get(2).expect("record <book> <dir>").as_str());
         let mut s = Settings::default();
@@ -49,7 +49,7 @@ fn main() {
             s.wpm = w;
         }
         s.blue_blocks = args.iter().any(|a| a == "--blue");
-        walkthrough::record(&book, &dir, size, s);
+        walkthrough::record(&book, &dir, size, s, args.iter().any(|a| a == "--demo"));
         return;
     }
     if positional.first().map(|s| s.as_str()) == Some("walkthrough") {

@@ -412,7 +412,7 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
 /// Records a reading session frame by frame, for docs/: every frame that
 /// changes the screen is saved as a PNG, and `frames.txt` lists each with how
 /// long it stayed (ms), so a GIF can keep the real rhythm.
-pub fn record(book: &Path, dir: &Path, (w, h): (u32, u32), settings: Settings) {
+pub fn record(book: &Path, dir: &Path, (w, h): (u32, u32), settings: Settings, demo: bool) {
     std::fs::create_dir_all(dir).unwrap();
     let text = std::fs::read_to_string(book).expect("book");
     let mut app = App::new(Book::parse(&text, "book"), CATALOG, settings);
@@ -433,7 +433,36 @@ pub fn record(book: &Path, dir: &Path, (w, h): (u32, u32), settings: Settings) {
     save(&cv, 0, &mut frames);
     let mut now = 1_200;
     app.handle(reader_core::Key::Select, now);
-    while app.reader.is_playing() && now < 120_000 {
+    // --demo: near the end, pause, one sentence back, two words forward,
+    // bookmark that word, then read on to the end.
+    let near_end = app.reader.book.len() * 9 / 10;
+    let mut demo_done = !demo;
+    let step = |app: &mut App, ui: &mut Ui, cv: &mut Canvas, now: &mut u64, frames: &mut Vec<(String, u64)>, ms: u64| {
+        let end = *now + ms;
+        while *now < end {
+            app.tick(*now);
+            if !ui.paint(app, *now, cv).is_empty() {
+                save(cv, *now, frames);
+            }
+            *now += 10;
+        }
+    };
+    while app.reader.is_playing() && now < 180_000 {
+        if !demo_done && app.reader.pos() >= near_end {
+            demo_done = true;
+            app.handle(reader_core::Key::Select, now); // pause
+            step(&mut app, &mut ui, &mut cv, &mut now, &mut frames, 1_400);
+            app.handle(reader_core::Key::Left, now); // one sentence back
+            step(&mut app, &mut ui, &mut cv, &mut now, &mut frames, 1_400);
+            app.tap(Hit::StepWord { forward: true }, now);
+            step(&mut app, &mut ui, &mut cv, &mut now, &mut frames, 600);
+            app.tap(Hit::StepWord { forward: true }, now); // two words forward
+            step(&mut app, &mut ui, &mut cv, &mut now, &mut frames, 1_400);
+            app.tap(Hit::Bookmark, now); // dog-ear this word
+            step(&mut app, &mut ui, &mut cv, &mut now, &mut frames, 2_000);
+            app.handle(reader_core::Key::Select, now); // and on to the end
+            continue;
+        }
         app.tick(now);
         if !ui.paint(&mut app, now, &mut cv).is_empty() {
             save(&cv, now, &mut frames);

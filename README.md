@@ -8,7 +8,7 @@ phone page to read along, change settings and add books over Wi-Fi.
 
 ![Sonnet 18, word by word, in the Windows 98 theme](docs/sonnet-18.gif)
 
-*Shakespeare's Sonnet 18 at 300 words a minute, Windows 98 theme, recorded from the simulator (`reader-sim record`).*
+*Shakespeare's Sonnet 18 at 475 words a minute in the Windows 98 theme: near the end it pauses, jumps one sentence back, steps two words forward, bookmarks that word (the folded corner), and reads on to the end. Recorded from the simulator (`reader-sim record … --demo`).*
 
 - **Four ways to read:** word by word, phrases (up to 3 words, ending at sentences), a typewriter ticker, and normal pages.
 - **Placed by the book, not the screen:** words centred or on a fixed recognition point (Spritz rule, long words split at a syllable); bold, italic and chapter titles kept; brackets read as asides.
