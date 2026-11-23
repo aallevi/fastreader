@@ -492,7 +492,7 @@ fn guide_lines_pictures_sheet() {
         for (k, (pos, t)) in [(1usize, 0u64), (3, 10), (4, 20)].into_iter().enumerate() {
             a.reader.seek(pos, t);
             ui.paint(&mut a, t, &mut cv);
-            let mut ppm = format!("P6 320 240 255\n").into_bytes();
+            let mut ppm = b"P6 320 240 255\n".to_vec();
             for y in 0..240 {
                 for x in 0..320 {
                     let c = cv.pixel(x, y);
