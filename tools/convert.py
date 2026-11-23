@@ -347,8 +347,17 @@ def pdf(path: Path, images: Images):
                     out.append(mark)
                     last_block = None
                 continue
+            # A list bullet set in a symbol font with no text mapping comes
+            # out as "?" (or a private-use code): make it a real bullet, and
+            # its own paragraph, one per item.
+            bullet = len(spans) > 1 and is_bullet(spans[0], spans[1])
+            if bullet:
+                spans = [dict(spans[0], text="• ")] + spans[1:]
             raw = "".join(s["text"] for s in spans)
             t = raw.strip()
+            if bullet:
+                end_para()
+                last_block = block
             if not t or re.fullmatch(r"[\divxlcIVXLC\s.\-–—]{1,8}", t) and (bbox[1] < h * 0.1 or bbox[3] > h * 0.9):
                 continue  # page number
             if (bbox[1] < h * 0.1 or bbox[3] > h * 0.9) and norm(raw) in noise:
@@ -373,7 +382,20 @@ def pdf(path: Path, images: Images):
             )
             para.append(line.strip())
         end_para()
-    return title, "\n\n".join(join_broken(out))
+    # Words hyphenated across two text blocks meet only when join_broken
+    # rejoins the blocks: close those breaks too.
+    return title, "\n\n".join(re.sub(r"(\w)- (\w)", r"\1\2", p) for p in join_broken(out))
+
+
+BULLET_GLYPHS = {"?", "\uf0b7", "\uf0a7", "\uf0d8", "\uf076", "\uf0fc", "\uf02d", "•", "·", "▪", "■", "◦", "●", "○", "♦", "❖", "➢", "\ufffd"}
+
+
+def is_bullet(first, second):
+    """True if `first` is a lone list marker before the line's text: one
+    bullet-like glyph in a different font from the text that follows (a
+    real "?" is in the text's own font)."""
+    g = first["text"].strip()
+    return g in BULLET_GLYPHS and (first["font"] != second["font"] or g != "?") and (second["text"].strip()[:1].isalnum() or second["text"].strip()[:1] in "(\"'“‘[")
 
 
 def join_broken(paras):

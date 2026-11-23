@@ -408,6 +408,13 @@ function pictureBudget() {
 
 // Paragraphs a page break cut mid-sentence: the first doesn't end a sentence
 // and the next starts in lower case. Same rule as tools/convert.py.
+const BULLETS = new Set(['?', '\uf0b7', '\uf0a7', '\uf0d8', '\uf076', '\uf0fc', '\uf02d', '•', '·', '▪', '■', '◦', '●', '○', '♦', '❖', '➢', '\ufffd']);
+// A lone list marker before the line's text, in a different font from it (a
+// real "?" is in the text's own font).
+function isBullet(first, second) {
+  const g = first.text.trim(), next = second.text.trim().charAt(0);
+  return BULLETS.has(g) && (first.font !== second.font || g !== '?') && /[\p{L}\p{N}("'“‘\[]/u.test(next);
+}
 function joinBroken(paras) {
   const out = [];
   for (const p of paras) {
@@ -481,7 +488,7 @@ async function pdfToMarkup(file, progress) {
         line.started = lead < it.str.length;
       }
       if (it.str) {
-        line.spans.push({text: it.str, ...fontStyle(it.fontName)});
+        line.spans.push({text: it.str, font: it.fontName, ...fontStyle(it.fontName)});
         // The line's size is what most of its letters are set in: OCR text
         // gives single letters odd sizes, and the largest would mislead.
         const k = it.str.trim().length;
@@ -611,6 +618,11 @@ async function pdfToMarkup(file, progress) {
         const mark = await picture(boxes.shift());
         if (mark) { endPara(); out.push(mark); }
       }
+      // A list bullet in a symbol font with no text mapping arrives as "?"
+      // (or a private-use code): a real bullet, starting its own paragraph.
+      const sp = l.spans.filter(s => s.text.trim());
+      const bullet = sp.length > 1 && isBullet(sp[0], sp[1]);
+      if (bullet) { sp[0].text = '• '; l.spans = sp; endPara(); prev = null; }
       const t = l.spans.map(s => s.text).join('').replace(/\s+/g, ' ').trim();
       const letters = (t.match(/\p{L}/gu) || []).length;
       if (tocTitles.has(norm(t)) || (l.size >= body * 1.25 && letters >= 3 && t.length < 90 && !/[-‐]$/.test(t))) {
@@ -621,7 +633,7 @@ async function pdfToMarkup(file, progress) {
       }
       const indented = l.x + l.indent > left + body * 0.6;
       const gap = prev ? l.y - prev.y : 0;
-      if (!prev || indented || gap > lineGap * 1.6) endPara();
+      if (!bullet && (!prev || indented || gap > lineGap * 1.6)) endPara();
       para.push(l.spans.map(styled).join('').trim());
       prev = l;
     }
@@ -644,7 +656,8 @@ async function pdfToMarkup(file, progress) {
   }
   // A short paragraph all in bold is a heading too ("CHAPTER I").
   const paras = out.map(t => (t.length < 60 && /^(\*\*[^*]+\*\*\s*)+$/.test(t)) ? '# ' + t.replace(/\*/g, '') : t);
-  return {title, author, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length, wanted: pics.wanted};
+  // Words hyphenated across two text blocks meet only in joinBroken.
+  return {title, author, text: joinBroken(paras).map(p => p.replace(/(\p{L})- (\p{Ll})/gu, '$1$2')).join('\n\n'), images: pics.blob(), pictures: pics.list.length, wanted: pics.wanted};
 }
 
 async function epubToMarkup(file) {
