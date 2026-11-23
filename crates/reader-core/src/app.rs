@@ -693,12 +693,9 @@ impl App {
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
         self.last_input = now;
-        if self.welcome.take().is_some() {
-            // ▶ continues from a sentence early; anything else just
-            // dismisses the card.
-            if action_for(self.screen, key) != Action::TogglePlay {
-                return Feedback::ok(Msg::Shown);
-            }
+        if self.welcome.take().is_some() && action_for(self.screen, key) == Action::TogglePlay {
+            // ▶ continues from a sentence early; other keys close the card
+            // and do what they always do.
             self.run_up(now);
         }
         self.flash = Some((Hit::Key(key), now + FLASH_MS));
@@ -770,8 +767,12 @@ impl App {
         self.pressed = None;
         self.last_input = now;
         if self.welcome.is_some() && !matches!(hit, Hit::Key(_)) {
-            self.welcome = None; // a touch anywhere but ▶ just dismisses it
-            return Feedback::ok(Msg::Shown);
+            // Buttons close the card and work as usual (⚙ opens the menu);
+            // a touch on the card itself only closes it.
+            self.welcome = None;
+            if matches!(hit, Hit::Bookmark | Hit::Caption | Hit::ContextScroll { .. }) {
+                return Feedback::ok(Msg::Shown);
+            }
         }
         // Every button shows its press for a moment after the tap, as keys do
         // (keys set this themselves through `handle`).
@@ -2175,10 +2176,15 @@ mod tests {
         a.tick(20 * 60_000);
         let w = a.welcome.expect("shown after 20 minutes paused");
         assert_eq!(w.away(25 * 60_000), Some(25 * 60_000));
-        // Any touch other than play only dismisses it.
+        // A touch on the card only closes it.
         a.tap(Hit::Bookmark, 25 * 60_000);
         assert!(a.welcome.is_none());
         assert!(a.bookmarks.is_empty(), "the touch did nothing else");
+        // The title-bar buttons work at once.
+        a.welcome_back(None, 26 * 60_000);
+        a.tap(Hit::Group(0), 26 * 60_000);
+        assert!(a.welcome.is_none());
+        assert!(matches!(a.screen, Screen::Menu { .. }), "⚙ opens the menu, card or not");
     }
 
     #[test]

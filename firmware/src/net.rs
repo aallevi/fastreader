@@ -11,6 +11,7 @@ use core::cell::RefCell;
 use core::fmt::Write as _;
 use core::net::{Ipv4Addr, SocketAddrV4};
 
+use alloc::format;
 use alloc::string::String;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
@@ -98,12 +99,13 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
     println!("wifi: starting (internal heap free {} KB)", esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into()) / 1024);
     let ap_config = AccessPointConfig::default().with_ssid(SSID.try_into().unwrap());
     let station = home.as_ref().and_then(|h| {
-        let auth = if h.password.is_empty() { AuthenticationMethodConfig::Open } else { AuthenticationMethodConfig::WpaWpa2Personal(h.password.as_str().try_into().ok()?) };
+        // WPA2 Personal: what home routers offer (alone, or next to WPA3).
+        let auth = if h.password.is_empty() { AuthenticationMethodConfig::Open } else { AuthenticationMethodConfig::Wpa2Personal(h.password.as_str().try_into().ok()?) };
         Some(StationConfig::default().with_ssid(h.ssid.as_str().try_into().ok()?).with_authentication(auth))
     });
     let ap = match &station {
-        Some(sta) => Config::AccessPointStation(sta.clone(), ap_config),
-        None => Config::AccessPoint(ap_config),
+        Some(sta) => Config::AccessPointStation(sta.clone(), ap_config.clone()),
+        None => Config::AccessPoint(ap_config.clone()),
     };
     let device = Interface::access_point();
     let controller = match WifiController::new(wifi, ControllerConfig::default().with_initial_config(ap)) {
@@ -126,7 +128,7 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
         let (home_stack, home_runner) = embassy_net::new(Interface::station(), embassy_net::Config::dhcpv4(dhcp), mk_static!(StackResources<6>, StackResources::<6>::new()), seed2);
         app.borrow_mut().device.home_ssid = h.ssid.clone();
         app.borrow_mut().device.home = "joining…".into();
-        spawner.spawn(station_link(controller, app).unwrap());
+        spawner.spawn(station_link(controller, app, station.clone().unwrap(), ap_config).unwrap());
         spawner.spawn(home_net_task(home_runner).unwrap());
         spawner.spawn(home_address(home_stack, app).unwrap());
         spawner.spawn(mdns(home_stack).unwrap());
@@ -167,33 +169,65 @@ async fn home_net_task(mut runner: Runner<'static, Interface>) {
 }
 
 /// Joins the home network and rejoins whenever it drops (router restart,
-/// out of range), waiting a little longer after each failure.
+/// out of range). Every try takes the radio off the FastReader channel, so
+/// after a few refusals in a row it stops trying (until the next restart or
+/// a new password) rather than keep slowing the FastReader network down.
 #[embassy_executor::task]
-async fn station_link(mut controller: WifiController<'static>, app: &'static RefCell<App>) {
-    let mut wait = 5u64;
+async fn station_link(mut controller: WifiController<'static>, app: &'static RefCell<App>, sta: StationConfig, ap: AccessPointConfig) {
+    const TRIES: u32 = 3;
+    // Log how the network presents itself: its security mode tells a
+    // WPA3-only router (not supported yet) from a wrong password.
+    let ssid = app.borrow().device.home_ssid.clone();
+    let scan = controller.scan_async(&esp_radio::wifi::scan::ScanConfig::default()).await;
+    match &scan {
+        Ok(found) => println!("wifi: scan found {} networks", found.len()),
+        Err(e) => println!("wifi: scan failed: {:?}", e),
+    }
+    if let Ok(found) = scan {
+        if let Some(home) = found.iter().filter(|a| format!("{:?}", a.ssid).trim_matches('"') == ssid.as_str()).max_by_key(|a| a.signal_strength) {
+            println!("wifi: home network seen: {:?}", home);
+            // The chip has one radio: the FastReader network must sit on the
+            // router's channel, or the router's answers are missed.
+            let both = Config::AccessPointStation(sta.clone().with_channel(home.channel), ap.clone().with_channel(home.channel));
+            match controller.set_config(&both) {
+                Ok(()) => println!("wifi: FastReader moved to channel {}", home.channel),
+                Err(e) => println!("wifi: could not move to channel {}: {:?}", home.channel, e),
+            }
+        }
+    }
+    let mut failures = 0;
     loop {
         match controller.connect_async().await {
             Ok(info) => {
                 println!("wifi: joined home network {:?}", info);
-                wait = 5;
+                failures = 0;
                 app.borrow_mut().device.home = "getting an address…".into();
                 let _ = controller.wait_for_disconnect_async().await;
                 println!("wifi: home network dropped");
                 app.borrow_mut().device.home = "lost, rejoining…".into();
+                Timer::after(Duration::from_secs(5)).await;
             }
             Err(e) => {
-                println!("wifi: could not join home network: {:?}", e);
+                failures += 1;
+                println!("wifi: could not join home network ({failures}/{TRIES}): {:?}", e);
                 let why = alloc::format!("{:?}", e);
                 let why = if why.contains("NoAccessPointFound") {
                     "network not found"
                 } else if why.contains("Auth") || why.contains("Handshake") || why.contains("4Way") || why.contains("Mic") {
-                    "wrong password?"
+                    "the router refused it (wrong password, or a WPA3-only router?)"
                 } else {
                     "can't join"
                 };
-                app.borrow_mut().device.home = alloc::format!("{why}, retrying in {wait} s");
-                Timer::after(Duration::from_secs(wait)).await;
-                wait = (wait * 2).min(120);
+                if failures >= TRIES {
+                    app.borrow_mut().device.home = alloc::format!("{why}. Stopped trying; save the password again or restart to retry.");
+                    let _ = controller.disconnect_async().await;
+                    loop {
+                        // Keep the controller (and the FastReader network) alive.
+                        Timer::after(Duration::from_secs(3600)).await;
+                    }
+                }
+                app.borrow_mut().device.home = alloc::format!("{why}, trying again…");
+                Timer::after(Duration::from_secs(10)).await;
             }
         }
     }
