@@ -24,8 +24,10 @@
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
 3. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
 4. **Lists and tables.** Today a bulleted or numbered list is read as running text and a table as a jumble of cells.
-   - Lists: the converters keep `- ` / `1. ` items; the reader pauses between items like short sentences and shows the item's bullet or number before its first word; page view indents them.
-   - Tables: small ones read row by row with each cell's column header first ("Year: 1503 · Work: Mona Lisa"); large ones kept as a picture (rendered by the converter) so nothing is lost, with the caption as a description.
+   - Lists: the converters keep `- ` / `1. ` items, and the reader pauses between items like short sentences.
+     - **The list on the left:** in the margin where the bracket marks go, one bullet (or number) per item, as many as the list has; the item being read is highlighted in the yellow of the title-bar messages ("Paused", "Bookmarked"), the others dim. Long lists show a window of bullets around the current one.
+     - Page view indents them.
+   - Tables: before each cell, a **quick flash of a stylized table** (just its grid: rows × columns as boxes) with the cell about to be read filled in colour (red, green or yellow: to be decided), then the cell's text as words. The column header can come first ("Year: 1503"). Very large tables are kept as a picture (rendered by the converter) with the caption as a description.
 5. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
 6. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
 7. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
