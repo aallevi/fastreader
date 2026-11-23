@@ -788,6 +788,9 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
+    if app.settings.guides {
+        draw_guides(cv, c, base, m.ascent, m.descent);
+    }
     let top = base - m.ascent - l.px(3.0);
     let pad = l.px(3.0);
     if side_marks {
@@ -875,6 +878,40 @@ pub fn recognition_x(f: &mut Fonts, face: Face, px: f32, s: &str) -> f32 {
     let upto = s.char_indices().nth(k).map_or(s.len(), |(i, _)| i);
     let through = s.char_indices().nth(k + 1).map_or(s.len(), |(i, _)| i);
     (f.measure(face, px, &s[..upto]) + f.measure(face, px, &s[..through])) / 2.0
+}
+
+/// Optional guide lines: thin lines across the page just above and below
+/// the word, each with a short tick pointing at the centre letter (the
+/// recognition letter, or the middle of a centred word). Both stay put from
+/// word to word, so they are drawn once and never get in the word's way.
+/// Windows 98 draws them etched (grey with a white line under).
+fn draw_guides(cv: &mut Canvas, c: &Ctx, base: f32, ascent: f32, descent: f32) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let p = paper(th, l);
+    let cx = if app.settings.position == 1 { fixation_x(p) } else { p.cx() };
+    let gap = l.px(9.0);
+    let tick = l.px(7.0);
+    let top = (base - ascent - gap) as i32;
+    let bottom = (base + descent + gap) as i32;
+    let x = p.x + l.i(6.0);
+    let w = p.w - l.i(12.0);
+    let tx = cx.round() as i32;
+    if th.chrome == Chrome::Win98 {
+        for (y, down) in [(top, true), (bottom, false)] {
+            cv.fill(Rect::new(x, y, w, 1), 0x808080);
+            cv.fill(Rect::new(x, y + 1, w, 1), WHITE);
+            let (ty, th_) = if down { (y + 2, tick as i32) } else { (y - tick as i32, tick as i32) };
+            cv.fill(Rect::new(tx, ty, 1, th_), 0x808080);
+            cv.fill(Rect::new(tx + 1, ty, 1, th_), WHITE);
+        }
+    } else {
+        let grey = mix(th.page, th.dim, 170);
+        for (y, down) in [(top, true), (bottom, false)] {
+            cv.fill(Rect::new(x, y, w, 1), grey);
+            let ty = if down { y + 1 } else { y - tick as i32 };
+            cv.fill(Rect::new(tx, ty, 1, tick as i32), grey);
+        }
+    }
 }
 
 /// Where the eye rests in Word and Phrase modes: a little left of centre,

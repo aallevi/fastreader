@@ -56,6 +56,7 @@ pub enum MenuItem {
     Pictures,
     Position,
     LongWords,
+    Guides,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -74,7 +75,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
     ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
     ("Library", &[MenuItem::Library]),
-    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
+    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
 ];
 
 /// Which menu (0–3) an item index is in, and that menu's index range.
@@ -99,7 +100,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 31;
+pub const MENU_LEN: u8 = 32;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -133,6 +134,7 @@ impl MenuItem {
             MenuItem::Pictures => "Picture time",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
+            MenuItem::Guides => "Guide lines",
             MenuItem::Brightness => "Brightness",
             MenuItem::Rotate => "Rotate screen",
             MenuItem::Wifi => "Web view (Wi-Fi)",
@@ -164,6 +166,7 @@ impl MenuItem {
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
+            MenuItem::Guides => PickKind::Guides,
             MenuItem::Card => PickKind::Card,
             MenuItem::ProgressBar => PickKind::ProgressBar,
             MenuItem::ProgressBlocks => PickKind::ProgressBlocks,
@@ -187,6 +190,7 @@ pub enum PickKind {
     Pictures,
     Position,
     LongWords,
+    Guides,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -218,6 +222,7 @@ impl PickKind {
             PickKind::Pictures => "Picture time",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
+            PickKind::Guides => "Guide lines",
             PickKind::Card => "SD card",
             PickKind::ProgressBar => "Progress bar",
             PickKind::ProgressBlocks => "Progress blocks",
@@ -243,7 +248,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides)
     }
 }
 
@@ -1379,7 +1384,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Pace => 2,
@@ -1410,6 +1415,7 @@ impl App {
             PickKind::ProgressBar | PickKind::BookInfo => ["Shown", "Hidden"][i.min(1)].into(),
             PickKind::LongWords => ["Keep whole", "Split in two if too long"][i.min(1)].into(),
             PickKind::ProgressBlocks => ["Grey", "Blue (classic 98)"][i.min(1)].into(),
+            PickKind::Guides => ["Off", "On"][i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
                     Some(Place::Card) => "  · SD card",
@@ -1449,6 +1455,7 @@ impl App {
             MenuItem::GoTo => format!("{}%", self.reader.permille() / 10),
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
+            MenuItem::Guides => (if self.settings.guides { "On" } else { "Off" }).into(),
             MenuItem::LongWords => (if self.settings.split_long { "Split if too long" } else { "Keep whole" }).into(),
             MenuItem::ProgressBlocks => (if self.settings.blue_blocks { "Blue" } else { "Grey" }).into(),
             MenuItem::ProgressBar => (if self.settings.progress_bar { "Shown" } else { "Hidden" }).into(),
@@ -1481,6 +1488,7 @@ impl App {
             PickKind::ProgressBar => (!self.settings.progress_bar) as u8,
             PickKind::LongWords => self.settings.split_long as u8,
             PickKind::ProgressBlocks => self.settings.blue_blocks as u8,
+            PickKind::Guides => self.settings.guides as u8,
             PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
             PickKind::DeleteConfirm => 0,
@@ -1517,6 +1525,7 @@ impl App {
             }
             PickKind::ProgressBar => self.settings.progress_bar = v == 0,
             PickKind::ProgressBlocks => self.settings.blue_blocks = v == 1,
+            PickKind::Guides => self.settings.guides = v == 1,
             PickKind::LongWords => {
                 self.settings.split_long = v == 1;
                 self.apply_mode();

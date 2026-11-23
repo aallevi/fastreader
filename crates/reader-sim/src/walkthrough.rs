@@ -158,6 +158,18 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.app.set_setting("book_info", 1).unwrap();
     r.app.set_setting("blue_blocks", 1).unwrap();
     r.shot("blue-blocks");
+    r.app.set_setting("guides", 1).unwrap();
+    for (theme, pos, mode, name) in [(3u16, 1u16, 0u16, "guides-98-point"), (3, 0, 0, "guides-98-centred"), (0, 1, 0, "guides-vista-point"), (0, 0, 1, "guides-vista-phrase")] {
+        r.app.set_setting("theme", theme).unwrap();
+        r.app.set_setting("position", pos).unwrap();
+        r.app.set_setting("mode", mode).unwrap();
+        r.app.screen = Screen::Reading;
+        r.shot(name);
+    }
+    r.app.set_setting("guides", 0).unwrap();
+    r.app.set_setting("theme", 3).unwrap();
+    r.app.set_setting("position", 1).unwrap();
+    r.app.set_setting("mode", 0).unwrap();
     r.app.set_setting("blue_blocks", 0).unwrap();
     r.tap_icon(Icon::Book);
     r.shot("menu-book");
