@@ -37,50 +37,70 @@ Prime, Gelasio. See [assets/fonts/LICENSE.md](assets/fonts/LICENSE.md).
 
 ## Bibliography
 
+Every entry below was checked against its source on 2026-11-23: articles
+against Crossref (DOI metadata) or the publisher, the patent against its
+patent-office record, standards against the standard itself.
+
 Reading and RSVP
 
 - Forster, K. I. (1970). Visual perception of rapidly presented word sequences
   of varying complexity. *Perception & Psychophysics*, 8(4), 215–221.
+  [doi:10.3758/BF03210208](https://link.springer.com/article/10.3758/BF03210208)
 - Potter, M. C. (1984). Rapid serial visual presentation (RSVP): A method for
   studying language processing. In D. E. Kieras & M. A. Just (Eds.), *New
-  Methods in Reading Comprehension Research* (pp. 91–118). Erlbaum.
+  Methods in Reading Comprehension Research* (pp. 91–118). Hillsdale, NJ: Erlbaum.
 - McConkie, G. W., & Rayner, K. (1975). The span of the effective stimulus
   during a fixation in reading. *Perception & Psychophysics*, 17(6), 578–586.
-  — about 3–4 letters left and 14–15 right of the fixation: the basis for the
-  phrase start and the recognition point.
+  [doi:10.3758/BF03203972](https://link.springer.com/article/10.3758/bf03203972)
+  — about 4 letters left of the fixation and more to the right: the basis
+  for the phrase start and the recognition point.
 - O'Regan, J. K., & Jacobs, A. M. (1992). Optimal viewing position effect in
   word recognition: A challenge to current theory. *Journal of Experimental
   Psychology: Human Perception and Performance*, 18(1), 185–197.
+  [doi:10.1037/0096-1523.18.1.185](https://doi.org/10.1037/0096-1523.18.1.185)
 - Rayner, K. (1998). Eye movements in reading and information processing: 20
   years of research. *Psychological Bulletin*, 124(3), 372–422.
+  [doi:10.1037/0033-2909.124.3.372](https://doi.org/10.1037/0033-2909.124.3.372)
 - Rayner, K., Schotter, E. R., Masson, M. E. J., Potter, M. C., & Treiman, R.
   (2016). So much to read, so little time: How do we read, and can speed
   reading help? *Psychological Science in the Public Interest*, 17(1), 4–34.
+  [doi:10.1177/1529100615625998](https://journals.sagepub.com/doi/10.1177/1529100615625998)
   — a sober review of what speed reading can and cannot do.
-- Spritz. *Methods and systems for displaying text using RSVP*. US Patent
-  [9,483,109 B2](https://patents.google.com/patent/US9483109B2/en). — the recognition-letter rule by word length and
-  splitting words over 13 letters.
+- Waldman, F. A., Maurer, M. S., & Skrypnyuk, O. (2016). *Methods and systems
+  for displaying text using RSVP*. US Patent 9,483,109 B2, granted 1 November
+  2016, assigned to Spritz Technology Inc.
+  [Google Patents](https://patents.google.com/patent/US9483109B2/en)
+  — the recognition-letter rule by word length and splitting words over 13
+  letters.
 
 Interface
 
 - Fitts, P. M. (1954). The information capacity of the human motor system in
   controlling the amplitude of movement. *Journal of Experimental Psychology*,
-  47(6), 381–391. — touch areas split between buttons.
+  47(6), 381–391. [doi:10.1037/h0055392](https://doi.org/10.1037/h0055392)
+  — touch areas split between buttons.
 - Bayer, B. E. (1973). An optimum method for two-level rendition of
-  continuous-tone pictures. *IEEE International Conference on Communications*.
-  — the ordered dithering to the panel's 16-bit colour.
+  continuous-tone pictures. *Conference Record of the IEEE International
+  Conference on Communications*, 26-11–26-15. — the ordered dithering to the
+  panel's 16-bit colour.
 
 Standards
 
-- W3C. *Speech Synthesis Markup Language (SSML) Version 1.1* (2010). — the
+- W3C (2010). *Speech Synthesis Markup Language (SSML) Version 1.1*. W3C
+  Recommendation, 7 September 2010.
+  [w3.org](https://www.w3.org/TR/2010/REC-speech-synthesis11-20100907/) — the
   model for the pause marks (`{pause}`, `{slow}`).
-- Kumari, W., & Kline, E. *Captive-Portal Identification in DHCP and Router
-  Advertisements*. RFC 8910 (2020). — the phone opening the reader's page.
-- Microsoft. *FAT: General Overview of On-Disk Format* (FAT32 specification,
-  2000). — the SD card formatter.
-- IDPF / W3C. *EPUB 3*. — the books the converters read and `ocr_book.py` writes.
+- Kumari, W., & Kline, E. (2020). *Captive-Portal Identification in DHCP and
+  Router Advertisements (RAs)*. RFC 8910.
+  [rfc-editor.org](https://www.rfc-editor.org/rfc/rfc8910) — the phone opening
+  the reader's page.
+- Microsoft (2000). *FAT: General Overview of On-Disk Format*, version 1.03,
+  6 December 2000. — the SD card formatter.
+- W3C. *EPUB 3*. [w3.org/TR/epub-33](https://www.w3.org/TR/epub-33/) — the
+  books the converters read and `ocr_book.py` writes.
 
 OCR
 
-- LightOn (2026). LightOnOCR: A 1B end-to-end multilingual vision-language
-  model for state-of-the-art OCR. [arXiv:2601.14251](https://arxiv.org/abs/2601.14251).
+- Taghadouini, S., Cavaillès, A., & Aubertin, B. (2026). LightOnOCR: A 1B
+  end-to-end multilingual vision-language model for state-of-the-art OCR.
+  [arXiv:2601.14251](https://arxiv.org/abs/2601.14251).
