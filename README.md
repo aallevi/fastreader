@@ -6,6 +6,10 @@ phone page to read along, change settings and add books over Wi-Fi.
 
 ![The four themes](docs/themes.png)
 
+![Sonnet 18, word by word, in the Windows 98 theme](docs/sonnet-18.gif)
+
+*Shakespeare's Sonnet 18 at 300 words a minute, Windows 98 theme, recorded from the simulator (`reader-sim record`).*
+
 - **Four ways to read:** word by word, phrases (up to 3 words, ending at sentences), a typewriter ticker, and normal pages.
 - **Placed by the book, not the screen:** words centred or on a fixed recognition point (Spritz rule, long words split at a syllable); bold, italic and chapter titles kept; brackets read as asides.
 - **Real books:** EPUB, PDF (scanned ones too), Markdown; pictures with their captions, shown for a set time; bookmarks as a folded page corner.

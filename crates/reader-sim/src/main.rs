@@ -37,6 +37,21 @@ fn main() {
         .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--")))
         .map(|(_, a)| a)
         .collect();
+    if positional.first().map(|s| s.as_str()) == Some("record") {
+        // record <book> <dir> [--theme N] [--wpm N]: frames for a GIF.
+        let book = PathBuf::from(positional.get(1).expect("record <book> <dir>").as_str());
+        let dir = PathBuf::from(positional.get(2).expect("record <book> <dir>").as_str());
+        let mut s = Settings::default();
+        if let Some(t) = arg(&args, "--theme").and_then(|v| v.parse().ok()) {
+            s.theme = t;
+        }
+        if let Some(w) = arg(&args, "--wpm").and_then(|v| v.parse().ok()) {
+            s.wpm = w;
+        }
+        s.blue_blocks = args.iter().any(|a| a == "--blue");
+        walkthrough::record(&book, &dir, size, s);
+        return;
+    }
     if positional.first().map(|s| s.as_str()) == Some("walkthrough") {
         let dir = positional.get(1).map(PathBuf::from).unwrap_or_else(|| "walkthrough".into());
         walkthrough::run(&dir, size);

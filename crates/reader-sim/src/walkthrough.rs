@@ -377,7 +377,9 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     // 2. The same key screens in every theme.
     for theme in 0..CATALOG.themes.len() as u8 {
         let slug = CATALOG.themes[theme as usize].to_lowercase().replace(' ', "-");
-        let mut r = Run { app: new_app(&text, Settings { theme, ..Settings::default() }), ui: Ui::new(w, h), cv: Canvas::new(w, h), now: 0, n: 0, dir, prefix: format!("{slug}-") };
+        // Windows 98 shown with its classic blue progress blocks.
+        let blue_blocks = CATALOG.themes[theme as usize] == "Windows 98";
+        let mut r = Run { app: new_app(&text, Settings { theme, blue_blocks, ..Settings::default() }), ui: Ui::new(w, h), cv: Canvas::new(w, h), now: 0, n: 0, dir, prefix: format!("{slug}-") };
         r.app.reader.seek(30, 0);
         r.shot("paused");
         r.app.tap(reader_core::app::Hit::Bookmark, r.now);
@@ -405,4 +407,51 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
         r.shot("phrases");
     }
     println!("wrote walkthrough to {}", dir.display());
+}
+
+/// Records a reading session frame by frame, for docs/: every frame that
+/// changes the screen is saved as a PNG, and `frames.txt` lists each with how
+/// long it stayed (ms), so a GIF can keep the real rhythm.
+pub fn record(book: &Path, dir: &Path, (w, h): (u32, u32), settings: Settings) {
+    std::fs::create_dir_all(dir).unwrap();
+    let text = std::fs::read_to_string(book).expect("book");
+    let mut app = App::new(Book::parse(&text, "book"), CATALOG, settings);
+    app.battery = Some(Battery { percent: 82, charging: false, millivolts: 4010 });
+    let mut ui = Ui::new(w, h);
+    let mut cv = Canvas::new(w, h);
+    let mut frames: Vec<(String, u64)> = Vec::new();
+    let save = |cv: &Canvas, now: u64, frames: &mut Vec<(String, u64)>| {
+        if let Some(last) = frames.last_mut() {
+            last.1 = now - last.1; // becomes the duration of the previous frame
+        }
+        let name = format!("f{:04}.png", frames.len());
+        write_png(&dir.join(&name), cv);
+        frames.push((name, now));
+    };
+    // Paused on the title for a moment, then read to the end.
+    ui.paint(&mut app, 0, &mut cv);
+    save(&cv, 0, &mut frames);
+    let mut now = 1_200;
+    app.handle(reader_core::Key::Select, now);
+    while app.reader.is_playing() && now < 120_000 {
+        app.tick(now);
+        if !ui.paint(&mut app, now, &mut cv).is_empty() {
+            save(&cv, now, &mut frames);
+        }
+        now += 10;
+    }
+    // The end, paused: the sentence pane and the full progress bar.
+    for _ in 0..300 {
+        app.tick(now);
+        if !ui.paint(&mut app, now, &mut cv).is_empty() {
+            save(&cv, now, &mut frames);
+        }
+        now += 10;
+    }
+    if let Some(last) = frames.last_mut() {
+        last.1 = 2_500;
+    }
+    let list: Vec<String> = frames.iter().map(|(n, d)| format!("{n} {d}")).collect();
+    std::fs::write(dir.join("frames.txt"), list.join("\n")).unwrap();
+    println!("recorded {} frames to {}", frames.len(), dir.display());
 }
