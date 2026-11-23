@@ -131,6 +131,8 @@ pub fn sim_device() -> DeviceInfo {
         touch: "mouse".into(),
         free_memory_kb: 7_900,
         web: "http://localhost:8080 (simulator)".into(),
+        home_ssid: String::new(),
+        home: "not available in the simulator".into(),
     }
 }
 

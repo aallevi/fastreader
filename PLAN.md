@@ -13,10 +13,10 @@
 - Bookmarks (dog-ear corner), positions per book in flash, page view steps phrase by phrase, uploads from the phone (EPUB converted in the browser, pictures included), captive portal, deep sleep, pictures and vector charts, brackets as punctuation with aside speed and optional side marks, typewriter ticker.
 
 - Captive portal, PDF upload from the phone (pdf.js), microSD library (SPI mode), card formatting, captions, guide lines.
+- Home Wi-Fi: saved from the web page, joined alongside the FastReader network, `http://fastreader.local` by multicast DNS, rejoins on its own.
 - Welcome back card (at power-on and after a set break, off/10 min/20 min/1 h/3 h; play restarts at the sentence start), the open book at the top of the Book menu, authors from the converters, drag and drop on the web page.
 
 ## Next
-1. Wi-Fi: home network + `fastreader.local`.
 2. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
    - Speaker: a small 8 Ω speaker on JP3; the amplifier is enabled by pulling its SHUTDOWN pin low.
    - Earbuds, wired: a 3.5 mm jack on the speaker output through a resistor attenuator (mono in both ears; the output is bridged, so neither wire goes to ground), or a small I2S DAC board with its own jack if free pins allow.

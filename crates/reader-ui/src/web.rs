@@ -111,6 +111,10 @@ pub fn respond(app: &mut App, method: &str, target: &str, now: u64) -> Response 
             body: Body::Raw(if path.contains("worker") { PDFJS_WORKER } else { PDFJS }),
         },
         ("GET", "/books") => Response::ok("application/json", Body::Text(books_json(app))),
+        ("GET", "/wifi") => {
+            let d = &app.device;
+            Response::ok("application/json", Body::Text(format!("{{\"ssid\":{},\"status\":{}}}", json_str(&d.home_ssid), json_str(&d.home))))
+        }
         ("GET", "/state") => Response::ok("application/json", Body::Text(state_json(app))),
         ("GET", "/theme.css") => Response::ok("text/css", Body::Text(theme(app.settings.theme).css_vars())),
         ("GET", "/settings") => Response::ok("application/json", Body::Text(settings_json(app))),
@@ -290,6 +294,56 @@ pub fn captive_dns_reply(query: &[u8], ip: [u8; 4], out: &mut [u8]) -> Option<us
     let rr = [0xC0, 0x0C, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, ip[0], ip[1], ip[2], ip[3]];
     out[end..end + 16].copy_from_slice(&rr);
     Some(end + 16)
+}
+
+/// The reader's name on the home network: `fastreader.local`.
+pub const MDNS_NAME: &str = "fastreader.local";
+
+/// Answers a multicast DNS query (RFC 6762) that asks for `name` (type A or
+/// ANY) with `ip`; anything else gets no answer. Returns the reply length.
+pub fn mdns_reply(query: &[u8], name: &str, ip: [u8; 4], out: &mut [u8]) -> Option<usize> {
+    if query.len() < 12 || query[2] & 0x80 != 0 {
+        return None; // a response, not a query
+    }
+    let questions = u16::from_be_bytes([query[4], query[5]]);
+    let mut i = 12;
+    for _ in 0..questions {
+        // Read the name label by label, comparing as we go.
+        let start = i;
+        let mut want = name.split('.');
+        let mut same = true;
+        while i < query.len() && query[i] != 0 {
+            if query[i] & 0xC0 != 0 {
+                // A pointer to an earlier name: not ours to resolve; skip it.
+                same = false;
+                i += 1;
+                break;
+            }
+            let len = query[i] as usize;
+            let label = query.get(i + 1..i + 1 + len)?;
+            same &= want.next().is_some_and(|w| w.as_bytes().eq_ignore_ascii_case(label));
+            i += len + 1;
+        }
+        same &= want.next().is_none();
+        i += 1; // the zero byte (or the pointer's second byte)
+        let t = query.get(i..i + 4)?;
+        let qtype = u16::from_be_bytes([t[0], t[1]]);
+        let class = u16::from_be_bytes([t[2], t[3]]) & 0x7FFF; // top bit: "unicast reply wanted"
+        i += 4;
+        if same && class == 1 && (qtype == 1 || qtype == 255) {
+            let name_bytes = &query[start..i - 4];
+            let len = 12 + name_bytes.len() + 14;
+            if out.len() < len {
+                return None;
+            }
+            out[..12].copy_from_slice(&[query[0], query[1], 0x84, 0, 0, 0, 0, 1, 0, 0, 0, 0]);
+            out[12..12 + name_bytes.len()].copy_from_slice(name_bytes);
+            let rr = [0, 1, 0x80, 1, 0, 0, 0, 120, 0, 4, ip[0], ip[1], ip[2], ip[3]]; // A, IN + flush, 120 s
+            out[12 + name_bytes.len()..len].copy_from_slice(&rr);
+            return Some(len);
+        }
+    }
+    None
 }
 
 /// Appends book HTML for words `from..min(from + BOOK_PIECE, to)`; returns
@@ -475,6 +529,34 @@ mod tests {
         assert_eq!(u16::from_be_bytes([out[6], out[7]]), 0);
         assert_eq!(n, q.len());
         assert!(captive_dns_reply(&[0u8; 5], [0; 4], &mut out).is_none(), "garbage is ignored");
+    }
+
+    #[test]
+    fn mdns_answers_only_its_own_name() {
+        let query = |name: &str, qtype: u16| {
+            let mut q = alloc::vec![0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+            for label in name.split('.') {
+                q.push(label.len() as u8);
+                q.extend_from_slice(label.as_bytes());
+            }
+            q.push(0);
+            q.extend_from_slice(&qtype.to_be_bytes());
+            q.extend_from_slice(&0x8001u16.to_be_bytes()); // IN, unicast reply wanted
+            q
+        };
+        let mut out = [0u8; 512];
+        let ip = [192, 168, 1, 23];
+        let n = mdns_reply(&query("FastReader.local", 1), MDNS_NAME, ip, &mut out).expect("answers, any case");
+        assert_eq!(&out[2..4], &[0x84, 0], "authoritative response");
+        assert_eq!(u16::from_be_bytes([out[4], out[5]]), 0, "no questions repeated");
+        assert_eq!(u16::from_be_bytes([out[6], out[7]]), 1, "one answer");
+        assert_eq!(&out[12..30], b"\x0aFastReader\x05local\x00");
+        assert_eq!(&out[n - 4..n], &ip);
+        assert!(mdns_reply(&query("printer.local", 1), MDNS_NAME, ip, &mut out).is_none(), "other names: silence");
+        assert!(mdns_reply(&query("fastreader.local", 28), MDNS_NAME, ip, &mut out).is_none(), "AAAA: no IPv6");
+        assert!(mdns_reply(&query("fastreader.local.x", 1), MDNS_NAME, ip, &mut out).is_none());
+        assert!(mdns_reply(&query("fastreader", 1), MDNS_NAME, ip, &mut out).is_none());
+        assert!(mdns_reply(&[0u8; 7], MDNS_NAME, ip, &mut out).is_none(), "garbage is ignored");
     }
 
     #[test]

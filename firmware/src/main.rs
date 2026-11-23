@@ -60,6 +60,8 @@ include!(concat!(env!("OUT_DIR"), "/books.rs"));
 const SETTINGS_ADDR: u32 = 0x9000;
 const POSITIONS_ADDR: u32 = 0xA000;
 const BOOKMARKS_ADDR: u32 = 0xB000;
+/// The home Wi-Fi network (name and password), if one is saved.
+const HOME_ADDR: u32 = 0xC000;
 const MAX_BOOKMARKS: usize = 800;
 const MAX_BOOKS: usize = 64;
 
@@ -244,6 +246,7 @@ async fn main(spawner: Spawner) -> ! {
         touch: if touch_ok { "FT6336G ok".into() } else { "not found".into() },
         free_memory_kb: (esp_alloc::HEAP.free() / 1024) as u32,
         web: alloc::string::String::new(),
+        ..Default::default()
     };
     // Just switched on (or woken): say which book and where.
     app.welcome_back(None, 0);
@@ -358,7 +361,7 @@ async fn main(spawner: Spawner) -> ! {
     let inbox: &'static RefCell<net::Inbox> = mk_static!(RefCell<net::Inbox>, RefCell::new(net::Inbox::default()));
     if app_cell.borrow().settings.wifi || cfg!(feature = "wifi-boot") {
         if let Some(w) = wifi_peripheral.take() {
-            net::start(spawner, w, app_cell, inbox, card_cell, start);
+            net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash));
             app_cell.borrow_mut().device.web = net::ADDRESS.into();
         }
     }
@@ -442,6 +445,20 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 Err(e) => println!("library: {}", e),
             }
+        }
+        if let Some(home) = request.home {
+            // A home network saved or forgotten on the web page: store it,
+            // save the place, and restart so the radio comes up with it.
+            let record = home.as_ref().map(|h| h.to_bytes()).unwrap_or_else(|| alloc::vec![0xFF; 4]);
+            let _ = flash.write(HOME_ADDR, &record);
+            println!("wifi: home network {}", if home.is_some() { "saved" } else { "forgotten" });
+            let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
+            app.positions.resize(app.library.len().max(1), 0);
+            let book = app.settings.book as usize;
+            app.positions[book] = app.reader.pos() as u32;
+            save_positions(&mut flash, &app.positions);
+            delay.delay_millis(500); // let the page get its answer
+            esp_hal::system::software_reset();
         }
         if let Some(stored) = request.card_added {
             // The web task already wrote it to the card; insert it after the
@@ -571,7 +588,7 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 Effect::Wifi(true) => {
                     if let Some(w) = wifi_peripheral.take() {
-                        net::start(spawner, w, app_cell, inbox, card_cell, start);
+                        net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash));
                     }
                     app.device.web = net::ADDRESS.into();
                 }
@@ -648,6 +665,13 @@ fn save_positions(flash: &mut FlashStorage, pos: &[u32]) {
 }
 
 /// Bookmarks: "B2" + count (u16) + (book u8, word u32) each.
+/// The saved home Wi-Fi network, if any.
+fn load_home(flash: &mut FlashStorage) -> Option<net::Home> {
+    let mut buf = [0u8; 104];
+    flash.read(HOME_ADDR, &mut buf).ok()?;
+    net::Home::from_bytes(&buf)
+}
+
 fn load_bookmarks(flash: &mut FlashStorage) -> alloc::vec::Vec<(u8, u32)> {
     let mut head = [0u8; 4];
     if flash.read(BOOKMARKS_ADDR, &mut head).is_err() || &head[..2] != b"B2" {

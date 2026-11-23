@@ -1,6 +1,11 @@
 //! The Wi-Fi web view: an access point called "FastReader", a DHCP server so
 //! phones get an address, and three HTTP workers that serve the same routes
 //! as the simulator (`reader_ui::web`). Started on demand from the menu.
+//!
+//! With a home network saved (web page > Home Wi-Fi), the reader also joins
+//! it as a station, gets an address by DHCP and answers multicast DNS as
+//! `fastreader.local`, with two more HTTP workers there. The FastReader
+//! network keeps working either way.
 
 use core::cell::RefCell;
 use core::fmt::Write as _;
@@ -17,7 +22,8 @@ use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use esp_println::println;
 use esp_radio::wifi::ap::AccessPointConfig;
-use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{AuthenticationMethodConfig, Config, ControllerConfig, Interface, WifiController};
 use reader_core::App;
 use reader_ui::web::{book_piece, respond, upload_limit, url_decode, Body};
 
@@ -34,6 +40,45 @@ pub struct Inbox {
     pub delete: Option<usize>,
     /// Delete every book in one place, confirmed by typing DELETE.
     pub clear: Option<reader_core::app::Place>,
+    /// Save (Some) or forget (None) the home network, then restart.
+    pub home: Option<Option<Home>>,
+}
+
+/// The home network to join, saved in flash.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Home {
+    pub ssid: String,
+    pub password: String,
+}
+
+impl Home {
+    /// Flash record: "HW1", ssid length, ssid, password length, password, xor.
+    pub fn to_bytes(&self) -> alloc::vec::Vec<u8> {
+        let mut v = b"HW1".to_vec();
+        v.push(self.ssid.len() as u8);
+        v.extend_from_slice(self.ssid.as_bytes());
+        v.push(self.password.len() as u8);
+        v.extend_from_slice(self.password.as_bytes());
+        let x = v.iter().fold(0x5Au8, |a, b| a ^ b);
+        v.push(x);
+        v
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<Home> {
+        let b = b.strip_prefix(b"HW1")?;
+        let sl = *b.first()? as usize;
+        let ssid = core::str::from_utf8(b.get(1..1 + sl)?).ok()?;
+        let pl = *b.get(1 + sl)? as usize;
+        let password = core::str::from_utf8(b.get(2 + sl..2 + sl + pl)?).ok()?;
+        let x = b"HW1".iter().chain(&b[..2 + sl + pl]).fold(0x5Au8, |a, c| a ^ c);
+        (*b.get(2 + sl + pl)? == x && !ssid.is_empty()).then(|| Home { ssid: ssid.into(), password: password.into() })
+    }
+
+    /// A network name of 1 to 32 bytes and a password that is empty (open
+    /// network) or 8 to 63 characters.
+    pub fn valid(&self) -> bool {
+        (1..=32).contains(&self.ssid.len()) && (self.password.is_empty() || (8..=63).contains(&self.password.len()))
+    }
 }
 
 use crate::mk_static;
@@ -44,11 +89,22 @@ pub const IP: Ipv4Addr = Ipv4Addr::new(192, 168, 4, 1);
 pub const ADDRESS: &str = "Wi-Fi FastReader, http://192.168.4.1";
 
 const HTTP_WORKERS: usize = 3;
+/// Workers on the home network (fewer: memory is shared with the access point).
+const HOME_WORKERS: usize = 2;
 
-/// Brings up the access point and spawns the network tasks.
-pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
+/// Brings up the access point (and the home network, if one is saved) and
+/// spawns the network tasks.
+pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant, home: Option<Home>) {
     println!("wifi: starting (internal heap free {} KB)", esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into()) / 1024);
-    let ap = Config::AccessPoint(AccessPointConfig::default().with_ssid(SSID.try_into().unwrap()));
+    let ap_config = AccessPointConfig::default().with_ssid(SSID.try_into().unwrap());
+    let station = home.as_ref().and_then(|h| {
+        let auth = if h.password.is_empty() { AuthenticationMethodConfig::Open } else { AuthenticationMethodConfig::WpaWpa2Personal(h.password.as_str().try_into().ok()?) };
+        Some(StationConfig::default().with_ssid(h.ssid.as_str().try_into().ok()?).with_authentication(auth))
+    });
+    let ap = match &station {
+        Some(sta) => Config::AccessPointStation(sta.clone(), ap_config),
+        None => Config::AccessPoint(ap_config),
+    };
     let device = Interface::access_point();
     let controller = match WifiController::new(wifi, ControllerConfig::default().with_initial_config(ap)) {
         Ok(c) => c,
@@ -62,7 +118,24 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
     // Sockets: one per HTTP worker, plus DHCP.
     let (stack, runner) = embassy_net::new(device, config, mk_static!(StackResources<6>, StackResources::<6>::new()), seed);
-    spawner.spawn(connection(controller).unwrap());
+    if let (Some(h), Some(_)) = (&home, &station) {
+        // The home network: DHCP for an address, the name "fastreader".
+        let mut dhcp = embassy_net::DhcpConfig::default();
+        dhcp.hostname = "fastreader".try_into().ok();
+        let seed2 = seed.rotate_left(17) ^ 0x9E37_79B9_7F4A_7C15;
+        let (home_stack, home_runner) = embassy_net::new(Interface::station(), embassy_net::Config::dhcpv4(dhcp), mk_static!(StackResources<6>, StackResources::<6>::new()), seed2);
+        app.borrow_mut().device.home_ssid = h.ssid.clone();
+        app.borrow_mut().device.home = "joining…".into();
+        spawner.spawn(station_link(controller, app).unwrap());
+        spawner.spawn(home_net_task(home_runner).unwrap());
+        spawner.spawn(home_address(home_stack, app).unwrap());
+        spawner.spawn(mdns(home_stack).unwrap());
+        for _ in 0..HOME_WORKERS {
+            spawner.spawn(http(home_stack, app, inbox, sd, clock).unwrap());
+        }
+    } else {
+        spawner.spawn(connection(controller).unwrap());
+    }
     spawner.spawn(net_task(runner).unwrap());
     spawner.spawn(dhcp(stack).unwrap());
     spawner.spawn(dns(stack).unwrap());
@@ -86,6 +159,96 @@ async fn connection(controller: WifiController<'static>) {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface>) {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn home_net_task(mut runner: Runner<'static, Interface>) {
+    runner.run().await
+}
+
+/// Joins the home network and rejoins whenever it drops (router restart,
+/// out of range), waiting a little longer after each failure.
+#[embassy_executor::task]
+async fn station_link(mut controller: WifiController<'static>, app: &'static RefCell<App>) {
+    let mut wait = 5u64;
+    loop {
+        match controller.connect_async().await {
+            Ok(info) => {
+                println!("wifi: joined home network {:?}", info);
+                wait = 5;
+                app.borrow_mut().device.home = "getting an address…".into();
+                let _ = controller.wait_for_disconnect_async().await;
+                println!("wifi: home network dropped");
+                app.borrow_mut().device.home = "lost, rejoining…".into();
+            }
+            Err(e) => {
+                println!("wifi: could not join home network: {:?}", e);
+                let why = alloc::format!("{:?}", e);
+                let why = if why.contains("NoAccessPointFound") {
+                    "network not found"
+                } else if why.contains("Auth") || why.contains("Handshake") || why.contains("4Way") || why.contains("Mic") {
+                    "wrong password?"
+                } else {
+                    "can't join"
+                };
+                app.borrow_mut().device.home = alloc::format!("{why}, retrying in {wait} s");
+                Timer::after(Duration::from_secs(wait)).await;
+                wait = (wait * 2).min(120);
+            }
+        }
+    }
+}
+
+/// Shows the home address in Device info once DHCP has given one.
+#[embassy_executor::task]
+async fn home_address(stack: Stack<'static>, app: &'static RefCell<App>) {
+    loop {
+        stack.wait_config_up().await;
+        if let Some(c) = stack.config_v4() {
+            let ip = c.address.address();
+            println!("wifi: home address {}, http://{}", ip, reader_ui::web::MDNS_NAME);
+            app.borrow_mut().device.home = alloc::format!("http://{} ({})", reader_ui::web::MDNS_NAME, ip);
+        }
+        stack.wait_config_down().await;
+    }
+}
+
+/// Multicast DNS on the home network: answers "fastreader.local" with the
+/// reader's address, so it can be typed in any browser there.
+#[embassy_executor::task]
+async fn mdns(stack: Stack<'static>) {
+    use embassy_net::udp::{PacketMetadata, UdpSocket};
+    const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx = [0u8; 1024];
+    let mut tx = [0u8; 512];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx, &mut tx_meta, &mut tx);
+    if socket.bind(5353).is_err() {
+        println!("mdns: could not bind");
+        return;
+    }
+    let mut query = [0u8; 1024];
+    let mut reply = [0u8; 512];
+    loop {
+        stack.wait_config_up().await;
+        if let Err(e) = stack.join_multicast_group(GROUP) {
+            println!("mdns: could not join the group: {:?}", e);
+        }
+        let Some(ip) = stack.config_v4().map(|c| c.address.address().octets()) else { continue };
+        loop {
+            let Ok((n, meta)) = socket.recv_from(&mut query).await else { continue };
+            if let Some(len) = reader_ui::web::mdns_reply(&query[..n], reader_ui::web::MDNS_NAME, ip, &mut reply) {
+                // Normal mDNS asks from port 5353 and is answered to the group;
+                // one-shot ("legacy") queries come from other ports and get a direct reply.
+                let to = if meta.endpoint.port == 5353 { (GROUP, 5353).into() } else { meta.endpoint };
+                let _ = socket.send_to(&reply[..len], to).await;
+            }
+            if !stack.is_config_up() {
+                break; // address lost: wait for the new one
+            }
+        }
+    }
 }
 
 /// Hands out addresses to phones and laptops that join the access point.
@@ -144,7 +307,7 @@ async fn dns(stack: Stack<'static>) {
 
 /// One HTTP/1.0-style worker: read the request line, answer through the
 /// shared handler, close. The app is borrowed only between awaits.
-#[embassy_executor::task(pool_size = 3)]
+#[embassy_executor::task(pool_size = 5)]
 async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant) {
     // 4 KB receive window: big uploads (an illustrated book is ~30 MB) go
     // several times faster than with 1 KB.
@@ -242,6 +405,43 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
                     b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nsaving"
                 } else {
                     b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupload interrupted"
+                }
+            };
+            let _ = socket.write_all(reply).await;
+            let _ = socket.flush().await;
+            socket.close();
+            Timer::after(Duration::from_millis(20)).await;
+            socket.abort();
+            continue;
+        }
+        if method == "POST" && (path == "/wifi" || path == "/wifi/forget") {
+            // The home network: name and password in a small form body.
+            let length = head_text
+                .lines()
+                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()))
+                .unwrap_or(0)
+                .min(400);
+            let start = head_text.find("\r\n\r\n").map_or(n, |p| p + 4);
+            let mut body = alloc::vec::Vec::from(&head[start.min(n)..n]);
+            while body.len() < length {
+                let mut b = [0u8; 256];
+                match socket.read(&mut b).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(k) => body.extend_from_slice(&b[..k]),
+                }
+            }
+            let form = core::str::from_utf8(&body).unwrap_or("");
+            let field = |name: &str| form.split('&').find_map(|kv| kv.strip_prefix(name)?.strip_prefix('=')).map(url_decode).unwrap_or_default();
+            let reply: &[u8] = if path == "/wifi/forget" {
+                inbox.borrow_mut().home = Some(None);
+                b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nforgetting; the reader restarts"
+            } else {
+                let home = Home { ssid: field("ssid"), password: field("password") };
+                if home.valid() {
+                    inbox.borrow_mut().home = Some(Some(home));
+                    b"HTTP/1.1 202 Accepted\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nsaved; the reader restarts"
+                } else {
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\na network name, and a password of 8 to 63 characters (or none)"
                 }
             };
             let _ = socket.write_all(reply).await;

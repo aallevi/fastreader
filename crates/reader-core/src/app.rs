@@ -572,6 +572,10 @@ pub struct DeviceInfo {
     pub free_memory_kb: u32,
     /// How to reach the web view, e.g. "Wi-Fi FastReader → 192.168.4.1".
     pub web: String,
+    /// The home network the reader joins, if one is set.
+    pub home_ssid: String,
+    /// How joining it goes: "joining…", "http://fastreader.local (…)", …
+    pub home: String,
 }
 
 pub struct App {

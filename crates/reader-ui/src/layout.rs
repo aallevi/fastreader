@@ -304,6 +304,7 @@ fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
                 RowKind::Info("Firmware".into(), d.firmware.clone()),
                 RowKind::Info("Touch".into(), d.touch.clone()),
                 RowKind::Info("Web view".into(), if app.settings.wifi { d.web.clone() } else { "off (Settings > Web view)".into() }),
+                RowKind::Info("Home Wi-Fi".into(), if d.home_ssid.is_empty() { "not set (web page > Home Wi-Fi)".into() } else { alloc::format!("{}: {}", d.home_ssid, d.home) }),
                 RowKind::Info("Battery".into(), bat),
                 RowKind::Info("Free memory".into(), alloc::format!("{} KB", d.free_memory_kb)),
                 RowKind::Info("Book".into(), alloc::format!("{} words, {} chapters", b.len(), b.chapters().len())),

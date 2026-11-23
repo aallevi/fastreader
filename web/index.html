@@ -89,6 +89,12 @@
     <div class="row"><button class="toggle danger" data-place="card">Delete every book on the SD card</button></div>
     <div class="row"><button class="toggle danger" data-place="memory">Delete every book in the reader's memory</button></div>
   </details>
+  <h3>Home Wi-Fi</h3>
+  <div class="row"><label for="hwSsid">Join your home network too<small>Then open <b>http://fastreader.local</b> from any device on it; this FastReader network keeps working. The reader restarts to join.</small></label></div>
+  <div class="row"><small id="hwStatus" role="status">…</small></div>
+  <div class="row"><input id="hwSsid" placeholder="Network name" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32"></div>
+  <div class="row"><input id="hwPass" type="password" placeholder="Password (empty for an open network)" autocomplete="off" maxlength="63"></div>
+  <div class="row"><button class="toggle" id="hwSave">Save and join</button><button class="toggle danger" id="hwForget" hidden>Forget</button><small id="hwMsg" role="status"></small></div>
   <div id="setBody">Loading…</div></aside>
 <div class="bar"><div id="prog"></div></div>
 <div id="less" aria-hidden="true"></div>
@@ -240,8 +246,33 @@ function renderSettings() {
     }
   }
 }
-$('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); loadBooks(); $('settings').classList.add('open'); };
+$('gear').onclick = async () => { S = await (await fetch('/settings')).json(); renderSettings(); loadBooks(); loadHome(); $('settings').classList.add('open'); };
 $('closeSet').onclick = () => $('settings').classList.remove('open');
+// Home Wi-Fi: what is saved and how joining goes; the password never comes back.
+async function loadHome() {
+  try {
+    const w = await (await fetch('/wifi')).json();
+    $('hwStatus').textContent = w.ssid ? `${w.ssid}: ${w.status}` : (w.status || 'Not set');
+    if (w.ssid && !$('hwSsid').value) $('hwSsid').value = w.ssid;
+    $('hwForget').hidden = !w.ssid;
+  } catch (e) { $('hwStatus').textContent = 'Not available'; }
+}
+async function sendHome(path, body, done) {
+  $('hwMsg').textContent = 'Saving…';
+  try {
+    const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body});
+    $('hwMsg').textContent = r.ok ? done : (r.status === 404 ? 'Only on the reader, not in the simulator' : await r.text());
+  } catch (e) { $('hwMsg').textContent = done; } // the reader restarts as it answers
+}
+$('hwSave').onclick = () => {
+  const ssid = $('hwSsid').value.trim(), pass = $('hwPass').value;
+  if (!ssid) { $('hwMsg').textContent = 'Type the network name'; return; }
+  if (pass && (pass.length < 8 || pass.length > 63)) { $('hwMsg').textContent = 'Wi-Fi passwords are 8 to 63 characters'; return; }
+  sendHome('/wifi', new URLSearchParams({ssid, password: pass}).toString(),
+    `Saved. The reader restarts and joins ${ssid}: in a minute, open http://fastreader.local from a device on ${ssid}.`);
+  $('hwPass').value = '';
+};
+$('hwForget').onclick = () => { if (confirm('Forget the home network? The reader restarts.')) sendHome('/wifi/forget', '', 'Forgotten. The reader restarts.'); };
 
 // ---- add a book: EPUBs are converted here in the browser (unzip + XHTML →
 // the reader's markup), so a phone on the reader's Wi-Fi needs nothing else.

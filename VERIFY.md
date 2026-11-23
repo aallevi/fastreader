@@ -56,6 +56,11 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
+## Home Wi-Fi
+- [ ] Web page > Home Wi-Fi: type your network and password, Save and join. The reader restarts; Device info shows "http://fastreader.local (address)".
+- [ ] From the Mac on the home network: open http://fastreader.local; the FastReader network still works too.
+- [ ] Wrong password: Device info says "wrong password?" and keeps retrying; Forget restarts without it.
+
 ## Welcome back
 - [ ] Switch the reader on: the card shows the book, author, chapter and %; ▶ restarts from the start of the sentence; any other touch just closes it.
 - [ ] Leave it paused for the set time (⚙ → Welcome back): the card appears with "Last read … ago".
