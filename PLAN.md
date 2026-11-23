@@ -12,12 +12,19 @@
 
 - Bookmarks (dog-ear corner), positions per book in flash, page view steps phrase by phrase, uploads from the phone (EPUB converted in the browser, pictures included), captive portal, deep sleep, pictures and vector charts, brackets as punctuation with aside speed and optional side marks, typewriter ticker.
 
+- Captive portal, PDF upload from the phone (pdf.js), microSD library (SPI mode), card formatting, captions, guide lines.
+
 ## Next
-1. Wi-Fi: captive portal (phone opens the page automatically on joining), then home network + `fastreader.local`.
-2. PDF upload from the phone (pdf.js in the browser); microSD library (4-bit SDMMC on this board).
-3. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
-4. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
-5. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
+1. Wi-Fi: home network + `fastreader.local`.
+2. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
+   - Speaker: a small 8 Ω speaker on JP3; the amplifier is enabled by pulling its SHUTDOWN pin low.
+   - Earbuds, wired: a 3.5 mm jack on the speaker output through a resistor attenuator (mono in both ears; the output is bridged, so neither wire goes to ground), or a small I2S DAC board with its own jack if free pins allow.
+   - Earbuds, wireless: through the phone page (the phone reads aloud, Bluetooth to the earbuds).
+   - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
+3. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
+4. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
+5. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
+6. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
 
 ## Later
 - Procedural backgrounds that move slowly (fusing bubbles, merging colours) behind the page.
