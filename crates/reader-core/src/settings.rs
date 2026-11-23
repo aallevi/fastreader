@@ -98,10 +98,15 @@ pub struct Settings {
     pub brackets: bool,
     /// Where words sit: 0 centred, 1 on a fixed recognition point.
     pub position: u8,
+    /// With the recognition point: split words too long to fit in two
+    /// flashes ("determi-" "nazione"), or keep them whole (shifted to fit).
+    pub split_long: bool,
     /// Show a picture's description (when paused on it).
     pub captions: bool,
     /// The progress bar at the bottom of the reading screen.
     pub progress_bar: bool,
+    /// Windows 98: the progress blocks in classic navy blue instead of grey.
+    pub blue_blocks: bool,
     /// The book numbers when paused: %, words, time left, chapter.
     pub book_info: bool,
     /// Index into [`SKIPS`].
@@ -136,8 +141,10 @@ impl Default for Settings {
             true_pace: false,
             brackets: true,
             position: 1,
+            split_long: false,
             captions: false,
             progress_bar: true,
+            blue_blocks: false,
             book_info: true,
             skip: 0,
             context: true,
@@ -163,7 +170,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 30] = [
+pub const FIELDS: [(&str, u16, u16); 32] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -191,8 +198,10 @@ pub const FIELDS: [(&str, u16, u16); 30] = [
     ("true_pace", 0, 1),
     ("brackets", 0, 1),
     ("position", 0, 1),
+    ("split_long", 0, 1),
     ("captions", 0, 1),
     ("progress_bar", 0, 1),
+    ("blue_blocks", 0, 1),
     ("book_info", 0, 1),
 ];
 
@@ -225,8 +234,10 @@ impl Settings {
             "true_pace" => self.true_pace as u16,
             "brackets" => self.brackets as u16,
             "position" => self.position as u16,
+            "split_long" => self.split_long as u16,
             "captions" => self.captions as u16,
             "progress_bar" => self.progress_bar as u16,
+            "blue_blocks" => self.blue_blocks as u16,
             "book_info" => self.book_info as u16,
             "skip" => self.skip as u16,
             "context" => self.context as u16,
@@ -266,8 +277,10 @@ impl Settings {
             "true_pace" => self.true_pace = v != 0,
             "brackets" => self.brackets = v != 0,
             "position" => self.position = b,
+            "split_long" => self.split_long = v != 0,
             "captions" => self.captions = v != 0,
             "progress_bar" => self.progress_bar = v != 0,
+            "blue_blocks" => self.blue_blocks = v != 0,
             "book_info" => self.book_info = v != 0,
             "skip" => self.skip = b,
             "context" => self.context = v != 0,

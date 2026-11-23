@@ -53,7 +53,7 @@ struct View {
     look: Settings,
     frame: Frame,
     header: (String, Option<Battery>, Option<u32>, bool),
-    word: (usize, u8, bool, u16, bool),
+    word: (usize, u8, bool, u16, bool, Option<bool>),
     context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
@@ -155,6 +155,8 @@ impl Ui {
                 if app.animating() { (app.reader.progress(now) * 256.0) as u16 } else { 0 },
                 // A picture shows its Description button only while paused.
                 paused && app.reader.on_picture(),
+                // Each half of a split long word is its own frame (same position).
+                app.reader.split_part(),
             ),
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some((app.reader.pos(), app.context_scroll)),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
@@ -712,10 +714,18 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     if words.is_empty() {
         return l.word.intersect(&p);
     }
-    // A long word in two flashes: show the half that is due.
+    // A long word in two flashes, only if it really doesn't fit with its
+    // recognition letter on the fixation point (otherwise it stays whole for
+    // both halves of its time, which looks the same as one flash).
     if let (Some(second), 1) = (app.reader.split_part(), words.len()) {
-        if let Some((a, b)) = reader_core::book::split_long(&words[0].0) {
-            words[0].0 = if second { b } else { a };
+        let (s, face, _) = &words[0];
+        let px = word_px(c);
+        let x0 = fixation_x(p) - recognition_x(f, *face, px, s);
+        let fits = x0 >= p.x as f32 + l.px(8.0) && x0 + f.measure(*face, px, s) <= p.right() as f32 - l.px(8.0);
+        if !fits {
+            if let Some((a, b)) = reader_core::book::split_long(s) {
+                words[0].0 = if second { b } else { a };
+            }
         }
     }
     let heading = words.iter().any(|w| w.2);
@@ -1170,8 +1180,9 @@ fn draw_status_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         let step = l.i(6.0) + 1;
         let slots = (inner.w + 1) / step;
         let lit = app.reader.permille() as i32 * slots / 1000;
+        let block_c = if app.settings.blue_blocks { 0x000080 } else { th.fill };
         for k in 0..lit {
-            cv.fill(Rect::new(inner.x + k * step, inner.y, step - 1, inner.h), th.fill);
+            cv.fill(Rect::new(inner.x + k * step, inner.y, step - 1, inner.h), block_c);
         }
     }
     if app.reader.is_playing() {

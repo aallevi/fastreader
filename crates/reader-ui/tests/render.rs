@@ -390,3 +390,51 @@ fn long_sentence_under_the_word_scrolls_with_arrows() {
     ui.paint(&mut a, 60, &mut cv);
     assert_eq!(a.context_scroll, 0, "a new word starts at its own line");
 }
+
+#[test]
+fn both_halves_of_a_split_word_reach_the_screen() {
+    // The halves share one position: the second must still be redrawn.
+    let mut a = app_with("Era contemporaneamente qui.", Settings { mode: 0, chunk: 1, position: 1, split_long: true, size: 2, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    a.reader.seek(1, 0);
+    ui.paint(&mut a, 0, &mut cv);
+    a.reader.play(0);
+    let mut redrawn_on_second_half = false;
+    for t in (10..3000).step_by(10) {
+        a.tick(t);
+        let dmg = ui.paint(&mut a, t, &mut cv);
+        if a.reader.split_part() == Some(true) && !dmg.is_empty() {
+            redrawn_on_second_half = true;
+            break;
+        }
+    }
+    assert!(redrawn_on_second_half, "the second half was never sent to the screen");
+}
+
+#[test]
+fn every_menu_entry_and_option_list_draws_in_every_theme() {
+    use reader_core::app::{menu_item, MENU_LEN};
+    for theme in 0..THEMES.len() as u8 {
+        let mut a = app_with(TEXT, Settings { theme, ..Settings::default() });
+        a.library = vec!["One".into(), "Two".into()];
+        a.card = Some(reader_core::app::Card { total_mb: 15_000, free_mb: 14_000, formatted: true });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        for sel in 0..MENU_LEN {
+            let item = menu_item(sel);
+            assert!(!item.label().is_empty());
+            a.screen = Screen::Menu { sel };
+            ui.invalidate();
+            assert!(!ui.paint(&mut a, 0, &mut cv).is_empty(), "{item:?} menu draws");
+            if let Some(kind) = item.pick() {
+                for i in 0..a.pick_len(kind) {
+                    assert!(!a.pick_label(kind, i).is_empty() || kind == PickKind::Bookmark, "{kind:?} row {i} has a label");
+                }
+                a.screen = Screen::Pick { kind, sel: 0, original: 0 };
+                ui.invalidate();
+                ui.paint(&mut a, 0, &mut cv);
+            }
+        }
+    }
+}

@@ -323,6 +323,7 @@ async fn main(spawner: Spawner) -> ! {
         flush!(damage);
         app.handle(reader_core::Key::Select, now);
         let (mut total, mut worst, mut frames) = (0u64, 0u64, 0u64);
+        let mut each: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
         for _ in 0..90 {
             now += 33;
             app.tick(now);
@@ -335,10 +336,13 @@ async fn main(spawner: Spawner) -> ! {
                 total += us;
                 worst = worst.max(us);
                 frames += 1;
+                each.push(us);
             }
         }
         app.handle(reader_core::Key::Select, now);
-        println!("selftest: mode {} drew {} of 90 frames, avg {} us, worst {} us (incl. SPI)", mode, frames, total / frames.max(1), worst);
+        each.sort_unstable();
+        let median = each.get(each.len() / 2).copied().unwrap_or(0);
+        println!("selftest: mode {} drew {} of 90 frames, median {} us, avg {} us, worst {} us (incl. SPI)", mode, frames, median, total / frames.max(1), worst);
     }
     #[cfg(feature = "selftest")]
     {

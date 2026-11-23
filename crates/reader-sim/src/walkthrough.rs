@@ -156,6 +156,9 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     }
     r.app.set_setting("progress_bar", 1).unwrap();
     r.app.set_setting("book_info", 1).unwrap();
+    r.app.set_setting("blue_blocks", 1).unwrap();
+    r.shot("blue-blocks");
+    r.app.set_setting("blue_blocks", 0).unwrap();
     r.tap_icon(Icon::Book);
     r.shot("menu-book");
     r.app.library = vec!["The Quiet Machine".into(), "La storia dell'arte".into()];
@@ -311,11 +314,15 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.app.set_setting("mode", 0).unwrap();
     r.app.set_setting("position", 1).unwrap();
     r.app.set_setting("chunk", 1).unwrap();
+    r.app.set_setting("split_long", 1).unwrap();
     r.app.screen = Screen::Reading;
     r.app.reader.seek(1, r.now);
     r.shot("long-word-first-half");
     r.app.reader.play(r.now);
-    while r.app.reader.split_part() != Some(true) {
+    for _ in 0..500 {
+        if r.app.reader.split_part() == Some(true) {
+            break;
+        }
         r.wait(10);
     }
     r.app.reader.pause();

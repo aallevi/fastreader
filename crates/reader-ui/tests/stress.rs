@@ -7,7 +7,7 @@ use reader_ui::{Canvas, Ui, CATALOG};
 
 const PIECES: &[&str] = &[
     "word", "Ünïcødé", "(aside", "here)", "«quote»", "<<x>>", "{pause}", "{slow}", "{/slow}", "{verse}", "line", "{/verse}",
-    "{image:0}", "{image:3}", "**bold**", "*it*", "\n# Title words", "\n", "\n\n", ".", ",", "contemporaneamente", "tomorrow/yesterday",
+    "{image:0}", "{image:3}", "{caption}", "{/caption}", "precipitevolissimevolmente", "**bold**", "*it*", "\n# Title words", "\n", "\n\n", ".", ",", "contemporaneamente", "tomorrow/yesterday",
     "😀", "a)", "(", ")", "«", "»",
 ];
 
@@ -37,7 +37,22 @@ fn random_books_draw_everywhere() {
             file.extend(core::iter::repeat_n(0x55, 7 * 5 * 2));
         }
         let theme = (round % THEMES.len()) as u8;
-        let s = Settings { theme, mode: (round % 4) as u8, size: (round % 3) as u8, position: (round % 2) as u8, brackets: round % 3 != 0, ..Settings::default() };
+        let mut bit = |k: u64| r.next().is_multiple_of(k);
+        let s = Settings {
+            theme,
+            mode: (round % 4) as u8,
+            size: (round % 3) as u8,
+            position: (round % 2) as u8,
+            brackets: round % 3 != 0,
+            progress_bar: !bit(3),
+            book_info: !bit(3),
+            blue_blocks: bit(2),
+            split_long: bit(2),
+            captions: bit(2),
+            justify: bit(2),
+            context: !bit(4),
+            ..Settings::default()
+        };
         let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, s);
         let mut cv = Canvas::new(320, 240);
         let mut ui = Ui::new(320, 240);

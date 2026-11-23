@@ -16,7 +16,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
 ## Pictures, long words, the sentence under the word
 - [ ] Aa → Picture time: 2, 3, 4, 8, 15 s or until play; try 3 s and "Until I press play"; the time starts once the picture is on screen (a picture from the card may take a moment).
-- [ ] Aa → Word position → Recognition point: a long word ("contemporaneamente") comes in two flashes, the eye point never moves; Italian elisions ("c'è", "un'opera") focus on the letter, not the apostrophe.
+- [ ] Aa → Long words: "Keep whole" (default) shows long words whole, shifted to fit; "Split in two if too long" shows e.g. "contempo-" then "raneamente" (both halves appear); Italian elisions ("c'è", "un'opera") focus on the letter, not the apostrophe.
 - [ ] Paused on a long sentence: ▲▼ appear beside the sentence and scroll it; at the ends they dim and tapping shows top/bottom.
 - [ ] The sentence under the word runs out to the screen edges (short sentences stay centred).
 - [ ] Gombrich on the card, while playing: each picture appears whole at once (no lower half missing, nothing left behind under the next words) and stays 4 s.
@@ -54,7 +54,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
 ## Bottom of the screen
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
-- [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing).
+- [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
 ## Jump counts
 - [ ] Press ⏭ four times and ⏮ once quickly: the message counts 1, 2, 3, 4 and ends on "3 sentences forward"; after it disappears the count starts again. The same for page turns and the thin ‹ ›.
