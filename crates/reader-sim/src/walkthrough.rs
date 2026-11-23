@@ -76,6 +76,20 @@ impl Run<'_> {
                 }
             }
         }
+        // In a submenu: back out of the wrong one, then tap the right heading.
+        if let Screen::Menu { sel } = self.app.screen {
+            use reader_core::app::{menu_item, menu_level, submenu_of, MENU_LEN};
+            if let Some(i) = (0..MENU_LEN).find(|&i| menu_item(i).label() == label) {
+                if !menu_level(sel).contains(&i) {
+                    if submenu_of(menu_item(sel)).is_some() {
+                        self.tap_icon(Icon::Back);
+                    }
+                    if let Some(h) = submenu_of(menu_item(i)) {
+                        self.tap_row(h.label());
+                    }
+                }
+            }
+        }
         // Like a person: if the row isn't on screen, press the drawn ▼ until it is.
         let mut tries = 0;
         let row = loop {
@@ -196,8 +210,9 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
     r.tap_icon(Icon::Back);
     r.tap_icon(Icon::Text);
     r.shot("menu-text");
-    r.tap_icon(Icon::Down);
-    r.shot("menu-text-scrolled");
+    r.tap_row("Layout");
+    r.shot("menu-text-layout");
+    r.tap_icon(Icon::Back);
     r.tap_row("Font");
     r.shot("font-list");
     r.key(Key::Down);
