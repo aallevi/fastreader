@@ -1804,15 +1804,33 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
                 let s = up(th, name);
                 f.draw(cv, th.ui.1, l.px(10.5), &s, r.x as f32 + l.px(4.0), r.bottom() as f32 - l.px(5.0), th.section);
             }
-            RowKind::Title(t, sub, i) => {
-                // The open book in Resume's place: tap it to go on reading.
+            RowKind::Title(t, author, i) => {
+                // The open book in Resume's place (tap it to go on reading):
+                // one row in two parts, a small "Reading" label, then the title.
                 let hot = sel == Some(*i) || lit == Some(Hit::Row(*i));
                 let fg = button(cv, th, l, r, Kind::Row, hot);
                 let dim = if hot { fg } else { mix(fg, th.row.face[0].1, 100) };
-                let x = r.x as f32 + l.px(10.0);
-                let w = r.w as f32 - l.px(20.0);
-                f.draw_fit(cv, th.ui.1, l.px(13.0), t, x, r.y as f32 + l.px(15.0), w, fg);
-                f.draw_fit(cv, th.ui.0, l.px(10.5), sub, x, r.y as f32 + l.px(28.0), w, dim);
+                let base = r.cy() + l.px(4.5);
+                let label = up(th, "Reading");
+                let lx = r.x as f32 + l.px(10.0);
+                let lw = f.measure(th.ui.0, l.px(11.0), &label);
+                f.draw(cv, th.ui.0, l.px(11.0), &label, lx, base - l.px(0.5), dim);
+                // The divider between the two parts.
+                let dx = (lx + lw + l.px(9.0)).round() as i32;
+                let (dy, dh) = (r.y + l.i(6.0), r.h - l.i(12.0));
+                if th.chrome == Chrome::Win98 {
+                    cv.fill(Rect::new(dx, dy, 1, dh), 0x808080);
+                    cv.fill(Rect::new(dx + 1, dy, 1, dh), WHITE);
+                } else {
+                    cv.fill(Rect::new(dx, dy, 1, dh), mix(fg, th.row.face[0].1, 170));
+                }
+                let x = dx as f32 + l.px(10.0);
+                let room = r.right() as f32 - l.px(10.0) - x;
+                let tw = f.draw_fit(cv, th.ui.1, l.px(13.5), t, x, base, room, fg);
+                let rest = room - tw - l.px(8.0);
+                if !author.is_empty() && f.measure(th.ui.0, l.px(11.5), author) <= rest {
+                    f.draw(cv, th.ui.0, l.px(11.5), author, x + tw + l.px(8.0), base, dim);
+                }
             }
             RowKind::Info(k, v) => {
                 f.draw(cv, th.ui.0, l.px(12.0), &up(th, k), r.x as f32 + l.px(6.0), r.cy() + l.px(4.0), mix(text_c, th.list[0].1, 110));

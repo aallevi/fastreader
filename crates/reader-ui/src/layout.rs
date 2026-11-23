@@ -240,7 +240,7 @@ pub enum RowKind {
     Item(u8),
     /// Read-only key/value (device info).
     Info(String, String),
-    /// The open book's title, with author · chapter · progress below: the
+    /// The open book's title and author (may be empty): the
     /// first line of the Book menu, in the place of "Resume" (menu item `u8`),
     /// which it does when tapped.
     Title(String, String, u8),
@@ -314,20 +314,10 @@ fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
     }
 }
 
-/// The open book, for the top of the Book menu (and the welcome card):
-/// title, then author, chapter and how far in.
+/// The open book, for the top of the Book menu: title and author.
 pub fn book_title_row(app: &App, resume: u8) -> RowKind {
     let b = &app.reader.book;
-    let pos = app.reader.pos();
-    let mut sub: Vec<String> = Vec::new();
-    if !b.author.is_empty() {
-        sub.push(b.author.clone());
-    }
-    if let Some(c) = b.chapter_index(pos) {
-        sub.push(b.chapters()[c].1.clone());
-    }
-    sub.push(alloc::format!("{}%", app.reader.permille() / 10));
-    RowKind::Title(b.title.clone(), sub.join("  ·  "), resume)
+    RowKind::Title(b.title.clone(), b.author.clone(), resume)
 }
 
 pub fn list_geom(app: &App, l: &Layout) -> ListGeom {

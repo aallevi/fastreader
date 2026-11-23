@@ -59,7 +59,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Welcome back
 - [ ] Switch the reader on: the card shows the book, author, chapter and %; ▶ restarts from the start of the sentence; any other touch just closes it.
 - [ ] Leave it paused for the set time (⚙ → Welcome back): the card appears with "Last read … ago".
-- [ ] 📖 Book: the first line is the open book; tapping it resumes reading.
+- [ ] 📖 Book: the first line is "Reading | title  author", on one line inside its frame; tapping it resumes reading.
 - [ ] A bookmarked word next to a bookmarked picture: the folded corner stays on top of the picture.
 - [ ] Mac: open http://192.168.4.1 in Safari, drag a book onto the page.
 
