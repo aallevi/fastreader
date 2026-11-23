@@ -56,6 +56,11 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
+## Menu levels
+- [ ] ⚙ shows Reading ▸, Screen ▸, Connections ▸, Device info, Sleep; each heading opens its own list with its name on top; ‹ goes back up, then closes.
+- [ ] Aa shows Reading mode, Text size, Font, Layout ▸, Content ▸.
+- [ ] Choosing a setting inside a submenu comes back to that submenu.
+
 ## Home Wi-Fi
 - [ ] Web page > Home Wi-Fi: type your network and password, Save and join. The reader restarts; Device info shows "http://fastreader.local (address)".
 - [ ] From the Mac on the home network: open http://fastreader.local; the FastReader network still works too.

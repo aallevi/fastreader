@@ -7,7 +7,7 @@ use core_maths::CoreFloat;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use reader_core::app::{menu_item, MenuItem, PickKind, MENU};
+use reader_core::app::{menu_item, MenuItem, PickKind};
 use reader_core::{App, Hit, Key, Screen};
 
 use crate::geom::Rect;
@@ -278,15 +278,16 @@ pub struct ListGeom {
 fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
     match app.screen {
         Screen::Menu { sel } => {
-            // Only the menu the selection is in (one per title-bar button).
-            let (g, range) = reader_core::app::menu_group(sel);
-            let rows: Vec<RowKind> = range
+            // Only the level the selection is in: a menu's own rows (one menu
+            // per title-bar button), or the submenu it opened.
+            let rows: Vec<RowKind> = reader_core::app::menu_level(sel)
+                .into_iter()
                 .map(|i| match reader_core::app::menu_item(i) {
                     reader_core::app::MenuItem::Resume => book_title_row(app, i),
                     _ => RowKind::Item(i),
                 })
                 .collect();
-            (String::from(MENU[g].0), rows, Some(sel))
+            (String::from(reader_core::app::menu_level_title(sel)), rows, Some(sel))
         }
         Screen::Pick { kind, sel, .. } => {
             let v = (0..app.pick_len(kind)).map(RowKind::Item).collect();
@@ -441,7 +442,8 @@ pub fn row_text(app: &App, i: u8) -> (String, Option<String>, bool) {
     match app.screen {
         Screen::Menu { .. } => {
             let item = menu_item(i);
-            (String::from(item.label()), app.menu_value(item), item.pick().is_some() || item == MenuItem::Info)
+            let opens = item.pick().is_some() || matches!(item, MenuItem::Info | MenuItem::HomeWifi) || reader_core::app::SUBMENUS.iter().any(|(h, _)| *h == item);
+            (String::from(item.label()), app.menu_value(item), opens)
         }
         Screen::Pick { kind, .. } => (app.pick_label(kind, i), None, false),
         _ => (String::new(), None, false),
@@ -523,8 +525,8 @@ mod tests {
             let g = list_geom(&a, &l);
             let row = g.rows.iter().find(|r| r.kind.item() == Some(sel)).unwrap_or_else(|| panic!("row {sel} not visible"));
             assert_eq!(hit_test(&a, &l, row.rect.cx() as i32, row.rect.cy() as i32), Some(Hit::Row(sel)));
-            let n = reader_core::app::menu_group(sel).1.len();
-            assert_eq!(g.scroll.is_some(), n > 6, "scroll buttons only when a menu ({n} rows) doesn't fit");
+            let n = reader_core::app::menu_level(sel).len();
+            assert_eq!(g.scroll.is_some(), n > 6, "scroll buttons only when a level ({n} rows) doesn't fit");
         }
     }
 

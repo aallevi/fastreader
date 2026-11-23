@@ -67,17 +67,125 @@ pub enum MenuItem {
     Wifi,
     Info,
     Sleep,
+    /// Read-only: the home network and how joining it goes (opens Device info).
+    HomeWifi,
+    // Submenu headings: each opens its own list (see SUBMENUS).
+    SubReading,
+    SubScreen,
+    SubConnections,
+    SubLayout,
+    SubContent,
 }
 
 /// The four menus, one per button in the title bar (left to right). Keys
 /// ▲▼ run through all of them in this order; the screen shows the menu the
 /// selection is in.
+///
+/// A submenu heading is followed by its items (SUBMENUS): the screen shows
+/// one level at a time, either a menu's own rows or one submenu's items.
 pub const MENU: [(&str, &[MenuItem]); 4] = [
-    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Welcome, MenuItem::Info, MenuItem::Sleep]),
+    (
+        "Settings",
+        &[
+            MenuItem::SubReading,
+            MenuItem::Speed,
+            MenuItem::Pace,
+            MenuItem::Skip,
+            MenuItem::Welcome,
+            MenuItem::SubScreen,
+            MenuItem::Theme,
+            MenuItem::Brightness,
+            MenuItem::Rotate,
+            MenuItem::ProgressBar,
+            MenuItem::ProgressBlocks,
+            MenuItem::BookInfo,
+            MenuItem::SubConnections,
+            MenuItem::Wifi,
+            MenuItem::HomeWifi,
+            MenuItem::Card,
+            MenuItem::Info,
+            MenuItem::Sleep,
+        ],
+    ),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
     ("Library", &[MenuItem::Library]),
-    ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
+    (
+        "Text",
+        &[
+            MenuItem::Mode,
+            MenuItem::Size,
+            MenuItem::Font,
+            MenuItem::SubLayout,
+            MenuItem::Words,
+            MenuItem::Position,
+            MenuItem::LongWords,
+            MenuItem::Guides,
+            MenuItem::Spacing,
+            MenuItem::Paragraphs,
+            MenuItem::Align,
+            MenuItem::SubContent,
+            MenuItem::Brackets,
+            MenuItem::Pictures,
+        ],
+    ),
 ];
+
+/// Submenus: a heading and the items it opens (they follow it in MENU).
+pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
+    (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome]),
+    (MenuItem::SubScreen, &[MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo]),
+    (MenuItem::SubConnections, &[MenuItem::Wifi, MenuItem::HomeWifi, MenuItem::Card]),
+    (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
+    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures]),
+];
+
+/// The submenu heading an item sits under, if any.
+pub fn submenu_of(item: MenuItem) -> Option<MenuItem> {
+    SUBMENUS.iter().find(|(_, items)| items.contains(&item)).map(|(h, _)| *h)
+}
+
+/// The rows on screen with item `sel` selected: its submenu's items, or its
+/// menu's own rows (headings, not what they open). In menu order.
+pub fn menu_level(sel: u8) -> Vec<u8> {
+    match submenu_of(menu_item(sel)) {
+        Some(h) => {
+            let items = SUBMENUS.iter().find(|(k, _)| *k == h).map(|(_, v)| *v).unwrap_or(&[]);
+            items.iter().map(|&i| menu_index(i)).collect()
+        }
+        None => menu_group(sel).1.filter(|&i| submenu_of(menu_item(i)).is_none()).collect(),
+    }
+}
+
+/// The title over the rows on screen: the submenu's name, or the menu's.
+pub fn menu_level_title(sel: u8) -> &'static str {
+    match submenu_of(menu_item(sel)) {
+        Some(h) => h.label(),
+        None => MENU[menu_group(sel).0].0,
+    }
+}
+
+/// ▲▼ in the menus: through the rows on screen; past the end of a menu's
+/// own rows into the next menu's (as before), but never out of a submenu.
+fn menu_step(sel: u8, down: bool) -> Option<u8> {
+    let level = menu_level(sel);
+    let at = level.iter().position(|&i| i == sel)?;
+    if down {
+        if let Some(&n) = level.get(at + 1) {
+            return Some(n);
+        }
+    } else if at > 0 {
+        return Some(level[at - 1]);
+    }
+    if submenu_of(menu_item(sel)).is_some() {
+        return None;
+    }
+    let g = menu_group(sel).0;
+    if down {
+        (g + 1 < MENU.len()).then(|| menu_start(g + 1))
+    } else {
+        (g > 0).then(|| *menu_level(menu_start(g - 1)).last().unwrap())
+    }
+}
 
 /// Which menu (0–3) an item index is in, and that menu's index range.
 pub fn menu_group(sel: u8) -> (usize, core::ops::Range<u8>) {
@@ -101,7 +209,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 33;
+pub const MENU_LEN: u8 = 39;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -147,6 +255,12 @@ impl MenuItem {
             MenuItem::DeleteBook => "Delete a book…",
             MenuItem::Info => "Device info",
             MenuItem::Sleep => "Sleep",
+            MenuItem::HomeWifi => "Home Wi-Fi",
+            MenuItem::SubReading => "Reading",
+            MenuItem::SubScreen => "Screen",
+            MenuItem::SubConnections => "Connections",
+            MenuItem::SubLayout => "Layout",
+            MenuItem::SubContent => "Content",
         }
     }
 
@@ -792,10 +906,10 @@ impl App {
             (Hit::Scroll { down, rows }, Screen::Menu { .. } | Screen::Pick { .. }) => {
                 let mut fb = Feedback::limit(if down { Msg::Bottom } else { Msg::Top });
                 // Paging stays inside the menu on screen.
-                let group = if let Screen::Menu { sel } = self.screen { Some(menu_group(sel).1) } else { None };
+                let level = if let Screen::Menu { sel } = self.screen { Some(menu_level(sel)) } else { None };
                 for _ in 0..rows.max(1) {
-                    if let (Some(g), Screen::Menu { sel }) = (&group, self.screen) {
-                        if (down && sel + 1 >= g.end) || (!down && sel <= g.start) {
+                    if let (Some(v), Screen::Menu { sel }) = (&level, self.screen) {
+                        if (down && v.last() == Some(&sel)) || (!down && v.first() == Some(&sel)) {
                             break;
                         }
                     }
@@ -1275,7 +1389,7 @@ impl App {
                 self.close_menu(now);
                 Feedback::ok(Msg::Shown)
             }
-            (Screen::Menu { sel }, Action::Prev | Action::Next) => match step(sel, MENU_LEN, action == Action::Next) {
+            (Screen::Menu { sel }, Action::Prev | Action::Next) => match menu_step(sel, action == Action::Next) {
                 Some(s) => {
                     self.screen = Screen::Menu { sel: s };
                     Feedback::ok(Msg::Shown)
@@ -1298,8 +1412,12 @@ impl App {
             (Screen::Info, Action::Next) => Feedback::limit(Msg::Bottom),
             (Screen::Menu { sel }, Action::Activate) => self.activate(menu_item(sel), now),
             (Screen::Pick { kind, sel, .. }, Action::Activate) => self.choose(kind, sel, now),
-            (Screen::Menu { .. }, Action::Back) => {
-                self.close_menu(now);
+            (Screen::Menu { sel }, Action::Back) => {
+                // Out of a submenu: back to its heading; out of a menu: close.
+                match submenu_of(menu_item(sel)) {
+                    Some(h) => self.screen = Screen::Menu { sel: menu_index(h) },
+                    None => self.close_menu(now),
+                }
                 Feedback::ok(Msg::Shown)
             }
             (Screen::Pick { kind: PickKind::DeleteConfirm, .. }, Action::Back) => {
@@ -1330,6 +1448,15 @@ impl App {
     }
 
     fn activate(&mut self, item: MenuItem, now: u64) -> Feedback {
+        if let Some((_, items)) = SUBMENUS.iter().find(|(h, _)| *h == item) {
+            // A heading opens its submenu at the first item.
+            self.screen = Screen::Menu { sel: menu_index(items[0]) };
+            return Feedback::ok(Msg::Shown);
+        }
+        if item == MenuItem::HomeWifi {
+            self.screen = Screen::Info;
+            return Feedback::ok(Msg::Shown);
+        }
         if let Some(kind) = item.pick() {
             if kind == PickKind::Chapter && self.reader.book.chapters().is_empty() {
                 return Feedback::limit(Msg::NoChapters);
@@ -1559,6 +1686,7 @@ impl App {
     pub fn menu_value(&self, item: MenuItem) -> Option<String> {
         Some(match item {
             MenuItem::Speed => format!("{} wpm", self.reader.wpm()),
+            MenuItem::HomeWifi => if self.device.home_ssid.is_empty() { "not set".into() } else { self.device.home_ssid.clone() },
             MenuItem::Words => format!("{}", if self.groups_by_phrase() { self.settings.phrase } else { self.settings.chunk }),
             MenuItem::Chapters => format!("{}", self.reader.book.chapters().len()),
             MenuItem::Bookmarks => format!("{}", self.book_marks().len()),
@@ -1793,11 +1921,46 @@ mod tests {
     }
 
     #[test]
+    fn submenus_open_and_back_out_one_level() {
+        let mut a = app();
+        a.tap(Hit::Group(0), 0);
+        let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
+        assert_eq!(level(&a), [MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep], "Settings shows its headings");
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };
+        a.handle(Select, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) }, "a heading opens its submenu");
+        assert_eq!(menu_level_title(menu_index(MenuItem::Theme)), "Screen");
+        assert_eq!(level(&a).len(), 6);
+        // ▲▼ stay inside the submenu.
+        a.handle(Up, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) });
+        for _ in 0..10 {
+            a.handle(Down, 0);
+        }
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::BookInfo) });
+        // A setting chosen from a submenu comes back to it.
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Theme) };
+        a.handle(Select, 0);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Theme, .. }));
+        a.handle(Left, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) });
+        // ‹ goes up to the heading, then closes.
+        a.handle(Left, 0);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::SubScreen) });
+        a.handle(Left, 0);
+        assert_eq!(a.screen, Screen::Reading);
+        // Every item is reachable: each sits on exactly one level.
+        for i in 0..MENU_LEN {
+            assert!(menu_level(i).contains(&i), "item {i} ({:?}) not on its own level", menu_item(i));
+        }
+    }
+
+    #[test]
     fn title_bar_buttons_open_their_menus() {
         let mut a = app();
         a.reader.play(0);
         a.tap(Hit::Group(0), 0);
-        assert_eq!(menu_item(match a.screen { Screen::Menu { sel } => sel, _ => 99 }), MenuItem::Speed);
+        assert_eq!(menu_item(match a.screen { Screen::Menu { sel } => sel, _ => 99 }), MenuItem::SubReading);
         assert!(!a.reader.is_playing(), "a menu pauses");
         a.handle(Menu, 0);
         assert!(a.reader.is_playing(), "and closing it resumes");

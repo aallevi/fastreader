@@ -125,6 +125,13 @@ fn tapping_a_menu_row_opens_it() {
     let hit = ui.hit(&a, gear.rect.cx() as i32, gear.rect.cy() as i32).unwrap();
     a.tap(hit, 0);
     ui.paint(&mut a, 0, &mut cv);
+    // Settings > Reading > Speed, tapping each row.
+    let g = reader_ui::layout::list_geom(&a, &ui.layout);
+    let row = g.rows.iter().find(|r| r.kind == reader_ui::layout::RowKind::Item(menu_index(MenuItem::SubReading))).unwrap();
+    let hit = ui.hit(&a, row.rect.cx() as i32, row.rect.cy() as i32).unwrap();
+    a.tap(hit, 5);
+    ui.paint(&mut a, 5, &mut cv);
+    assert_eq!(reader_ui::layout::list_geom(&a, &ui.layout).title, "Reading", "the submenu's name on top");
     let g = reader_ui::layout::list_geom(&a, &ui.layout);
     let row = g.rows.iter().find(|r| r.kind == reader_ui::layout::RowKind::Item(menu_index(MenuItem::Speed))).unwrap();
     let hit = ui.hit(&a, row.rect.cx() as i32, row.rect.cy() as i32).unwrap();
