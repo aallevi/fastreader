@@ -13,6 +13,7 @@
 - Bookmarks (dog-ear corner), positions per book in flash, page view steps phrase by phrase, uploads from the phone (EPUB converted in the browser, pictures included), captive portal, deep sleep, pictures and vector charts, brackets as punctuation with aside speed and optional side marks, typewriter ticker.
 
 - Captive portal, PDF upload from the phone (pdf.js), microSD library (SPI mode), card formatting, captions, guide lines.
+- Welcome back card (at power-on and after a set break, off/10 min/20 min/1 h/3 h; play restarts at the sentence start), the open book at the top of the Book menu, authors from the converters, drag and drop on the web page.
 
 ## Next
 1. Wi-Fi: home network + `fastreader.local`.
@@ -22,9 +23,13 @@
    - Earbuds, wireless: through the phone page (the phone reads aloud, Bluetooth to the earbuds).
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
 3. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
-4. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
-5. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
-6. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
+4. **Lists and tables.** Today a bulleted or numbered list is read as running text and a table as a jumble of cells.
+   - Lists: the converters keep `- ` / `1. ` items; the reader pauses between items like short sentences and shows the item's bullet or number before its first word; page view indents them.
+   - Tables: small ones read row by row with each cell's column header first ("Year: 1503 · Work: Mona Lisa"); large ones kept as a picture (rendered by the converter) so nothing is lost, with the caption as a description.
+5. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
+6. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
+7. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).
+8. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
 
 ## Later
 - Procedural backgrounds that move slowly (fusing bubbles, merging colours) behind the page.

@@ -240,6 +240,20 @@ pub enum RowKind {
     Item(u8),
     /// Read-only key/value (device info).
     Info(String, String),
+    /// The open book's title, with author · chapter · progress below: the
+    /// first line of the Book menu, in the place of "Resume" (menu item `u8`),
+    /// which it does when tapped.
+    Title(String, String, u8),
+}
+
+impl RowKind {
+    /// The menu or list entry this row chooses, if it is tappable.
+    pub fn item(&self) -> Option<u8> {
+        match self {
+            RowKind::Item(i) | RowKind::Title(_, _, i) => Some(*i),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -266,7 +280,13 @@ fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
         Screen::Menu { sel } => {
             // Only the menu the selection is in (one per title-bar button).
             let (g, range) = reader_core::app::menu_group(sel);
-            (String::from(MENU[g].0), range.map(RowKind::Item).collect(), Some(sel))
+            let rows: Vec<RowKind> = range
+                .map(|i| match reader_core::app::menu_item(i) {
+                    reader_core::app::MenuItem::Resume => book_title_row(app, i),
+                    _ => RowKind::Item(i),
+                })
+                .collect();
+            (String::from(MENU[g].0), rows, Some(sel))
         }
         Screen::Pick { kind, sel, .. } => {
             let v = (0..app.pick_len(kind)).map(RowKind::Item).collect();
@@ -294,6 +314,22 @@ fn entries(app: &App) -> (String, Vec<RowKind>, Option<u8>) {
     }
 }
 
+/// The open book, for the top of the Book menu (and the welcome card):
+/// title, then author, chapter and how far in.
+pub fn book_title_row(app: &App, resume: u8) -> RowKind {
+    let b = &app.reader.book;
+    let pos = app.reader.pos();
+    let mut sub: Vec<String> = Vec::new();
+    if !b.author.is_empty() {
+        sub.push(b.author.clone());
+    }
+    if let Some(c) = b.chapter_index(pos) {
+        sub.push(b.chapters()[c].1.clone());
+    }
+    sub.push(alloc::format!("{}%", app.reader.permille() / 10));
+    RowKind::Title(b.title.clone(), sub.join("  ·  "), resume)
+}
+
 pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
     let header = Rect::new(0, 0, l.screen.w, l.i(30.0));
     let hb = l.i(24.0);
@@ -318,6 +354,7 @@ pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
         RowKind::Section(_) => l.i(20.0),
         RowKind::Item(_) => l.i(33.0),
         RowKind::Info(..) => l.i(28.0),
+        RowKind::Title(..) => l.i(33.0),
     };
     let total: i32 = all.iter().map(row_h).sum();
     let overflow = total > full.h - l.i(4.0);
@@ -326,7 +363,7 @@ pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
 
     // Scroll so the selected row sits in the middle (standard list behaviour:
     // you always see what is above and below), clamped at both ends.
-    let sel_idx = sel.and_then(|s| all.iter().position(|k| *k == RowKind::Item(s))).unwrap_or(0);
+    let sel_idx = sel.and_then(|s| all.iter().position(|k| k.item() == Some(s))).unwrap_or(0);
     let mut first = 0;
     if overflow {
         let mut above = 0;
@@ -347,13 +384,13 @@ pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
         if y + h > area.bottom() {
             break;
         }
-        let gap = if matches!(k, RowKind::Item(_)) { l.i(4.0) } else { 0 };
+        let gap = if k.item().is_some() { l.i(4.0) } else { 0 };
         rows.push(Row { rect: Rect::new(area.x + l.i(6.0), y + gap / 2, area.w - l.i(12.0), h - gap), kind: k.clone() });
         y += h;
     }
     let (scroll, thumb) = if overflow {
         let half = full.h / 2;
-        let visible_items = rows.iter().filter(|r| matches!(r.kind, RowKind::Item(_))).count() as u8;
+        let visible_items = rows.iter().filter(|r| r.kind.item().is_some()).count() as u8;
         let mk = |down: bool| {
             let hit_rect = Rect::new(full.right() - col, if down { full.y + half } else { full.y }, col, half);
             let bh = l.i(46.0).min(hit_rect.h - l.i(10.0));
@@ -392,7 +429,7 @@ pub fn hit_test(app: &App, l: &Layout, x: i32, y: i32) -> Option<Hit> {
             }
         }
         return g.rows.iter().find(|r| r.rect.contains(x, y)).and_then(|r| match r.kind {
-            RowKind::Item(i) => Some(Hit::Row(i)),
+            RowKind::Item(i) | RowKind::Title(_, _, i) => Some(Hit::Row(i)),
             _ => None,
         });
     }
@@ -493,7 +530,7 @@ mod tests {
         for sel in 0..reader_core::app::MENU_LEN {
             a.screen = Screen::Menu { sel };
             let g = list_geom(&a, &l);
-            let row = g.rows.iter().find(|r| r.kind == RowKind::Item(sel)).unwrap_or_else(|| panic!("row {sel} not visible"));
+            let row = g.rows.iter().find(|r| r.kind.item() == Some(sel)).unwrap_or_else(|| panic!("row {sel} not visible"));
             assert_eq!(hit_test(&a, &l, row.rect.cx() as i32, row.rect.cy() as i32), Some(Hit::Row(sel)));
             let n = reader_core::app::menu_group(sel).1.len();
             assert_eq!(g.scroll.is_some(), n > 6, "scroll buttons only when a menu ({n} rows) doesn't fit");

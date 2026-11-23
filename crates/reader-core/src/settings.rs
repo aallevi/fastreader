@@ -34,6 +34,9 @@ pub const SPACING_NAMES: [&str; 3] = ["Tight", "Normal", "Airy"];
 pub const PARAGRAPH_NAMES: [&str; 2] = ["Spaced", "Indented"];
 pub const ALIGN_NAMES: [&str; 2] = ["Ragged right", "Justified"];
 pub const POSITION_NAMES: [&str; 2] = ["Centred", "Recognition point"];
+/// "Welcome back" card: after how many minutes away it shows (0 = never).
+pub const WELCOME_MIN: [u16; 5] = [0, 10, 20, 60, 180];
+pub const WELCOME_NAMES: [&str; 5] = ["Off", "After 10 minutes", "After 20 minutes", "After 1 hour", "After 3 hours"];
 pub const BRACKET_NAMES: [&str; 2] = ["In the text", "As side marks"];
 pub const PACE_NAMES: [&str; 2] = ["Base rate", "Real pace (pauses included)"];
 
@@ -100,6 +103,8 @@ pub struct Settings {
     pub position: u8,
     /// Thin grey lines above and below the word, with ticks at the centre letter.
     pub guides: bool,
+    /// The "welcome back" card after a break: index into WELCOME_MIN.
+    pub welcome: u8,
     /// With the recognition point: split words too long to fit in two
     /// flashes ("determi-" "nazione"), or keep them whole (shifted to fit).
     pub split_long: bool,
@@ -145,6 +150,7 @@ impl Default for Settings {
             position: 1,
             split_long: false,
             guides: false,
+            welcome: 4,
             captions: false,
             progress_bar: true,
             blue_blocks: false,
@@ -173,7 +179,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 33] = [
+pub const FIELDS: [(&str, u16, u16); 34] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -203,6 +209,7 @@ pub const FIELDS: [(&str, u16, u16); 33] = [
     ("position", 0, 1),
     ("split_long", 0, 1),
     ("guides", 0, 1),
+    ("welcome", 0, 4),
     ("captions", 0, 1),
     ("progress_bar", 0, 1),
     ("blue_blocks", 0, 1),
@@ -240,6 +247,7 @@ impl Settings {
             "position" => self.position as u16,
             "split_long" => self.split_long as u16,
             "guides" => self.guides as u16,
+            "welcome" => self.welcome as u16,
             "captions" => self.captions as u16,
             "progress_bar" => self.progress_bar as u16,
             "blue_blocks" => self.blue_blocks as u16,
@@ -284,6 +292,7 @@ impl Settings {
             "position" => self.position = b,
             "split_long" => self.split_long = v != 0,
             "guides" => self.guides = v != 0,
+            "welcome" => self.welcome = v as u8,
             "captions" => self.captions = v != 0,
             "progress_bar" => self.progress_bar = v != 0,
             "blue_blocks" => self.blue_blocks = v != 0,

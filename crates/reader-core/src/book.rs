@@ -237,6 +237,8 @@ pub fn parse_images(mut b: &[u8]) -> Vec<Image> {
 
 pub struct Book {
     pub title: String,
+    /// From an `<!-- author: ... -->` line; empty when the book has none.
+    pub author: String,
     /// Pictures referenced by `{image:N}` marks in the text.
     pub images: Pictures,
     /// Descriptions of pictures, by the picture's word index, in order.
@@ -278,7 +280,7 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), author: String::new(), images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
     }
@@ -325,13 +327,20 @@ impl Book {
     }
 
     /// Builds a book from converter output: an optional first line
-    /// `<!-- title: ... -->` names it, otherwise `fallback` does.
+    /// `<!-- title: ... -->` names it, otherwise `fallback` does; an
+    /// `<!-- author: ... -->` line may follow.
     pub fn parse(source: &str, fallback: &str) -> Self {
         let (title, body) = match source.strip_prefix("<!-- title:").and_then(|r| r.split_once("-->")) {
             Some((t, rest)) => (t.trim(), rest),
             None => (fallback, source),
         };
-        Book::new(title, body)
+        let (author, body) = match body.trim_start_matches(['\n', '\r']).strip_prefix("<!-- author:").and_then(|r| r.split_once("-->")) {
+            Some((a, rest)) => (a.trim(), rest),
+            None => ("", body),
+        };
+        let mut b = Book::new(title, body);
+        b.author = author.into();
+        b
     }
 
     /// Recomputes the running time totals for new pause settings.
@@ -1223,6 +1232,14 @@ mod tests {
         assert_eq!(split_long("antichissimi"), None, "13 letters or fewer stay whole");
         let (a, b) = split_long("precipitevolissimevolmente,").unwrap();
         assert!(a.ends_with('-') && b.ends_with(','), "{a} {b}");
+    }
+
+    #[test]
+    fn author_comment_after_the_title() {
+        let b = Book::parse("<!-- title: Cancroregina -->\n<!-- author: Tommaso Landolfi -->\n# I\nTesto.", "file");
+        assert_eq!((b.title.as_str(), b.author.as_str()), ("Cancroregina", "Tommaso Landolfi"));
+        assert_eq!(words(&b), ["I", "Testo."], "the author line is not read as words");
+        assert_eq!(Book::parse("<!-- title: T -->\nTesto.", "f").author, "");
     }
 
     #[test]

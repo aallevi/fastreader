@@ -69,6 +69,8 @@
   details.bulk summary { cursor: pointer; padding: 6px 0; color: var(--dim); }
   .toggle[aria-pressed=true] { background: var(--sel); color: var(--seltext); }
   aside .close { position: sticky; top: 0; float: right; }
+  .drop { border: 2px dashed var(--dim, #888); border-radius: 8px; padding: 14px; text-align: center; margin: 6px 0; }
+  .drop.over { border-color: var(--sel, #36c); background: color-mix(in srgb, var(--sel, #36c) 12%, transparent); }
 </style>
 </head>
 <body>
@@ -77,6 +79,8 @@
   <h3>Add a book</h3>
   <div class="row"><label for="file">EPUB, PDF, Markdown or text<small>Converted here on the phone: chapters, bold/italic and pictures kept</small></label></div>
   <div class="row"><input type="file" id="file" accept=".epub,.pdf,.md,.txt,text/plain,application/pdf"></div>
+  <div class="drop" id="drop">or drop a book anywhere on this page</div>
+  <small id="cnaHint">On a Mac, if “Choose file” does nothing, this page is in the Wi-Fi sign-in window, which can't open files: open <a href="http://192.168.4.1/" target="_blank" rel="noopener">http://192.168.4.1</a> in Safari or Chrome instead (stay on the FastReader Wi-Fi).</small>
   <div class="row"><button class="toggle" id="send" disabled>Send to the reader</button><small id="upmsg" role="status"></small></div>
   <h3>Books on the reader</h3>
   <div id="bookList" class="booklist"><small>Loading…</small></div>
@@ -398,6 +402,7 @@ async function pdfToMarkup(file, progress) {
   let doc = await open();
   const meta = await doc.getMetadata().catch(() => null);
   const title = (meta?.info?.Title || file.name.replace(/\.pdf$/i, '').split(' -- ')[0]).trim();
+  const author = (meta?.info?.Author || '').trim();
   const norm = t => t.trim().toLowerCase().replace(/\s+/g, ' ');
   const tocTitles = new Set();
   const walkToc = items => (items || []).forEach(o => { tocTitles.add(norm(o.title)); walkToc(o.items); });
@@ -608,7 +613,7 @@ async function pdfToMarkup(file, progress) {
   }
   // A short paragraph all in bold is a heading too ("CHAPTER I").
   const paras = out.map(t => (t.length < 60 && /^(\*\*[^*]+\*\*\s*)+$/.test(t)) ? '# ' + t.replace(/\*/g, '') : t);
-  return {title, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length, wanted: pics.wanted};
+  return {title, author, text: joinBroken(paras).join('\n\n'), images: pics.blob(), pictures: pics.list.length, wanted: pics.wanted};
 }
 
 async function epubToMarkup(file) {
@@ -617,6 +622,7 @@ async function epubToMarkup(file) {
   const opfPath = xml(files['META-INF/container.xml']).querySelector('rootfile').getAttribute('full-path');
   const opf = xml(files[opfPath]), base = opfPath.includes('/') ? opfPath.replace(/[^/]*$/, '') : '';
   const title = (opf.querySelector('title')?.textContent || file.name).trim();
+  const author = (opf.querySelector('creator')?.textContent || '').trim();
   const items = {};
   opf.querySelectorAll('manifest item').forEach(it => items[it.getAttribute('id')] = it.getAttribute('href'));
   const parts = [];
@@ -644,11 +650,37 @@ async function epubToMarkup(file) {
   // through Calibre): nothing to read word by word.
   if ((text.replace(/\{image:\d+\}/g, '').match(/\p{L}/gu) || []).length < 500)
     throw new Error('this EPUB has only pictures of the pages, no text: use a PDF with a text layer (OCR) instead');
-  return {title, text, images: pics.blob(), pictures: pics.list.length};
+  return {title, author, text, images: pics.blob(), pictures: pics.list.length};
 }
 let pending = null;
-$('file').onchange = async () => {
-  const f = $('file').files[0];
+$('file').onchange = () => loadBook($('file').files[0]);
+// Drag and drop: a book dropped anywhere on the page.
+{
+  const zone = $('drop');
+  let depth = 0;
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); depth++; if (!$('settings').classList.contains('open')) $('gear').onclick(); zone.classList.add('over'); });
+  addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+  addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; zone.classList.remove('over'); } });
+  addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    zone.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f) loadBook(f);
+  });
+}
+// Markdown or text: its own <!-- title --> / <!-- author --> lines win over the file name.
+function plainBook(name, text) {
+  const book = {title: name.replace(/\.[^.]*$/, ''), author: '', text};
+  const t = text.match(/^<!-- title:(.*?)-->\r?\n?/);
+  if (t) { book.title = t[1].trim(); book.text = text.slice(t[0].length); }
+  const a = book.text.match(/^<!-- author:(.*?)-->\r?\n?/);
+  if (a) { book.author = a[1].trim(); book.text = book.text.slice(a[0].length); }
+  return book;
+}
+async function loadBook(f) {
   if (!f) return;
   $('send').disabled = true;
   $('upmsg').textContent = 'Reading…';
@@ -656,7 +688,7 @@ $('file').onchange = async () => {
     const name = f.name.toLowerCase();
     pending = name.endsWith('.epub') ? await epubToMarkup(f)
       : name.endsWith('.pdf') ? await pdfToMarkup(f, msg => $('upmsg').textContent = msg)
-      : {title: f.name.replace(/\.[^.]*$/, ''), text: await f.text()};
+      : plainBook(f.name, await f.text());
     const kb = Math.round((new Blob([pending.text]).size + (pending.images?.size || 0)) / 1024);
     const limit = (S && S.upload_limit) || 3 * 1024 * 1024;
     if (kb * 1024 > limit) { $('upmsg').textContent = `${pending.title}: ${Math.round(kb / 1024)} MB, more than the ${Math.round(limit / 1048576)} MB there is room for`; return; }
@@ -669,7 +701,7 @@ $('send').onclick = async () => {
   if (!pending) return;
   $('send').disabled = true;
   $('upmsg').textContent = 'Sending…';
-  const body = new Blob([`<!-- title: ${pending.title} -->\n` + pending.text, ...(pending.images ? [pending.images] : [])]);
+  const body = new Blob([`<!-- title: ${pending.title} -->\n` + (pending.author ? `<!-- author: ${pending.author} -->\n` : '') + pending.text, ...(pending.images ? [pending.images] : [])]);
   const r = await fetch('/upload?title=' + encodeURIComponent(pending.title), {method: 'POST', body});
   $('upmsg').textContent = r.ok ? 'Saved: it is in the Library on the reader' : 'Failed: ' + await r.text();
   if (r.ok) setTimeout(async () => { S = await (await fetch('/settings')).json(); renderSettings(); loadBooks(); }, 1500);

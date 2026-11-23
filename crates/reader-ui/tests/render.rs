@@ -503,3 +503,56 @@ fn guide_lines_pictures_sheet() {
         }
     }
 }
+
+#[test]
+fn bookmark_corner_stays_on_top_of_pictures() {
+    // A bookmarked word, then a bookmarked wide picture right after: the
+    // corner doesn't change, so only the word area is redrawn, and the
+    // picture must not paint over the folded corner (or wipe it on leaving).
+    let mut file = b"Before the figure.\n\n{image:0}\n\nAfter it.".to_vec();
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&[0x40, 1, 0x82, 0]); // 320 x 130: reaches the corner
+    file.extend(std::iter::repeat_n(0x00, 320 * 130 * 2));
+    for theme in [0u8, 3] {
+        let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { theme, mode: 0, chunk: 1, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        let corner = reader_ui::layout::bookmark_corner(&a, &ui.layout).rect;
+        let px = |cv: &Canvas| -> Vec<u32> { (corner.y..corner.bottom()).flat_map(|y| (corner.x..corner.right()).map(move |x| (x, y))).map(|(x, y)| cv.pixel(x, y)).collect() };
+        for (pos, t) in [(2usize, 0u64), (3, 10)] {
+            a.reader.seek(pos, t);
+            a.tap(Hit::Bookmark, t);
+        }
+        let mut t = 5_000;
+        for pos in [2usize, 3, 2] {
+            a.reader.seek(pos, t);
+            a.tick(t);
+            ui.paint(&mut a, t, &mut cv);
+            let drawn = px(&cv);
+            ui.invalidate();
+            ui.paint(&mut a, t, &mut cv); // the same screen, drawn whole
+            assert_eq!(drawn, px(&cv), "theme {theme}, word {pos}: the corner differs from a full redraw");
+            t += 1_000;
+        }
+    }
+}
+
+#[test]
+fn welcome_card_says_which_book_and_hides_the_sentence() {
+    let text = "<!-- title: Cancroregina -->\n<!-- author: Tommaso Landolfi -->\n# Uno\nLa nave partì. Nessuno sapeva dove.";
+    let mut a = App::new(Book::parse(text, "f"), CATALOG, Settings::default());
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    a.reader.seek(4, 0);
+    ui.paint(&mut a, 0, &mut cv);
+    let before: Vec<u32> = (0..320).map(|x| cv.pixel(x, ui.layout.context.cy() as i32)).collect();
+    a.welcome_back(None, 10);
+    ui.paint(&mut a, 10, &mut cv);
+    let card: Vec<u32> = (0..320).map(|x| cv.pixel(x, ui.layout.context.cy() as i32)).collect();
+    assert_ne!(before, card, "the card is drawn over the word and sentence");
+    a.tap(Hit::Bookmark, 20); // any touch dismisses
+    ui.paint(&mut a, 20, &mut cv);
+    let after: Vec<u32> = (0..320).map(|x| cv.pixel(x, ui.layout.context.cy() as i32)).collect();
+    assert_eq!(before, after, "and the reading screen comes back as it was");
+}

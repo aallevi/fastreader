@@ -245,6 +245,8 @@ async fn main(spawner: Spawner) -> ! {
         free_memory_kb: (esp_alloc::HEAP.free() / 1024) as u32,
         web: alloc::string::String::new(),
     };
+    // Just switched on (or woken): say which book and where.
+    app.welcome_back(None, 0);
     let mut cv = Canvas::new(WIDTH, HEIGHT);
     let mut ui = Ui::new(WIDTH, HEIGHT);
     let mut touch = Touch::default();

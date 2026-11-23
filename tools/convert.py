@@ -217,6 +217,8 @@ def epub(path: Path, images: Images):
     base = posixpath.dirname(opf_path)
     title_el = opf.find(".//dc:title", ns)
     title = title_el.text.strip() if title_el is not None and title_el.text else path.stem
+    creator = opf.find(".//dc:creator", ns)
+    images.author = creator.text.strip() if creator is not None and creator.text else ""
     items = {i.get("id"): i.get("href") for i in opf.find("o:manifest", ns)}
     bold, italic = set(), set()
     for href in items.values():
@@ -251,6 +253,7 @@ def pdf(path: Path, images: Images):
 
     d = pymupdf.open(path)
     title = (d.metadata or {}).get("title") or path.stem.split(" -- ")[0]
+    images.author = ((d.metadata or {}).get("author") or "").strip()
     # Body size = the size most characters are set in.
     sizes = collections.Counter()
     lines_by_page = []
@@ -430,7 +433,9 @@ def main():
             dest = books / f"BK{max(taken, default=0) + 1:06d}.BK"
         else:
             dest = a.out / f"{slug(title)}.md"
-        dest.write_bytes(f"<!-- title: {title} -->\n{text}".encode() + images.section())
+        author = getattr(images, "author", "")
+        head = f"<!-- title: {title} -->\n" + (f"<!-- author: {author} -->\n" if author else "")
+        dest.write_bytes(f"{head}{text}".encode() + images.section())
         words = len(text.split())
         heads = text.count("\n# ") + text.startswith("# ")
         pics = f", {len(images.items)} pictures ({images.used // 1024} KB)" if images.items else ""

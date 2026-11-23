@@ -56,6 +56,13 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
+## Welcome back
+- [ ] Switch the reader on: the card shows the book, author, chapter and %; ▶ restarts from the start of the sentence; any other touch just closes it.
+- [ ] Leave it paused for the set time (⚙ → Welcome back): the card appears with "Last read … ago".
+- [ ] 📖 Book: the first line is the open book; tapping it resumes reading.
+- [ ] A bookmarked word next to a bookmarked picture: the folded corner stays on top of the picture.
+- [ ] Mac: open http://192.168.4.1 in Safari, drag a book onto the page.
+
 ## Guide lines
 - [ ] Aa → Guide lines → On: a line above and below the word across the page, with a tick at the centre letter (a groove in Windows 98, thin grey elsewhere); gone while a picture shows, back with the next word; word and phrase modes.
 

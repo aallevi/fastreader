@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 /// How long a message (Paused, speed, Bookmarked…) stays in the title bar.
@@ -57,6 +57,7 @@ pub enum MenuItem {
     Position,
     LongWords,
     Guides,
+    Welcome,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -72,7 +73,7 @@ pub enum MenuItem {
 /// ▲▼ run through all of them in this order; the screen shows the menu the
 /// selection is in.
 pub const MENU: [(&str, &[MenuItem]); 4] = [
-    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Info, MenuItem::Sleep]),
+    ("Settings", &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Theme, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::Brightness, MenuItem::Rotate, MenuItem::Wifi, MenuItem::Card, MenuItem::Welcome, MenuItem::Info, MenuItem::Sleep]),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
     ("Library", &[MenuItem::Library]),
     ("Text", &[MenuItem::Mode, MenuItem::Size, MenuItem::Font, MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align, MenuItem::Brackets, MenuItem::Pictures]),
@@ -100,7 +101,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 32;
+pub const MENU_LEN: u8 = 33;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -132,6 +133,7 @@ impl MenuItem {
             MenuItem::Align => "Text alignment",
             MenuItem::Brackets => "Brackets",
             MenuItem::Pictures => "Picture time",
+            MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
             MenuItem::Guides => "Guide lines",
@@ -164,6 +166,7 @@ impl MenuItem {
             MenuItem::Bookmarks => PickKind::Bookmark,
             MenuItem::Brackets => PickKind::Brackets,
             MenuItem::Pictures => PickKind::Pictures,
+            MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
             MenuItem::Guides => PickKind::Guides,
@@ -191,6 +194,7 @@ pub enum PickKind {
     Position,
     LongWords,
     Guides,
+    Welcome,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -220,6 +224,7 @@ impl PickKind {
             PickKind::Bookmark => "Bookmarks",
             PickKind::Brackets => "Brackets",
             PickKind::Pictures => "Picture time",
+            PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
             PickKind::Guides => "Guide lines",
@@ -495,6 +500,24 @@ pub enum Effect {
     DeleteBook(u8),
 }
 
+/// The "welcome back" card shown after a break: which book, where, and
+/// how long ago, until ▶ (reading restarts a sentence early) or a touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Welcome {
+    /// App time the break started.
+    since: u64,
+    /// Time away before `since` (a sleep or power-off whose length the
+    /// platform knows), or None when it can't be known.
+    before: Option<u64>,
+}
+
+impl Welcome {
+    /// How long since the last reading, if known.
+    pub fn away(&self, now: u64) -> Option<u64> {
+        self.before.map(|b| b + now.saturating_sub(self.since))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Toast {
     pub feedback: Feedback,
@@ -576,6 +599,12 @@ pub struct App {
     pub card: Option<Card>,
     /// The book chosen in "Delete a book…", waiting for the confirmation.
     pub delete_pending: Option<u8>,
+    /// The "welcome back" card, while it shows.
+    pub welcome: Option<Welcome>,
+    /// Last key, touch or playing moment: the break is counted from here.
+    last_input: u64,
+    /// The minute the card last showed, to redraw "… ago" as it changes.
+    welcome_minute: Option<u64>,
     /// Lines the sentence under the word is scrolled from where it starts
     /// (the renderer keeps it in range and resets it when the word changes).
     pub context_scroll: i16,
@@ -618,6 +647,9 @@ impl App {
             card: None,
             context_scroll: 0,
             delete_pending: None,
+            welcome: None,
+            last_input: 0,
+            welcome_minute: None,
             toast: None,
             serial: 0,
             flash: None,
@@ -656,6 +688,15 @@ impl App {
     }
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
+        self.last_input = now;
+        if self.welcome.take().is_some() {
+            // ▶ continues from a sentence early; anything else just
+            // dismisses the card.
+            if action_for(self.screen, key) != Action::TogglePlay {
+                return Feedback::ok(Msg::Shown);
+            }
+            self.run_up(now);
+        }
         self.flash = Some((Hit::Key(key), now + FLASH_MS));
         let fb = self.perform(action_for(self.screen, key), now);
         self.feedback(fb, now)
@@ -683,6 +724,33 @@ impl App {
         }
     }
 
+    /// After a break the reader is coming back: show the "welcome back"
+    /// card (if that setting is on). `away` is how long it was off or
+    /// asleep, when the platform knows. Call at start-up.
+    pub fn welcome_back(&mut self, away: Option<u64>, now: u64) {
+        if self.settings.welcome > 0 && matches!(self.screen, Screen::Reading | Screen::Page) && !self.reader.is_playing() {
+            self.welcome = Some(Welcome { since: now, before: away });
+        }
+    }
+
+    /// The break after which the card shows by itself, in ms (None: off).
+    fn welcome_after(&self) -> Option<u64> {
+        let min = WELCOME_MIN[(self.settings.welcome as usize).min(WELCOME_MIN.len() - 1)];
+        (min > 0).then_some(min as u64 * 60_000)
+    }
+
+    /// Back into the text gently after a break: from the start of the
+    /// sentence (or the one before, if already at a sentence start).
+    fn run_up(&mut self, now: u64) {
+        let pos = self.reader.pos();
+        let b = &self.reader.book;
+        let here = b.sentence_start(pos);
+        let to = if here < pos { here } else if pos > 0 { b.sentence_start(pos - 1) } else { 0 };
+        if to != pos {
+            self.reader.seek(to, now);
+        }
+    }
+
     /// A finger came down on a target: light it, act on release.
     pub fn touch_down(&mut self, hit: Option<Hit>) {
         self.pressed = hit;
@@ -696,6 +764,11 @@ impl App {
     /// The finger lifted on the same target it came down on.
     pub fn tap(&mut self, hit: Hit, now: u64) -> Feedback {
         self.pressed = None;
+        self.last_input = now;
+        if self.welcome.is_some() && !matches!(hit, Hit::Key(_)) {
+            self.welcome = None; // a touch anywhere but ▶ just dismisses it
+            return Feedback::ok(Msg::Shown);
+        }
         // Every button shows its press for a moment after the tap, as keys do
         // (keys set this themselves through `handle`).
         if !matches!(hit, Hit::Key(_)) {
@@ -802,6 +875,23 @@ impl App {
         self.last_tick = now;
         let was_playing = self.reader.is_playing();
         let mut changed = self.reader.tick(now);
+        if was_playing || self.screen.is_overlay() {
+            self.last_input = now; // reading, or in a menu, is not a break
+        }
+        if let Some(w) = self.welcome {
+            // The "… ago" line moves on every minute.
+            if w.before.is_some() && Some(now.saturating_sub(w.since) / 60_000) != self.welcome_minute {
+                changed = true;
+            }
+        } else if let Some(after) = self.welcome_after() {
+            if now.saturating_sub(self.last_input) >= after && matches!(self.screen, Screen::Reading | Screen::Page) && !self.reader.is_playing() {
+                self.welcome = Some(Welcome { since: self.last_input, before: Some(0) });
+                changed = true;
+            }
+        }
+        if changed {
+            self.welcome_minute = self.welcome.map(|w| self.last_tick.saturating_sub(w.since) / 60_000);
+        }
         if was_playing && !self.reader.is_playing() {
             self.serial = self.serial.wrapping_add(1);
             let msg = if self.reader.held_on_picture() { Msg::PictureHeld } else { Msg::Finished };
@@ -820,11 +910,23 @@ impl App {
         changed
     }
 
+    /// When the card should next change: it appears after the break, and
+    /// its "… ago" line moves on every minute.
+    fn welcome_due(&self) -> Option<u64> {
+        match self.welcome {
+            Some(w) => w.before.map(|_| w.since + (self.welcome_minute.unwrap_or(0) + 1) * 60_000),
+            None => {
+                let idle = matches!(self.screen, Screen::Reading | Screen::Page) && !self.reader.is_playing();
+                self.welcome_after().filter(|_| idle).map(|a| self.last_input + a)
+            }
+        }
+    }
+
     /// When the platform needs to call `tick` next (sleep until then).
     pub fn next_wake(&self) -> Option<u64> {
         // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame].into_iter().flatten().min()
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due()].into_iter().flatten().min()
     }
 
     /// True while something moves between words, so the screen must be
@@ -1339,6 +1441,7 @@ impl App {
                 self.apply_mode();
             }
             PickKind::Skip => self.settings.skip = sel,
+            PickKind::Welcome => self.settings.welcome = sel,
             PickKind::Pictures => {
                 self.settings.pacing.picture = sel;
                 self.reader.set_pacing(self.settings.pacing);
@@ -1387,6 +1490,7 @@ impl App {
             PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
+            PickKind::Welcome => WELCOME_NAMES.len() as u8,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1410,6 +1514,7 @@ impl App {
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
             PickKind::Brackets => BRACKET_NAMES[i].into(),
             PickKind::Pictures => PICTURE_NAMES[i.min(PICTURE_NAMES.len() - 1)].into(),
+            PickKind::Welcome => WELCOME_NAMES[i.min(WELCOME_NAMES.len() - 1)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
             PickKind::ProgressBar | PickKind::BookInfo => ["Shown", "Hidden"][i.min(1)].into(),
@@ -1483,6 +1588,7 @@ impl App {
             }
             PickKind::Brackets => self.settings.brackets as u8,
             PickKind::Pictures => self.settings.pacing.picture.min(PICTURE_NAMES.len() as u8 - 1),
+            PickKind::Welcome => self.settings.welcome.min(WELCOME_NAMES.len() as u8 - 1),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
             PickKind::ProgressBar => (!self.settings.progress_bar) as u8,
@@ -1900,6 +2006,9 @@ mod tests {
         a.handle(Up, 0);
         assert!(a.tick(TOAST_MS));
         assert!(a.toast().is_none());
+        // Only the "welcome back" card, a break later; nothing with it off.
+        assert_eq!(a.next_wake(), Some(180 * 60_000));
+        a.settings.welcome = 0;
         assert_eq!(a.next_wake(), None);
     }
 
@@ -2049,6 +2158,58 @@ mod tests {
         assert_eq!(a.handle(Right, 1200 + TOAST_MS + 1).msg, Msg::Skipped { net: 1, skip: Skip::Sentence }, "after the message is gone the count starts fresh");
         a.tap(Hit::StepWord { forward: true }, 9_000);
         assert_eq!(a.tap(Hit::StepWord { forward: true }, 9_100).msg, Msg::Stepped { net: 2 }, "words count on their own");
+    }
+
+    #[test]
+    fn welcome_back_card_after_a_break() {
+        let mut a = app();
+        a.settings.welcome = 2; // after 20 minutes
+        a.reader.seek(5, 0);
+        a.tick(1_000);
+        assert!(a.welcome.is_none());
+        assert_eq!(a.next_wake(), Some(20 * 60_000), "wakes up to show it");
+        a.tick(20 * 60_000);
+        let w = a.welcome.expect("shown after 20 minutes paused");
+        assert_eq!(w.away(25 * 60_000), Some(25 * 60_000));
+        // Any touch other than play only dismisses it.
+        a.tap(Hit::Bookmark, 25 * 60_000);
+        assert!(a.welcome.is_none());
+        assert!(a.bookmarks.is_empty(), "the touch did nothing else");
+    }
+
+    #[test]
+    fn welcome_back_play_restarts_a_sentence_early() {
+        let mut a = app();
+        let b = &a.reader.book;
+        // A word in the middle of a sentence.
+        let mid = (1..b.len()).find(|&i| b.sentence_start(i) < i).unwrap();
+        let start = b.sentence_start(mid);
+        a.reader.seek(mid, 0);
+        a.welcome_back(None, 0);
+        assert!(a.welcome.is_some());
+        assert_eq!(a.welcome.unwrap().away(9_999), None, "time away unknown after power-off");
+        a.handle(Key::Select, 100);
+        assert!(a.welcome.is_none());
+        assert!(a.reader.is_playing());
+        assert_eq!(a.reader.pos(), start, "back to the start of the sentence");
+    }
+
+    #[test]
+    fn welcome_back_off_never_shows_and_playing_is_not_a_break() {
+        let mut a = app();
+        a.settings.welcome = 0;
+        a.welcome_back(None, 0);
+        a.tick(5 * 3_600_000);
+        assert!(a.welcome.is_none());
+        let mut a = app();
+        a.settings.welcome = 1;
+        a.handle(Key::Select, 0); // play
+        let mut t = 0;
+        while a.reader.is_playing() && t < 30 * 60_000 {
+            t += 50;
+            a.tick(t);
+        }
+        assert!(a.welcome.is_none(), "reading for a long time is not a break");
     }
 
     #[test]

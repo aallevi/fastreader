@@ -59,6 +59,8 @@ struct View {
     toolbar: (bool, Option<Hit>, u16, PageInfo),
     /// The current place (word, or page in page view) has a bookmark.
     corner: bool,
+    /// The "welcome back" card, and the minutes away it shows.
+    welcome: Option<Option<u64>>,
 }
 
 /// Everything that changes where pages break.
@@ -165,10 +167,11 @@ impl Ui {
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
             corner: place_bookmarked(app),
+            welcome: app.welcome.map(|w| w.away(now).map(|ms| ms / 60_000)),
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner);
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -193,6 +196,9 @@ impl Ui {
             }
             draw_status(f, cv, &ctx);
             draw_toolbar(f, cv, &ctx);
+            if app.welcome.is_some() {
+                draw_welcome(f, cv, &ctx);
+            }
             draw_corner(cv, &ctx, view.corner);
             damage.push(l.screen);
         } else if let Some(o) = &old {
@@ -200,7 +206,13 @@ impl Ui {
                 draw_header(f, cv, &ctx);
                 damage.push(l.header);
             }
-            if app.screen == Screen::Page {
+            if app.welcome.is_some() {
+                // The card stays as drawn; only the numbers below may change.
+                if o.status != view.status {
+                    draw_status(f, cv, &ctx);
+                    damage.push(l.status);
+                }
+            } else if app.screen == Screen::Page {
                 let now_drawn = (page_start(app), app.reader.shown(), page_highlight(app));
                 if self.page_drawn.as_ref() != Some(&now_drawn) {
                     // Same page, highlight moved: redraw only the lines it left and entered.
@@ -219,11 +231,24 @@ impl Ui {
                 if o.word != view.word {
                     // Clear just the previous word, draw the new one, push both boxes.
                     clear(cv, th, &l, *word_box);
+                    // A picture reaches the page corner: clear it too, so the
+                    // corner is redrawn once on top (its shadow doesn't build up).
+                    let corner = bookmark_corner(app, &l).rect;
+                    let at_corner = app.reader.on_picture() || !word_box.intersect(&corner).is_empty();
+                    if at_corner {
+                        clear(cv, th, &l, corner.intersect(&paper(th, &l)));
+                    }
                     let new_box = draw_word(f, cv, &ctx);
                     // A picture covers the sentence area too: push its whole box
                     // (not just the word area), or its lower half never reaches
                     // the panel and lingers under the next words.
                     damage.push(word_box.union(&new_box).intersect(&l.stage));
+                    // A picture arriving or leaving covers the page corner:
+                    // put the corner (and its bookmark) back on top.
+                    if at_corner || !new_box.intersect(&corner).is_empty() {
+                        draw_corner(cv, &ctx, view.corner);
+                        damage.push(corner);
+                    }
                     *word_box = new_box;
                 }
                 if o.context != view.context {
@@ -379,6 +404,58 @@ fn place_bookmarked(app: &App) -> bool {
 /// The page's top-right corner. Bookmarked: dog-eared, the flap folded down
 /// over the page with a soft shadow. Otherwise a faint fold line hints that
 /// the corner can be folded.
+/// After a break: which book is open, where, and how long ago, over the
+/// word and sentence area until ▶ or a touch.
+fn draw_welcome(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let area = l.word.union(&l.context).intersect(&paper(th, l));
+    clear(cv, th, l, area);
+    let b = &app.reader.book;
+    let pos = app.reader.pos();
+    let mut lines: Vec<(String, bool, f32)> = Vec::new(); // text, bold, size
+    lines.push((up(th, "Welcome back"), false, 11.0));
+    lines.push((b.title.clone(), true, 17.0));
+    if !b.author.is_empty() {
+        lines.push((b.author.clone(), false, 13.0));
+    }
+    let mut place = Vec::new();
+    if let Some(ci) = b.chapter_index(pos) {
+        place.push(b.chapters()[ci].1.clone());
+    }
+    place.push(format!("{}%", app.reader.permille() / 10));
+    lines.push((place.join("  ·  "), false, 12.0));
+    if let Some(ms) = app.welcome.and_then(|w| w.away(c.now)) {
+        lines.push((format!("Last read {} ago", ago(ms)), false, 12.0));
+    }
+    lines.push((up(th, "Press play to continue"), false, 11.0));
+    let gap = l.px(6.0);
+    let total: f32 = lines.iter().map(|(_, _, s)| l.px(*s) + gap).sum::<f32>() - gap;
+    let mut y = area.cy() - total / 2.0;
+    let max = area.w as f32 - l.px(24.0);
+    let n = lines.len();
+    for (k, (t, bold, size)) in lines.into_iter().enumerate() {
+        let px = l.px(size);
+        let face = if bold { th.ui.1 } else { th.ui.0 };
+        let dim = k == 0 || k == n - 1;
+        let w = f.measure(face, px, &t).min(max);
+        y += px;
+        f.draw_fit(cv, face, px, &t, area.cx() - w / 2.0, y - px * 0.2, max, if dim { th.dim } else { th.text });
+        y += gap;
+    }
+}
+
+/// "25 min", "3 h 10 min", "2 days".
+fn ago(ms: u64) -> String {
+    let min = ms / 60_000;
+    match min {
+        0 => "less than a minute".into(),
+        1..=59 => format!("{min} min"),
+        60..=2879 if min.is_multiple_of(60) => format!("{} h", min / 60),
+        60..=2879 => format!("{} h {} min", min / 60, min % 60),
+        _ => format!("{} days", min / 1440),
+    }
+}
+
 fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
     let (th, l, app) = (c.th, c.l, c.app);
     if !matches!(app.screen, Screen::Reading | Screen::Page | Screen::Line { .. }) {
@@ -1726,6 +1803,16 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             RowKind::Section(name) => {
                 let s = up(th, name);
                 f.draw(cv, th.ui.1, l.px(10.5), &s, r.x as f32 + l.px(4.0), r.bottom() as f32 - l.px(5.0), th.section);
+            }
+            RowKind::Title(t, sub, i) => {
+                // The open book in Resume's place: tap it to go on reading.
+                let hot = sel == Some(*i) || lit == Some(Hit::Row(*i));
+                let fg = button(cv, th, l, r, Kind::Row, hot);
+                let dim = if hot { fg } else { mix(fg, th.row.face[0].1, 100) };
+                let x = r.x as f32 + l.px(10.0);
+                let w = r.w as f32 - l.px(20.0);
+                f.draw_fit(cv, th.ui.1, l.px(13.0), t, x, r.y as f32 + l.px(15.0), w, fg);
+                f.draw_fit(cv, th.ui.0, l.px(10.5), sub, x, r.y as f32 + l.px(28.0), w, dim);
             }
             RowKind::Info(k, v) => {
                 f.draw(cv, th.ui.0, l.px(12.0), &up(th, k), r.x as f32 + l.px(6.0), r.cy() + l.px(4.0), mix(text_c, th.list[0].1, 110));

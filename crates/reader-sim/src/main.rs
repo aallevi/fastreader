@@ -230,6 +230,7 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
         .filter_map(|n| n.parse().ok())
         .collect();
     app.positions.resize(list.len(), 0);
+    app.welcome_back(None, 0); // as the reader does when switched on
     app.bookmarks = std::fs::read_to_string(bookmarks_path())
         .unwrap_or_default()
         .split_whitespace()
