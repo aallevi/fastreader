@@ -577,7 +577,8 @@ pub struct App {
     toast: Option<Toast>,
     serial: u32,
     /// The key whose on-screen button is lit, and until when.
-    flash: Option<(Key, u64)>,
+    /// The button that was just used, shown pressed for a moment.
+    flash: Option<(Hit, u64)>,
     /// A touch target under a finger that hasn't lifted yet.
     pressed: Option<Hit>,
     resume_after_menu: bool,
@@ -630,7 +631,7 @@ impl App {
 
     /// The on-screen button to draw as pressed (finger down or key just pressed).
     pub fn lit(&self, now: u64) -> Option<Hit> {
-        self.pressed.or(self.flash.filter(|(_, until)| now < *until).map(|(k, _)| Hit::Key(k)))
+        self.pressed.or(self.flash.filter(|(_, until)| now < *until).map(|(h, _)| h))
     }
 
     /// Takes the pending platform requests.
@@ -650,7 +651,7 @@ impl App {
     }
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
-        self.flash = Some((key, now + FLASH_MS));
+        self.flash = Some((Hit::Key(key), now + FLASH_MS));
         let fb = self.perform(action_for(self.screen, key), now);
         self.feedback(fb, now)
     }
@@ -690,6 +691,11 @@ impl App {
     /// The finger lifted on the same target it came down on.
     pub fn tap(&mut self, hit: Hit, now: u64) -> Feedback {
         self.pressed = None;
+        // Every button shows its press for a moment after the tap, as keys do
+        // (keys set this themselves through `handle`).
+        if !matches!(hit, Hit::Key(_)) {
+            self.flash = Some((hit, now + FLASH_MS));
+        }
         match (hit, self.screen) {
             (Hit::Key(k), _) => self.handle(k, now),
             (Hit::Row(i), Screen::Menu { .. }) if i < MENU_LEN => {
@@ -2034,6 +2040,17 @@ mod tests {
         assert_eq!(a.handle(Right, 1200 + TOAST_MS + 1).msg, Msg::Skipped { net: 1, skip: Skip::Sentence }, "after the message is gone the count starts fresh");
         a.tap(Hit::StepWord { forward: true }, 9_000);
         assert_eq!(a.tap(Hit::StepWord { forward: true }, 9_100).msg, Msg::Stepped { net: 2 }, "words count on their own");
+    }
+
+    #[test]
+    fn every_tapped_button_shows_its_press() {
+        let mut a = app();
+        a.reader.seek(3, 0);
+        a.tap(Hit::StepWord { forward: true }, 100);
+        assert_eq!(a.lit(120), Some(Hit::StepWord { forward: true }), "the thin arrow looks pressed");
+        assert_eq!(a.lit(100 + FLASH_MS), None, "and comes back up");
+        a.tap(Hit::Group(1), 200);
+        assert_eq!(a.lit(210), Some(Hit::Group(1)));
     }
 
     #[test]

@@ -52,8 +52,8 @@ type PageInfo = Option<(usize, Option<usize>)>;
 struct View {
     look: Settings,
     frame: Frame,
-    header: (String, Option<Battery>, Option<u32>, bool),
-    word: (usize, u8, bool, u16, bool, Option<bool>),
+    header: (String, Option<Battery>, Option<u32>, Option<Hit>),
+    word: (usize, u8, bool, u16, bool, Option<bool>, bool),
     context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
@@ -146,7 +146,8 @@ impl Ui {
         let view = View {
             look,
             frame,
-            header: (header_title(app), app.battery, app.toast().map(|t| t.serial), lit == Some(Hit::Key(reader_core::Key::Menu))),
+            // The title bar's buttons show their press (menu key or a tap).
+            header: (header_title(app), app.battery, app.toast().map(|t| t.serial), lit.filter(|h| matches!(h, Hit::Group(_) | Hit::Key(reader_core::Key::Menu) | Hit::Highlight))),
             word: (
                 app.reader.pos(),
                 app.reader.chunk(),
@@ -157,6 +158,8 @@ impl Ui {
                 paused && app.reader.on_picture(),
                 // Each half of a split long word is its own frame (same position).
                 app.reader.split_part(),
+                // The Description button pressed.
+                lit == Some(Hit::Caption),
             ),
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some((app.reader.pos(), app.context_scroll)),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
@@ -856,7 +859,8 @@ fn draw_caption(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect, text: &str)
     }
     // The button, in the theme's style (pushed in while the description shows).
     let on = app.settings.captions;
-    let c = button(cv, th, l, pill, Kind::Row, on);
+    let pressed = app.lit(c.now) == Some(Hit::Caption);
+    let c = button(cv, th, l, pill, Kind::Row, on || pressed);
     let label = up(th, if on { "Hide" } else { "Description" });
     let lw = f.measure(th.ui.1, l.px(11.0), &label);
     let off = if th.chrome == Chrome::Win98 && on { 1.0 } else { 0.0 };
