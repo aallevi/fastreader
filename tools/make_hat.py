@@ -11,11 +11,11 @@ import math, sys
 from pathlib import Path
 
 N, F = 40, 50
-TURN = 50  # frames per turn: one slow turn in 10 s, two loops of the z's
-FRAME_MS = 200  # (as HAT_FRAME_MS in reader-core: 25 frames = the 5 s z loop)
+TURN = 50  # frames per turn: one slow turn in 10 s, one loop of the z's
+FRAME_MS = 200  # (as HAT_FRAME_MS in reader-core: 50 frames = the 10 s z loop)
 # The z's come and go on the same beat as the battery's (Z_STEPS in
 # reader-core): one by one, then leaving from the lowest up. (start ms, which)
-Z_STEPS = [(0, 0b000), (700, 0b001), (1400, 0b011), (2100, 0b111), (2850, 0b110), (3550, 0b100), (4250, 0b000)]
+Z_STEPS = [(0, 0b000), (1400, 0b001), (2800, 0b011), (4200, 0b111), (5700, 0b110), (7100, 0b100), (8500, 0b000)]
 # Roles (the painter maps them to a theme's colours).
 CLEAR, A, A_HI, A_LO, B, B_LO, FUR, FUR_LO, POM, POM_LO, INSIDE, OUT, ZED = range(13)
 
@@ -128,7 +128,7 @@ def frame(k):
                 px[y][x] = OUT
     # z's: they turn with the hat (squeezed as they turn edge-on, mirrored
     # when seen from behind), hidden where the hat is in front of them.
-    t_ms = (k * FRAME_MS) % 5000
+    t_ms = (k * FRAME_MS) % 10000
     shown = [m for s, m in Z_STEPS if t_ms >= s][-1]
     # Where all three z's would be this frame; the trail is nudged as a
     # whole to stay inside the frame (when the tip points up or right).

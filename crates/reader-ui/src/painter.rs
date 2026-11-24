@@ -933,7 +933,24 @@ fn hat_frame(now: u64) -> usize {
 /// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
 /// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
 /// outline; z's (bright red, like the battery's).
+/// Being compared: the hat's whites in grey (previews only).
+pub static HAT_GREY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 fn hat_palette(th: &Theme) -> [Rgb; 12] {
+    let mut p = hat_colours(th);
+    if HAT_GREY.load(core::sync::atomic::Ordering::Relaxed) {
+        // Whites (stripes, fur; a white pom-pom) toned to light grey.
+        for i in [3, 5, 7] {
+            if matches!(p[i], 0xFFFFFF | 0xFFFAF0 | 0xF4F8FD) {
+                p[i] = 0xD4D4D4;
+                p[i + 1] = 0x9A9A9A;
+            }
+        }
+    }
+    p
+}
+
+fn hat_colours(th: &Theme) -> [Rgb; 12] {
     match th.name {
         "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0xFF0000],
         "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0xFF2A2A],
@@ -1000,11 +1017,27 @@ fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, p
 }
 
 /// The battery warning's place, its shadow included.
+/// The night's solid black, width to height (in thousandths): being tried
+/// (750 = 3:4 upright, 707 = A4); the window widens to fit it.
+pub static NIGHT_RATIO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(750);
+
+/// The warning's widths: the dithered edge, and room for the text.
+const NIGHT_FADE: f32 = 44.0;
+const WARNING_TEXT: f32 = 118.0;
+
+fn night_solid(l: &Layout, h: i32) -> i32 {
+    // The body under the title bar: the window less its edges and title.
+    let body_h = h - l.i(3.0) - l.i(21.0);
+    body_h * NIGHT_RATIO.load(core::sync::atomic::Ordering::Relaxed) as i32 / 1000
+}
+
 fn warning_rect(c: &Ctx) -> Rect {
     let (th, l) = (c.th, c.l);
     let stage = l.word.union(&l.context).intersect(&paper(th, l));
-    // Tall, but clear of the progress line and bar below the stage.
-    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(136.0).min(stage.h - l.i(10.0)));
+    // Tall, but clear of the progress line and bar below the stage; as
+    // wide as the night (in its proportion), its edge and the text need.
+    let h = l.i(136.0).min(stage.h - l.i(10.0));
+    let w = (l.i(3.0) + night_solid(l, h) + l.i(NIGHT_FADE) + l.i(3.0) + l.i(WARNING_TEXT) + l.i(10.0)).min(stage.w - l.i(12.0));
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
@@ -1034,11 +1067,14 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
     let right = r.right() as f32 - l.px(10.0);
     let widths: Vec<f32> = lines.iter().map(|t| f.measure(th.ui.0, l.px(11.5), t)).collect();
-    let text_left = (right - widths.iter().copied().fold(0.0, f32::max)) as i32;
+    // The text's left edge: after the night and its dithered edge (or, on a
+    // narrow screen, wherever the longest line needs it).
+    let solid_w = night_solid(l, r.h);
+    let text_left = (r.x + l.i(3.0) + solid_w + l.i(NIGHT_FADE) + l.i(3.0)).min((right - widths.iter().copied().fold(0.0, f32::max)) as i32);
     let line = l.px(14.5);
     let lines_top = bar.bottom() as f32 + l.px(10.0);
     let ok = Rect::new(right as i32 - l.i(54.0), r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
-    let fade = l.i(44.0);
+    let fade = l.i(NIGHT_FADE);
     let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_left - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
     // The hat in the middle of the night's solid black (left of the
     // dithered edge), by the hat itself: in its frame it sits at (15, 26.5),

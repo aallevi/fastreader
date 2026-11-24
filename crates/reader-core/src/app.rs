@@ -739,13 +739,13 @@ pub const BATTERY_DROWSY_MS: u64 = 60_000;
 pub const BATTERY_SLEEP_MS: u64 = 30_000;
 
 /// The z's floating out of a sleepy battery, as if travelling away: in a
-/// 5 s loop they come one by one (lowest first), then go from the bottom
-/// up, the lowest leaving first. Each step: when it starts, and which z's
-/// show (bit 0 = the lowest, nearest the battery).
-pub const Z_STEPS: [(u64, u8); 7] = [(0, 0b000), (700, 0b001), (1_400, 0b011), (2_100, 0b111), (2_850, 0b110), (3_550, 0b100), (4_250, 0b000)];
-pub const Z_LOOP: u64 = 5_000;
+/// slow 10 s loop they come one by one (lowest first), then go from the
+/// bottom up, the lowest leaving first. Each step: when it starts, and
+/// which z's show (bit 0 = the lowest, nearest the battery).
+pub const Z_STEPS: [(u64, u8); 7] = [(0, 0b000), (1_400, 0b001), (2_800, 0b011), (4_200, 0b111), (5_700, 0b110), (7_100, 0b100), (8_500, 0b000)];
+pub const Z_LOOP: u64 = 10_000;
 /// The "Sleepy time" warning's nightcap moves a frame this often: 50
-/// frames, one slow turn in 10 s (two of the z's 5 s loops, in step).
+/// frames, one slow turn in 10 s (one loop of the z's, in step).
 pub const HAT_FRAME_MS: u64 = 200;
 
 /// Which z's show at `now` (bit 0 = the lowest).
