@@ -358,6 +358,41 @@ def pdf(path: Path, images: Images):
         for r in clusters if len(clusters) < 40 else []:
             if r.width > pg.rect.width * 0.2 and r.height > pg.rect.height * 0.08:
                 pictures.append((tuple(r), ("drawing", r)))
+        # Tables: read as the reader's | a | b | rows, in place of their loose
+        # lines of text (and of the ruled lines that would come out as a
+        # "drawing"). The first row is taken as the header.
+        try:
+            found = pg.find_tables().tables
+        except Exception:
+            found = []
+        page_words = pg.get_text("words") if found else []
+
+        def cell_text(box):
+            # The words whose middle lies in the cell, in reading order (the
+            # library's own extract() glues a cell's lines without a space).
+            if not box:
+                return ""
+            r = pymupdf.Rect(box)
+            ws = [w for w in page_words if r.contains(pymupdf.Point((w[0] + w[2]) / 2, (w[1] + w[3]) / 2))]
+            ws.sort(key=lambda w: (round(w[1] / 3), w[0]))
+            text = " ".join(w[4] for w in ws).replace("|", "/")
+            return re.sub(r"\s+", " ", re.sub(r"[■□▪◆●]", " ", text)).strip()
+
+        for t in found:
+            rows = [[cell_text(c) for c in row.cells] for row in t.rows]
+            rows = [r for r in rows if any(r)]
+            if len(rows) < 2 or max(len(r) for r in rows) < 2:
+                continue
+            # A contents page laid out as a grid (titles, then page numbers):
+            # leave it as text.
+            pagey = sum(any(re.fullmatch(r"[\divxlcIVXLC ]{1,12}", c) for c in r[1:]) for r in rows)
+            if len(rows) >= 5 and pagey >= len(rows) * 0.6:
+                continue
+            tb = pymupdf.Rect(t.bbox)
+            inside = lambda b: tb.contains(pymupdf.Point((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
+            page_lines = [e for e in page_lines if isinstance(e[2], tuple) or not inside(e[1])]
+            pictures = [(b, pic) for b, pic in pictures if (pymupdf.Rect(b) & tb).get_area() < 0.5 * pymupdf.Rect(b).get_area()]
+            pictures.append((tuple(tb), ("table", rows)))
         # Each picture goes before the first text line below its top; text
         # keeps its own (column-aware) order.
         for bbox, pic in sorted(pictures, key=lambda e: e[0][1]):
@@ -395,6 +430,15 @@ def pdf(path: Path, images: Images):
         for block, bbox, spans in page_lines:
             if isinstance(spans, tuple):
                 kind, what = spans
+                if kind == "table":
+                    end_para()
+                    width = max(len(r) for r in what)
+                    for k, r in enumerate(what):
+                        out.append("| " + " | ".join(r + [""] * (width - len(r))) + " |")
+                        if k == 0:
+                            out.append("|" + "---|" * width)
+                    last_block = None
+                    continue
                 if kind == "image" and what:
                     mark = images.add_bytes(what)
                 else:
