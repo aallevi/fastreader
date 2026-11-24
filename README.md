@@ -9,7 +9,7 @@ shown the way it works best one word at a time, like no other fast reader.
 **192** tests · **13.7 ms** per word frame on the device · **4** themes ·
 EPUB, PDF, Markdown, text · [Mac app](https://github.com/aallevi/fastreader/releases/latest)
 
-![The four themes](docs/themes.png)
+<img src="docs/themes.png" alt="The four themes: Windows 98, Vista, Scrivener, Night" width="340">
 
 ![Sonnet 18, word by word, in the Windows 98 theme](docs/sonnet-18.gif)
 
