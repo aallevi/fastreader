@@ -739,9 +739,11 @@ pub const BATTERY_DROWSY_MS: u64 = 60_000;
 pub const BATTERY_SLEEP_MS: u64 = 30_000;
 
 /// The z's floating out of a sleepy battery: when each step starts in its
-/// 2.5 s loop (none, one, two, three, then a pause on three).
-const Z_STEPS: [u64; 4] = [0, 700, 1_150, 1_600];
-const Z_LOOP: u64 = 2_500;
+/// 5 s loop (none, one, two, three, then a pause on three).
+const Z_STEPS: [u64; 4] = [0, 1_400, 2_300, 3_200];
+const Z_LOOP: u64 = 5_000;
+/// The "Sleepy time" warning's nightcap turns a frame this often.
+pub const HAT_FRAME_MS: u64 = 120;
 
 /// How many z's show at `now`.
 pub fn z_count(now: u64) -> u8 {
@@ -1361,7 +1363,8 @@ impl App {
         }
         let t = self.last_tick;
         let z = z_next(t);
-        let second = self.low_warning.then_some((t / 1000 + 1) * 1000);
+        // (While the warning shows: its seconds, and its hat turning.)
+        let second = self.low_warning.then_some(((t / 1000 + 1) * 1000).min((t / HAT_FRAME_MS + 1) * HAT_FRAME_MS));
         let warn = self.low_since.filter(|_| self.low_sleep_at.is_none()).map(|since| since + BATTERY_DROWSY_MS);
         [Some(z), second, warn, self.low_sleep_at.filter(|&at| at != u64::MAX)].into_iter().flatten().min()
     }

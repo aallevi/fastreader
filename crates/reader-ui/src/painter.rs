@@ -63,8 +63,8 @@ struct View {
     welcome: Option<Option<u64>>,
     /// A notice (a new version) over the reading screen.
     notice: bool,
-    /// The battery warning, and the seconds it counts down.
-    warning: Option<u64>,
+    /// The battery warning: the seconds it counts down, and its hat's frame.
+    warning: Option<(u64, usize)>,
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
@@ -334,16 +334,17 @@ impl Ui {
         // The battery warning sits on top of everything: drawn again after
         // anything changed, and as it counts down.
         if !app.screen.is_overlay() {
-            if let Some(secs) = view.warning {
+            if let Some((secs, frame)) = view.warning {
                 let ctx = Ctx { th, l: &l, app, now };
                 let spot = warning_rect(&ctx);
-                if full {
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, true));
-                } else if damage.iter().any(|d| !d.intersect(&spot).is_empty()) {
-                    // Something under it was redrawn: the whole window again.
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, true));
-                } else if old.as_ref().is_some_and(|o| o.warning != view.warning) {
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, false));
+                let was = old.as_ref().and_then(|o| o.warning);
+                if full || damage.iter().any(|d| !d.intersect(&spot).is_empty()) {
+                    // New, or something under it was redrawn: the whole window.
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Window));
+                } else if was.map(|w| w.0) != Some(secs) {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Inside));
+                } else if was.map(|w| w.1) != Some(frame) {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Hat));
                 }
             }
         }
@@ -915,8 +916,43 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
 }
 
 /// The battery warning's seconds left, while it shows.
-fn battery_warning(app: &App, now: u64) -> Option<u64> {
-    app.low_sleep_at.filter(|_| app.low_warning).map(|at| at.saturating_sub(now).div_ceil(1000))
+fn battery_warning(app: &App, now: u64) -> Option<(u64, usize)> {
+    app.low_sleep_at.filter(|_| app.low_warning).map(|at| (at.saturating_sub(now).div_ceil(1000), hat_frame(now)))
+}
+
+/// The sleepy nightcap (tools/make_hat.py): frames of colour roles.
+static HAT: &[u8] = include_bytes!("../../../assets/sprites/hat.bin");
+
+fn hat_frame(now: u64) -> usize {
+    (now / reader_core::app::HAT_FRAME_MS) as usize % HAT[6] as usize
+}
+
+/// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
+/// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
+/// outline; z's.
+fn hat_palette(th: &Theme) -> [Rgb; 12] {
+    match th.name {
+        "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0x000080],
+        "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0x1F4E8C],
+        "Night" => [0xE61E28, 0xFF6464, 0x6E0A14, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0x000000, 0x000000, 0xE61E28],
+        _ => [0xE87870, 0xF8A496, 0xB0545C, 0xFFFAF0, 0xDCC8BE, 0xFFFAF0, 0xD6BEB4, 0x8CB4D2, 0x6084AA, 0x2E2640, 0x5A3C46, 0x6084AA],
+    }
+}
+
+/// One frame of the hat at (x, y), each sprite pixel a k×k square, over
+/// the panel colour (its see-through pixels).
+fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, panel: Rgb) -> Rect {
+    let (w, h) = (HAT[7] as usize, HAT[8] as usize);
+    let pal = hat_palette(th);
+    let area = Rect::new(x, y, w as i32 * k, h as i32 * k);
+    cv.fill(area, panel);
+    let px = &HAT[9 + frame * w * h..9 + (frame + 1) * w * h];
+    for (i, &role) in px.iter().enumerate() {
+        if role != 0 {
+            cv.fill(Rect::new(x + (i % w) as i32 * k, y + (i / w) as i32 * k, k, k), pal[role as usize - 1]);
+        }
+    }
+    area
 }
 
 /// The battery warning's place, its shadow included.
@@ -927,10 +963,18 @@ fn warning_rect(c: &Ctx) -> Rect {
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
-/// "Battery almost empty": a small dialog over the reading screen, in the
-/// theme's window style (Windows 98: grey, bevelled), with the seconds
-/// left. A touch or key closes it; the countdown goes on.
-fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, window: bool) -> Rect {
+/// How much of the warning to draw again.
+#[derive(Clone, Copy, PartialEq)]
+enum Redraw {
+    Window,
+    Inside,
+    Hat,
+}
+
+/// "Sleepy time": a small window over the reading screen, in the theme's
+/// window style (Windows 98: grey, bevelled), a nightcap turning beside
+/// the seconds left. A touch or key closes it; the countdown goes on.
+fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, frame: usize, redraw: Redraw) -> Rect {
     let (th, l) = (c.th, c.l);
     let r = warning_rect(c);
     let r = Rect::new(r.x, r.y, r.w - l.i(5.0), r.h - l.i(5.0));
@@ -938,7 +982,12 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, wind
     let (panel, ink) = if win98 { (0xC0C0C0, BLACK) } else { (th.page, th.text) };
     let title_h = l.i(18.0);
     let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
-    if window {
+    let k = (l.px(1.0).round() as i32).max(1);
+    let hat = (r.x + l.i(8.0), bar.bottom() + l.i(6.0));
+    if redraw == Redraw::Hat {
+        return draw_hat(cv, th, hat.0, hat.1, k, frame, panel);
+    }
+    if redraw == Redraw::Window {
         // A shadow, then the window (drawn once: its smoothed edges can't
         // be drawn over themselves).
         cv.rrect(Rect::new(r.x + l.i(4.0), r.y + l.i(4.0), r.w, r.h), th.radius, Paint::Solid(mix(th.page, BLACK, 70)));
@@ -959,20 +1008,17 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, wind
         cv.paint_rect(bar, Paint::Vertical(th.bar));
     }
     let title_ink = if win98 { WHITE } else { th.bar_text };
-    let x = bar.x as f32 + l.px(6.0);
-    f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Battery almost empty"), x, bar.cy() + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
-    let lines = [
-        String::from("The reader will go to sleep in"),
-        format!("{secs} seconds, keeping your place."),
-        String::from("Plug in to keep reading."),
-    ];
-    let mut y = bar.bottom() as f32 + l.px(17.0);
+    f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Sleepy time"), bar.x as f32 + l.px(6.0), bar.cy() + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
+    let hat_box = draw_hat(cv, th, hat.0, hat.1, k, frame, panel);
+    let x = hat_box.right() as f32 + l.px(8.0);
+    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place kept."), String::from("Plug in to read on.")];
+    let mut y = bar.bottom() as f32 + l.px(16.0);
     for t in &lines {
-        f.draw_fit(cv, th.ui.0, l.px(11.5), t, x + l.px(4.0), y, r.w as f32 - l.px(24.0), ink);
-        y += l.px(15.0);
+        f.draw_fit(cv, th.ui.0, l.px(11.5), t, x, y, r.right() as f32 - x - l.px(8.0), ink);
+        y += l.px(14.5);
     }
     // OK, bottom right (any touch closes the warning).
-    let ok = Rect::new(r.right() - l.i(76.0), r.bottom() - l.i(23.0), l.i(66.0), l.i(17.0));
+    let ok = Rect::new(r.right() - l.i(62.0), r.bottom() - l.i(22.0), l.i(54.0), l.i(17.0));
     if win98 {
         cv.fill(ok, panel);
         bevel(cv, ok, false);
