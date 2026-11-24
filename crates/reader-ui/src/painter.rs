@@ -828,6 +828,7 @@ fn battery_look(b: &Battery, now: u64) -> BatteryLook {
 /// One battery bracket, "(" (dir 1, `edge` its left side) or ")" (dir -1,
 /// `edge` its right side): a rounded stroke with short arms, drawn as one
 /// shape so it is smoothed once.
+#[allow(clippy::too_many_arguments)]
 fn bracket(cv: &mut Canvas, edge: f32, dir: f32, top: f32, bot: f32, arm: f32, r: f32, lw: f32, c: Rgb) {
     let mut pts: Vec<(f32, f32)> = Vec::new();
     let arc = |pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, rad: f32, from: f32, to: f32| {
@@ -957,7 +958,7 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, wind
     }
     let title_ink = if win98 { WHITE } else { th.bar_text };
     let x = bar.x as f32 + l.px(6.0);
-    f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Battery almost empty"), x, bar.cy() as f32 + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
+    f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Battery almost empty"), x, bar.cy() + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
     let lines = [
         String::from("The reader will go to sleep in"),
         format!("{secs} seconds, keeping your place."),
@@ -978,7 +979,7 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, wind
     }
     let ok_ink = if win98 { BLACK } else { th.mark_text };
     let tw = f.measure(th.ui.0, l.px(11.5), "OK");
-    f.draw(cv, th.ui.0, l.px(11.5), "OK", ok.cx() as f32 - tw / 2.0, ok.cy() as f32 + l.px(4.0), ok_ink);
+    f.draw(cv, th.ui.0, l.px(11.5), "OK", ok.cx() - tw / 2.0, ok.cy() + l.px(4.0), ok_ink);
     Rect::new(r.x, r.y, r.w + l.i(5.0), r.h + l.i(5.0))
 }
 
