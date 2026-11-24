@@ -30,17 +30,22 @@
    - Measure each state with a USB power meter and put the real numbers (hours of reading, days asleep) in the README.
    - True off: deep sleep still leaves the board's regulator, charger and touch chip drawing a few mA; a small slide switch on the battery lead for storage.
    - Calibrate the battery reading once a LiPo is connected (GPIO 9 reads full scale on USB).
-2. **Try it without the device**: the browser demo is built (docs/demo: the reader compiled to WebAssembly, mouse/touch/keys, settings and added EPUB/PDF/text books kept, fills the page or shows a chosen display's resolution); next, publish it on GitHub Pages, EPUB/PDF in the demo (the phone page's converters), and a one-click web flasher with ready firmware for people who have the board.
-3. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
+2. **Articles and RSS feeds.** Read articles from the web and follow your feeds on the reader.
+   - Web pages: send a link (from the phone page, the Mac app, or the phone's Share sheet) and the reader gets the article itself, without menus and ads (a "reader view" extraction: title, author, text, pictures, lists and tables), as a book in its own Articles shelf.
+   - RSS/Atom feeds: subscribe by link, or import your subscriptions as an OPML file (most feed readers can export one). New items show up in an Articles list with their source and date; read ones are marked; old ones are cleared after a while.
+   - Fetching: when the reader is on the home Wi-Fi, it checks the feeds itself (HTTPS on the ESP32, a few at a time to keep memory free); otherwise the phone page or the Mac app fetches and sends them.
+   - Offline: articles are kept on the SD card, so they can be read anywhere.
+3. **Try it without the device**: the browser demo is built (docs/demo: the reader compiled to WebAssembly, mouse/touch/keys, settings and added EPUB/PDF/text books kept, fills the page or shows a chosen display's resolution); next, publish it on GitHub Pages, EPUB/PDF in the demo (the phone page's converters), and a one-click web flasher with ready firmware for people who have the board.
+4. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
    - Speaker: a small 8 Ω speaker on JP3; the amplifier is enabled by pulling its SHUTDOWN pin low.
    - Earbuds, wired: a 3.5 mm jack on the speaker output through a resistor attenuator (mono in both ears; the output is bridged, so neither wire goes to ground), or a small I2S DAC board with its own jack if free pins allow.
    - Earbuds, wireless: through the phone page. **Done:** 🔊 Read aloud on the phone page: the phone's voice reads sentence by sentence from the reader's place, at the reader's speed, and the reader shows each word as it is spoken.
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
-4. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
-5. **Lists and tables**: done in word and phrase mode (tables below the word or flashed), navigation (a table is a sentence, a cell a word), the converters (EPUB lists and tables, PDF tables on the Mac) and the phone page's book view. Still to do: page view indents list items and lays tables out as a grid; PDF tables in the phone page's converter.
-6. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
-7. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
-8. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
+5. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
+6. **Lists and tables**: done in word and phrase mode (tables below the word or flashed), navigation (a table is a sentence, a cell a word), the converters (EPUB lists and tables, PDF tables on the Mac) and the phone page's book view. Still to do: page view indents list items and lays tables out as a grid; PDF tables in the phone page's converter.
+7. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
+8. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
+9. Finnegans Wake (public domain in the EU since 2012; keep out of public repos until 2035 for the US).
 
 ## Later
 - Procedural backgrounds that move slowly (fusing bubbles, merging colours) behind the page.
