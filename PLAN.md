@@ -21,11 +21,9 @@
 - Welcome back card (at power-on and after a set break, off/10 min/20 min/1 h/3 h; play restarts at the sentence start), the open book at the top of the Book menu, authors from the converters, drag and drop on the web page.
 
 ## Next
-1. **Battery: make it last.** Rough budget (to be measured): Wi-Fi 100-180 mA, backlight 20-60 mA (an LCD: dark themes don't save), processor at 240 MHz 40-60 mA, touch polling and card a few mA.
+1. **Battery: make it last.** (Light sleep, measurements and calibration wait for the battery.) Rough budget (to be measured): Wi-Fi 100-180 mA, backlight 20-60 mA (an LCD: dark themes don't save), processor at 240 MHz 40-60 mA, touch polling and card a few mA.
    - Done: the **sleep timer** (Settings > Sleep timer, default 10 minutes; deep sleep with the place saved, BOOT or a touch wakes it).
-   - Back to the normal firmware build (Wi-Fi off until Web view is chosen; the device runs the wifi-boot debug build now), and Web view switching itself off after ~10 minutes with no phone connected.
-   - Auto-dim: the backlight lowers after a minute paused, back up on a touch.
-   - Done: dim when idle, Web view off when unused, the battery level in colour, and the processor at 160 MHz: measured on the reader (selftest, 7 s of steady reading), a word frame takes 13.7 ms median at 160 MHz against 11.7 ms at 240 (phrases 18, ticker 23, page turns 33 ms), well within a word's ~126 ms at 475 wpm.
+   - Done: the reader on the normal build (Wi-Fi off until Web view is chosen), dim when idle, Web view off when unused (10 minutes), the battery level in colour, and the processor at 160 MHz: measured on the reader (selftest, 7 s of steady reading), a word frame takes 13.7 ms median at 160 MHz against 11.7 ms at 240 (phrases 18, ticker 23, page turns 33 ms), well within a word's ~126 ms at 475 wpm.
    - Light sleep between words and while paused; the touch chip's low-power mode and its interrupt pin to wake, instead of polling 100 times a second.
    - Measure each state with a USB power meter and put the real numbers (hours of reading, days asleep) in the README.
    - True off: deep sleep still leaves the board's regulator, charger and touch chip drawing a few mA; a small slide switch on the battery lead for storage.
