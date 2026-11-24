@@ -377,7 +377,7 @@ impl Book {
             if i % CHECKPOINT == 0 {
                 self.cum.push(acc);
             }
-            acc += w.weight(p);
+            acc += self.weight_at(i, w, p);
         }
         self.cum.push(acc); // total, at the end
         self.cum.shrink_to_fit();
@@ -390,7 +390,21 @@ impl Book {
             return *self.cum.last().unwrap_or(&0);
         }
         let c = i / CHECKPOINT;
-        self.cum[c] + self.words.range(c * CHECKPOINT..i).map(|w| w.weight(&self.pacing)).sum::<u32>()
+        let p = &self.pacing;
+        self.cum[c] + (c * CHECKPOINT..i).zip(self.words.range(c * CHECKPOINT..i)).map(|(k, w)| self.weight_at(k, w, p)).sum::<u32>()
+    }
+
+    /// Word `i`'s time: inside a table read at half speed (its own time
+    /// doubled; the grid's extra beat stays one plain word).
+    fn weight_at(&self, i: usize, w: &Word, p: &Pacing) -> u32 {
+        let all = w.weight(p);
+        let i = i as u32;
+        if self.tables.iter().any(|t| t.cells[0].0 <= i && i < t.end) {
+            let beat = w.style.beats() * 100;
+            (all - beat) * 2 + beat
+        } else {
+            all
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -503,7 +517,8 @@ impl Book {
     pub fn weight_of(&self, r: core::ops::Range<usize>) -> u32 {
         let e = r.end.min(self.words.len());
         let s = r.start.min(e);
-        self.words.range(s..e).map(|w| w.weight(&self.pacing)).sum()
+        let p = &self.pacing;
+        (s..e).zip(self.words.range(s..e)).map(|(k, w)| self.weight_at(k, w, p)).sum()
     }
 
     /// Writes the book as HTML for the phone/computer web view. Every word is
@@ -766,8 +781,9 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 // A table cell starts: the reader flashes the grid first.
                 if let Some(t) = tables.last_mut() {
                     if col > 0 && words.len() > first_word {
+                        // A breath before the next column.
                         if let Some(last) = words.last_mut() {
-                            last.pause = last.pause.max(Pause::Clause);
+                            last.pause = last.pause.max(Pause::Sentence);
                         }
                     }
                     t.cells.push((words.len() as u32, t.rows, col));
@@ -882,12 +898,12 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
             words.last_mut().unwrap().pause = Pause::Paragraph;
         }
         if row {
-            // A row ends with a sentence's breath.
+            // A row ends with a paragraph's breath.
             if let Some(t) = tables.last_mut() {
                 t.rows += 1;
             }
             if let Some(last) = words.last_mut() {
-                last.pause = last.pause.max(Pause::Sentence);
+                last.pause = last.pause.max(Pause::Paragraph);
             }
             cell_beat = false;
         }
@@ -1472,7 +1488,7 @@ mod tests {
         assert!(html.contains("<span class=\"mk\">• </span><span id=\"w1\">one"), "{html}");
         assert!(html.contains("<br>\n<span class=\"mk\">• </span><span id=\"w2\">two"), "{html}");
         assert!(html.contains("<span class=\"mk\">· </span><span id=\"w4\">B"), "{html}");
-        assert!(html.contains("<br>\n<span id=\"w5\">1"), "{html}");
+        assert!(html.contains("<p><span id=\"w5\">1"), "each row its own line: {html}");
     }
 
     #[test]
@@ -1495,7 +1511,18 @@ mod tests {
         assert!(b.cell_at(8).is_none(), "\"After.\" is outside");
         // A cell's first word stays longer (the grid flashes first).
         assert!(b.word(5).unwrap().style.beats() > b.word(6).unwrap().style.beats());
-        assert!(b.word(3).unwrap().pause >= Pause::Sentence, "a row ends with a breath");
+        assert!(b.word(3).unwrap().pause >= Pause::Paragraph, "a row ends with a breath");
+        assert!(b.word(2).unwrap().pause >= Pause::Sentence, "and a cell, before the next column");
+    }
+
+    #[test]
+    fn tables_read_at_half_speed() {
+        // The same word, in a table cell and outside: twice the time inside.
+        let b = Book::new("t", "word here\n\n| word | x |\n| y | z |\n\nEnd.");
+        let w = |i: usize| b.weight_of(i..i + 1);
+        let outside = w(0);
+        let cell_first = w(2); // "word": a cell's first word, with the grid's beat
+        assert_eq!(cell_first, outside * 2 + 100 + (Pause::Sentence.weight(&b.pacing) - Pause::Normal.weight(&b.pacing)) * 2, "own time doubled, plus one beat for the grid");
     }
 
     #[test]
