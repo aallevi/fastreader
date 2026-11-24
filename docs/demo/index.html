@@ -101,7 +101,7 @@ function size(choice) {
   try { saved = localStorage.getItem(KEY); } catch (e) {}
   put(saved ? Uint8Array.from(atob(saved), c => c.charCodeAt(0)) : new Uint8Array(0));
   wasm.start(s.w, s.h);
-  for (const [name, title] of [['sample.md', 'The Quiet Machine'], ['sonnet-18.md', 'Sonnet 18']]) {
+  for (const [name, title] of [['sample.md', 'The Quiet Machine'], ['sonnet-18.md', 'Sonnet 18'], ['tour-lists-and-tables.md', 'Lists and tables']]) {
     try {
       let text = await (await fetch('books/' + name)).text();
       if (!text.startsWith('<!-- title:')) text = `<!-- title: ${title} -->\n` + text;

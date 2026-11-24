@@ -563,3 +563,30 @@ fn welcome_card_says_which_book_and_hides_the_sentence() {
     let after: Vec<u32> = (0..320).map(|x| cv.pixel(x, ui.layout.context.cy() as i32)).collect();
     assert_eq!(before, after, "and the reading screen comes back as it was");
 }
+
+#[test]
+fn guide_lines_stay_put_from_word_to_word() {
+    // Short words, a very long one (drawn smaller to fit) and a heading: the
+    // two lines stay on the same rows, and no other full-width line appears.
+    let text = "# Title here\nShort and Precipitevolissimevolmenteprecipitevolissimevolmente words, more words.";
+    for theme in [0u8, 3] {
+        let mut a = App::new(Book::new("t", text), CATALOG, Settings { theme, guides: true, mode: 0, chunk: 1, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        let l = ui.layout;
+        let lines = |cv: &Canvas| -> Vec<i32> {
+            let page = cv.pixel(160, l.word.y + 1);
+            (l.word.y..l.word.bottom()).filter(|&y| (30..290).filter(|&x| cv.pixel(x, y) != page).count() > 240).collect()
+        };
+        let mut first = None;
+        for i in 0..a.reader.book.len() {
+            a.reader.seek(i, i as u64 * 10);
+            ui.paint(&mut a, i as u64 * 10, &mut cv);
+            let now = lines(&cv);
+            match &first {
+                None => first = Some(now),
+                Some(f) => assert_eq!(&now, f, "theme {theme}, word {i}: the guide lines moved or doubled"),
+            }
+        }
+    }
+}

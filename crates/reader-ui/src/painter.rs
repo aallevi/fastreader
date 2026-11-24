@@ -876,7 +876,10 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
     if app.settings.guides {
-        draw_guides(cv, c, base, m.ascent, m.descent);
+        // From the reading size, not this word's: a long word drawn smaller
+        // must not move the lines (the old ones would stay beside the new).
+        let g = f.line(fam.face(Style::PLAIN), word_px(c) * if phrase { PHRASE_SCALE } else { 1.0 });
+        draw_guides(cv, c, base, g.ascent, g.descent);
     }
     // In a list: its bullets or numbers down the left margin.
     let column = book.list_at(shown.start).map(|(list, item)| draw_list_column(f, cv, c, list, item)).unwrap_or_default();
