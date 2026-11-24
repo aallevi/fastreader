@@ -64,6 +64,9 @@ struct View {
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
+    /// Which table is drawn below the word (Tables: Below the word): the
+    /// screen splits on the way in and joins on the way out.
+    table: Option<usize>,
 }
 
 /// Everything that changes where pages break.
@@ -178,10 +181,11 @@ impl Ui {
                 let at = app.reader.shown().start as u32;
                 b.lists.iter().position(|l| l.items[0].0 <= at && at < l.end)
             },
+            table: table_below(app).map(|(t, _)| t as *const _ as usize),
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.list != view.list);
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.list != view.list || o.table != view.table);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -815,7 +819,104 @@ fn word_px(c: &Ctx) -> f32 {
 /// Baseline that centres the word vertically in its area.
 fn word_baseline(f: &mut Fonts, c: &Ctx) -> f32 {
     let m = f.line(family(c.app.settings.font).face(Style::PLAIN), word_px(c));
-    c.l.word.cy() + (m.ascent - m.descent) / 2.0
+    let cy = match table_below(c.app) {
+        Some(_) => table_zones(c).0.cy(),
+        None => c.l.word.cy(),
+    };
+    cy + (m.ascent - m.descent) / 2.0
+}
+
+/// Tables: Below the word, in word or phrase mode: the table being read
+/// and the cell.
+fn table_below(app: &App) -> Option<(&reader_core::book::Table, usize)> {
+    if app.settings.pacing.table_flash || app.screen != Screen::Reading || !matches!(app.settings.mode(), Mode::Word | Mode::Phrase) {
+        return None;
+    }
+    app.reader.book.cell_at(app.reader.shown().start)
+}
+
+/// The stage split for a table: the word on top, the table filling the rest.
+fn table_zones(c: &Ctx) -> (Rect, Rect) {
+    let (th, l) = (c.th, c.l);
+    let stage = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&paper(th, l));
+    let top = (stage.h as f32 * 0.42) as i32;
+    (Rect::new(stage.x, stage.y, stage.w, top), Rect::new(stage.x, stage.y + top, stage.w, stage.h - top))
+}
+
+/// The table below the word, stretched to fill its zone: header rows
+/// shaded, the cell being read in amber, every cell's text small. A table
+/// taller than the zone keeps its header and shows the rows around the
+/// current one.
+fn draw_table_below(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, zone: Rect, t: &reader_core::book::Table, cell: usize) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let book = &app.reader.book;
+    let area = Rect::new(zone.x + l.i(6.0), zone.y + l.i(2.0), zone.w - l.i(12.0), zone.h - l.i(6.0));
+    let (_, row, _) = t.cells[cell];
+    let (rows, cols, header) = (t.rows as i32, t.cols.max(1) as i32, (t.header as i32).min(t.rows as i32));
+    let fit = ((area.h as f32 / l.px(14.0)) as i32).max(header + 1);
+    // Rows shown: the header, then a window of the others around the current.
+    let body = (fit - header).min(rows - header).max(0);
+    let first = (row as i32 - body / 2).clamp(header, (rows - body).max(header));
+    let shown: Vec<i32> = (0..header).chain(first..first + body).collect();
+    let rh = (area.h / shown.len().max(1) as i32).min(l.i(28.0));
+    let px = l.px(11.0).min(rh as f32 * 0.62);
+    // Columns as wide as their text wants, stretched to fill the width.
+    let text = |k: usize| book.cell_text(t, k);
+    let mut want = alloc::vec![l.px(24.0); cols as usize];
+    for (k, &(_, r, col)) in t.cells.iter().enumerate() {
+        if shown.contains(&(r as i32)) {
+            let face = if (r as i32) < header { th.ui.1 } else { th.ui.0 };
+            let w = f.measure(face, px, &text(k)) + l.px(10.0);
+            want[col as usize] = want[col as usize].max(w.min(area.w as f32 * 0.6));
+        }
+    }
+    let total: f32 = want.iter().sum();
+    let mut xs = alloc::vec![area.x];
+    for w in &want {
+        let last = *xs.last().unwrap();
+        xs.push(last + (w / total * area.w as f32) as i32);
+    }
+    *xs.last_mut().unwrap() = area.right();
+    let y0 = area.y;
+    let (hi, hi_text) = marker_colour(th);
+    let line = mix(th.page, th.text, 120);
+    let gh = rh * shown.len() as i32;
+    for (k, &(_, r, col)) in t.cells.iter().enumerate() {
+        let Some(slot) = shown.iter().position(|&s| s == r as i32) else { continue };
+        let box_ = Rect::new(xs[col as usize], y0 + slot as i32 * rh, xs[col as usize + 1] - xs[col as usize], rh);
+        let head = (r as i32) < header;
+        let (fill, ink) = if k == cell {
+            (Some(hi), hi_text)
+        } else if head {
+            (Some(mix(th.page, th.text, 35)), th.text)
+        } else {
+            (None, th.text)
+        };
+        if let Some(fc) = fill {
+            cv.fill(box_.inset(1, 1), fc);
+        }
+        let face = if head { th.ui.1 } else { th.ui.0 };
+        f.draw_fit(cv, face, px, &text(k), box_.x as f32 + l.px(4.0), box_.cy() + px * 0.36, box_.w as f32 - l.px(8.0), ink);
+    }
+    // The grid: outer frame and the lines between rows and columns.
+    for slot in 0..=shown.len() as i32 {
+        cv.fill(Rect::new(area.x, y0 + slot * rh, area.w, 1), line);
+    }
+    for &x in &xs {
+        cv.fill(Rect::new(x.min(area.right() - 1), y0, 1, gh + 1), line);
+    }
+    // Rows left out above or below the window: a short dashed edge says so.
+    let more = mix(th.page, th.text, 80);
+    if first > header {
+        for x in (area.x..area.right()).step_by(6) {
+            cv.fill(Rect::new(x, y0 + header * rh - 2, 3, 1), more);
+        }
+    }
+    if first + body < rows {
+        for x in (area.x..area.right()).step_by(6) {
+            cv.fill(Rect::new(x, y0 + gh + 2, 3, 1), more);
+        }
+    }
 }
 
 /// Draws the word (or phrase), centred; returns the box it covers.
@@ -980,7 +1081,14 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         draw_guides(cv, c, base, g.ascent, g.descent);
     }
     // In a list: its bullets or numbers down the left margin.
-    let column = book.list_at(shown.start).map(|(list, item)| draw_list_column(f, cv, c, list, item)).unwrap_or_default();
+    let mut column = book.list_at(shown.start).map(|(list, item)| draw_list_column(f, cv, c, list, item)).unwrap_or_default();
+    // A table below the word: the bottom of the stage is the table.
+    if let Some((t, cell)) = table_below(app) {
+        let zone = table_zones(c).1;
+        clear(cv, th, l, zone);
+        draw_table_below(f, cv, c, zone, t, cell);
+        column = column.union(&zone);
+    }
     let top = base - m.ascent - l.px(3.0);
     let pad = l.px(3.0);
     if side_marks {
@@ -1322,6 +1430,9 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     if on_picture {
         return None; // the picture covers this area
     }
+    if table_below(app).is_some() {
+        return None; // the table is the context here
+    }
     clear(cv, th, l, l.context);
     let p = paper(th, l);
     let r = l.context.intersect(&p);
@@ -1551,7 +1662,7 @@ fn pane_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
 /// Whether the sentence under the word is on screen.
 fn context_shown(app: &App) -> bool {
     let on_picture = app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w));
-    app.screen == Screen::Reading && !app.reader.is_playing() && !app.reader.book.is_empty() && app.settings.context && !on_picture
+    app.screen == Screen::Reading && !app.reader.is_playing() && !app.reader.book.is_empty() && app.settings.context && !on_picture && table_below(app).is_none()
 }
 
 /// The numbers (%, words, time left, chapter) in a 98 status row.
