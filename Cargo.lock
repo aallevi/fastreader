@@ -357,7 +357,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fat-format"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-sdmmc",
 ]
@@ -794,11 +794,11 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "reader-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "reader-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "embedded-graphics",
  "minifb",
@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "reader-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "core_maths",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "reader-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reader-core",
  "reader-ui",
