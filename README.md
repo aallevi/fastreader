@@ -54,6 +54,30 @@ moves pixels, touches and bytes.
 | ▶ | BOOT short | play / pause | same |
 | page corner | – | bookmark | same |
 
+## Pictures, lists and tables, while you read
+
+RSVP readers are built around the words. The ones we could check (App Store
+speed readers, browser and Obsidian plugins, November 2026) drop pictures,
+lists and tables or turn them into plain words; the closest, an Obsidian
+plugin, reads a table cell by cell with a pause at the end of each row. None
+we found shows a figure when the text points to it. Here they stay part of
+the reading:
+
+- **Pictures** come in the word stream, shown for a set time (or until ▶);
+  their description shows when paused.
+- **Figure references:** at "see figure 11" the figure itself appears below
+  the word (numbers learnt from the captions when the book opens).
+- **Lists:** the bullets or numbers run down the side, the current item lit,
+  a breath between items; a picture inside a list keeps the markers beside
+  it, and catalogues (picture, then "1. title") pair each picture with its
+  item.
+- **Tables:** the whole table below the word with the cell being read lit
+  (or its grid flashed before each cell), at half speed with a breath before
+  each column; a table counts as one sentence for ⏮ ⏭ and a cell as one word
+  for ‹ ›.
+- **From real books:** EPUB lists and tables convert as such; on the Mac the
+  converter also finds tables and symbol-font bullets in PDFs.
+
 ## Try it on a Mac
 
 Download `FastReader-<version>.dmg`, open it and drag **Fast Reader** onto
