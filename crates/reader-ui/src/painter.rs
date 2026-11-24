@@ -805,7 +805,8 @@ enum BatteryLook {
     Charging(u8),
     /// "(!)": very low, reading goes on.
     Low,
-    /// "( )" with z's floating out of the tip (how many, 0–3): about to sleep.
+    /// "( )" with z's floating out of the tip (which ones, bit 0 = the
+    /// lowest): about to sleep.
     Sleepy(u8),
 }
 
@@ -818,7 +819,7 @@ fn battery_look(b: &Battery, now: u64) -> BatteryLook {
     } else if b.charging {
         BatteryLook::Charging(b.percent)
     } else if b.sleepy() {
-        BatteryLook::Sleepy(reader_core::app::z_count(now))
+        BatteryLook::Sleepy(reader_core::app::z_mask(now))
     } else if b.percent <= BATTERY_LOW {
         BatteryLook::Low
     } else {
@@ -899,11 +900,13 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
             let s = l.px(1.0);
             cv.shape(&[(m + 2.6 * s, t), (m - 3.4 * s, t + h * 0.58), (m - 0.3 * s, t + h * 0.58), (m - 2.6 * s, bb), (m + 3.4 * s, t + h * 0.42), (m + 0.3 * s, t + h * 0.42)], colour);
         }
-        BatteryLook::Sleepy(n) => {
+        BatteryLook::Sleepy(shown) => {
             // z's float up and away from the tip, each smaller.
             let zs = [(l.px(9.0), l.px(3.5), l.px(-1.0)), (l.px(7.0), l.px(9.0), l.px(-6.0)), (l.px(5.0), l.px(13.5), l.px(-10.0))];
-            for &(px, dx, dy) in zs.iter().take(n as usize) {
-                f.draw(cv, face, px, "z", tip_x + dx, mid + px * 0.33 + dy, colour);
+            for (i, &(px, dx, dy)) in zs.iter().enumerate() {
+                if shown & (1 << i) != 0 {
+                    f.draw(cv, face, px, "z", tip_x + dx, mid + px * 0.33 + dy, colour);
+                }
             }
         }
         _ => {

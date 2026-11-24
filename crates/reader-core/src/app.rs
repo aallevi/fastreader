@@ -738,24 +738,26 @@ pub const BATTERY_DROWSY_MS: u64 = 60_000;
 /// How long the warning gives before sleeping (plugging in cancels it).
 pub const BATTERY_SLEEP_MS: u64 = 30_000;
 
-/// The z's floating out of a sleepy battery: when each step starts in its
-/// 5 s loop (none, one, two, three, then a pause on three).
-const Z_STEPS: [u64; 4] = [0, 1_400, 2_300, 3_200];
-const Z_LOOP: u64 = 5_000;
+/// The z's floating out of a sleepy battery, as if travelling away: in a
+/// 5 s loop they come one by one (lowest first), then go from the bottom
+/// up, the lowest leaving first. Each step: when it starts, and which z's
+/// show (bit 0 = the lowest, nearest the battery).
+pub const Z_STEPS: [(u64, u8); 7] = [(0, 0b000), (700, 0b001), (1_400, 0b011), (2_100, 0b111), (2_850, 0b110), (3_550, 0b100), (4_250, 0b000)];
+pub const Z_LOOP: u64 = 5_000;
 /// The "Sleepy time" warning's nightcap moves a frame this often: 50
 /// frames, one slow turn in 10 s (two of the z's 5 s loops, in step).
 pub const HAT_FRAME_MS: u64 = 200;
 
-/// How many z's show at `now`.
-pub fn z_count(now: u64) -> u8 {
+/// Which z's show at `now` (bit 0 = the lowest).
+pub fn z_mask(now: u64) -> u8 {
     let t = now % Z_LOOP;
-    Z_STEPS.iter().filter(|&&s| t >= s).count() as u8 - 1
+    Z_STEPS.iter().rev().find(|s| t >= s.0).map_or(0, |s| s.1)
 }
 
 /// When the z's next change after `now`.
 fn z_next(now: u64) -> u64 {
     let (lap, t) = (now - now % Z_LOOP, now % Z_LOOP);
-    lap + Z_STEPS.iter().copied().find(|&s| s > t).unwrap_or(Z_LOOP)
+    lap + Z_STEPS.iter().map(|s| s.0).find(|&s| s > t).unwrap_or(Z_LOOP)
 }
 
 impl Battery {
