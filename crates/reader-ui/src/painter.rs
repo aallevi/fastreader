@@ -2223,7 +2223,11 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
                 }
             }
             let h = track.h as f32;
-            let thumb = Rect::new(track.x, track.y + (a * h) as i32, track.w, ((z - a) * h).max(10.0) as i32);
+            // Whole pixels from both ends, so a thumb at the end meets the
+            // bottom arrow exactly.
+            let top = track.y + (a * h).round() as i32;
+            let bottom = (track.y + (z * h).round() as i32).max(top + 10).min(track.bottom());
+            let thumb = Rect::new(track.x, bottom.min(track.bottom()) - (bottom - top), track.w, bottom - top);
             cv.fill(thumb, W98_FACE);
             bevel(cv, thumb, false);
         } else if let Some((a, z)) = g.thumb {

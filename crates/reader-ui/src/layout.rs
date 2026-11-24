@@ -399,9 +399,13 @@ pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
                 primary: false,
             }
         };
+        // Measured with the same row heights as `total` (gaps included);
+        // the thumb touches the ends when the first or last row shows.
         let skipped: i32 = all[..first].iter().map(row_h).sum();
-        let shown: i32 = rows.iter().map(|r| r.rect.h).sum();
-        (Some((mk(false), mk(true))), Some((skipped as f32 / total as f32, (skipped + shown) as f32 / total as f32)))
+        let shown: i32 = all[first..first + rows.len()].iter().map(row_h).sum();
+        let a = if first == 0 { 0.0 } else { skipped as f32 / total as f32 };
+        let z = if first + rows.len() >= all.len() { 1.0 } else { ((skipped + shown) as f32 / total as f32).min(1.0) };
+        (Some((mk(false), mk(true))), Some((a, z)))
     } else {
         (None, None)
     };
@@ -534,6 +538,18 @@ mod tests {
             let n = reader_core::app::menu_level(sel).len();
             assert_eq!(g.scroll.is_some(), n > 6, "scroll buttons only when a level ({n} rows) doesn't fit");
         }
+    }
+
+    #[test]
+    fn scroll_thumb_reaches_both_ends() {
+        let mut a = app();
+        let l = Layout::new(320, 240);
+        // The longest menu level (Layout, 7 rows) at its first and last row.
+        let items = reader_core::app::menu_level(reader_core::app::menu_index(MenuItem::Words));
+        a.screen = Screen::Menu { sel: items[0] };
+        assert_eq!(list_geom(&a, &l).thumb.map(|t| t.0), Some(0.0), "at the top: thumb at the top");
+        a.screen = Screen::Menu { sel: *items.last().unwrap() };
+        assert_eq!(list_geom(&a, &l).thumb.map(|t| t.1), Some(1.0), "at the end: thumb at the very end");
     }
 
     #[test]
