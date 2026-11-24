@@ -326,6 +326,9 @@ async fn main(spawner: Spawner) -> ! {
     // Each reading mode while playing: time per frame including the SPI push.
     #[cfg(feature = "selftest")]
     for mode in 0..4u16 {
+        // Steady reading only: no welcome card, no start-up message.
+        app.welcome = None;
+        app.notice = None;
         app.park_book();
         app.open_book(open_book(1, &mut flash, &uploads, &card_books), 1);
         let _ = app.set_setting("mode", mode);
@@ -337,14 +340,15 @@ async fn main(spawner: Spawner) -> ! {
         app.handle(reader_core::Key::Select, now);
         let (mut total, mut worst, mut frames) = (0u64, 0u64, 0u64);
         let mut each: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
-        for _ in 0..90 {
+        for step in 0..300 {
             now += 33;
             app.tick(now);
             let t = Instant::now();
             let damage = ui.paint(&mut app, now, &mut cv);
             let pushed = !damage.is_empty();
             flush!(damage);
-            if pushed {
+            // Timed after the first 3 s (the "Reading" message has gone).
+            if pushed && step >= 90 {
                 let us = t.elapsed().as_micros();
                 total += us;
                 worst = worst.max(us);
@@ -355,7 +359,7 @@ async fn main(spawner: Spawner) -> ! {
         app.handle(reader_core::Key::Select, now);
         each.sort_unstable();
         let median = each.get(each.len() / 2).copied().unwrap_or(0);
-        println!("selftest: mode {} drew {} of 90 frames, median {} us, avg {} us, worst {} us (incl. SPI)", mode, frames, median, total / frames.max(1), worst);
+        println!("selftest: mode {} drew {} frames in 7 s of steady reading, median {} us, avg {} us, worst {} us (incl. SPI)", mode, frames, median, total / frames.max(1), worst);
     }
     #[cfg(feature = "selftest")]
     {
