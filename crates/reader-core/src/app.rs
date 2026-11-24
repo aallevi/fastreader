@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, SLEEP_MIN, SLEEP_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 /// How long a message (Paused, speed, Bookmarked…) stays in the title bar.
@@ -60,6 +60,7 @@ pub enum MenuItem {
     Welcome,
     MenuColours,
     Tables,
+    SleepAfter,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -108,6 +109,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Card,
             MenuItem::Info,
             MenuItem::Sleep,
+            MenuItem::SleepAfter,
         ],
     ),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
@@ -213,7 +215,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 41;
+pub const MENU_LEN: u8 = 42;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -247,6 +249,7 @@ impl MenuItem {
             MenuItem::Pictures => "Picture time",
             MenuItem::MenuColours => "Menu buttons",
             MenuItem::Tables => "Tables",
+            MenuItem::SleepAfter => "Sleep timer",
             MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
@@ -288,6 +291,7 @@ impl MenuItem {
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::MenuColours => PickKind::MenuColours,
             MenuItem::Tables => PickKind::Tables,
+            MenuItem::SleepAfter => PickKind::SleepAfter,
             MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
@@ -319,6 +323,7 @@ pub enum PickKind {
     Welcome,
     MenuColours,
     Tables,
+    SleepAfter,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -350,6 +355,7 @@ impl PickKind {
             PickKind::Pictures => "Picture time",
             PickKind::MenuColours => "Menu buttons",
             PickKind::Tables => "Tables",
+            PickKind::SleepAfter => "Sleep timer",
             PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
@@ -736,6 +742,9 @@ pub struct App {
     pub welcome: Option<Welcome>,
     /// Last key, touch or playing moment: the break is counted from here.
     last_input: u64,
+    /// Last key, touch or moment of reading (menus open don't count): the
+    /// sleep timer runs from here.
+    last_activity: u64,
     /// The minute the card last showed, to redraw "… ago" as it changes.
     welcome_minute: Option<u64>,
     /// The last move in a list was by the ▲▼ keys: the selection is shown
@@ -789,6 +798,7 @@ impl App {
             delete_pending: None,
             welcome: None,
             last_input: 0,
+            last_activity: 0,
             welcome_minute: None,
             keyed: false,
             grid_until: 0,
@@ -832,6 +842,7 @@ impl App {
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
         self.last_input = now;
+        self.last_activity = now;
         self.keyed = matches!(key, Key::Up | Key::Down) || (self.keyed && key == Key::Select);
         if self.welcome.take().is_some() && action_for(self.screen, key) == Action::TogglePlay {
             // ▶ continues from a sentence early; other keys close the card
@@ -905,6 +916,12 @@ impl App {
         }
     }
 
+    /// The sleep timer in ms (None: never).
+    fn sleep_after(&self) -> Option<u64> {
+        let min = SLEEP_MIN[(self.settings.sleep_after as usize).min(SLEEP_MIN.len() - 1)];
+        (min > 0).then_some(min as u64 * 60_000)
+    }
+
     /// The break after which the card shows by itself, in ms (None: off).
     fn welcome_after(&self) -> Option<u64> {
         let min = WELCOME_MIN[(self.settings.welcome as usize).min(WELCOME_MIN.len() - 1)];
@@ -937,6 +954,7 @@ impl App {
     pub fn tap(&mut self, hit: Hit, now: u64) -> Feedback {
         self.pressed = None;
         self.last_input = now;
+        self.last_activity = now;
         if !matches!(hit, Hit::Key(Key::Up | Key::Down)) {
             self.keyed = false;
         }
@@ -1065,6 +1083,19 @@ impl App {
         if was_playing || self.screen.is_overlay() {
             self.last_input = now; // reading, or in a menu, is not a break
         }
+        if was_playing {
+            self.last_activity = now;
+        }
+        // The sleep timer: nothing happening for that long, the reader sleeps.
+        if let Some(after) = self.sleep_after() {
+            if !self.reader.is_playing() && now.saturating_sub(self.last_activity) >= after && !self.effects.contains(&Effect::Sleep) {
+                self.save();
+                self.effect(Effect::Sleep);
+                self.last_activity = now;
+                self.feedback(Feedback::ok(Msg::Sleeping), now);
+                changed = true;
+            }
+        }
         // Reading reaches a table cell: its grid shows first, for the time
         // of a plain word.
         let pos = self.reader.pos();
@@ -1130,12 +1161,17 @@ impl App {
         self.grid_until != 0 && now < self.grid_until
     }
 
+    /// When the sleep timer runs out (while not reading).
+    fn sleep_due(&self) -> Option<u64> {
+        self.sleep_after().filter(|_| !self.reader.is_playing()).map(|a| self.last_activity + a)
+    }
+
     /// When the platform needs to call `tick` next (sleep until then).
     pub fn next_wake(&self) -> Option<u64> {
         // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
         let grid = (self.grid_until != 0).then_some(self.grid_until);
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid].into_iter().flatten().min()
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid, self.sleep_due()].into_iter().flatten().min()
     }
 
     /// True while something moves between words, so the screen must be
@@ -1668,6 +1704,7 @@ impl App {
             }
             PickKind::Skip => self.settings.skip = sel,
             PickKind::Welcome => self.settings.welcome = sel,
+            PickKind::SleepAfter => self.settings.sleep_after = sel,
             PickKind::Pictures => {
                 self.settings.pacing.picture = sel;
                 self.reader.set_pacing(self.settings.pacing);
@@ -1717,6 +1754,7 @@ impl App {
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
+            PickKind::SleepAfter => SLEEP_NAMES.len() as u8,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1741,6 +1779,7 @@ impl App {
             PickKind::Brackets => BRACKET_NAMES[i].into(),
             PickKind::Pictures => PICTURE_NAMES[i.min(PICTURE_NAMES.len() - 1)].into(),
             PickKind::Welcome => WELCOME_NAMES[i.min(WELCOME_NAMES.len() - 1)].into(),
+            PickKind::SleepAfter => SLEEP_NAMES[i.min(SLEEP_NAMES.len() - 1)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
             PickKind::ProgressBar | PickKind::BookInfo => ["Shown", "Hidden"][i.min(1)].into(),
@@ -1820,6 +1859,7 @@ impl App {
             PickKind::Brackets => self.settings.brackets as u8,
             PickKind::Pictures => self.settings.pacing.picture.min(PICTURE_NAMES.len() as u8 - 1),
             PickKind::Welcome => self.settings.welcome.min(WELCOME_NAMES.len() as u8 - 1),
+            PickKind::SleepAfter => self.settings.sleep_after.min(SLEEP_NAMES.len() as u8 - 1),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
             PickKind::ProgressBar => (!self.settings.progress_bar) as u8,
@@ -2032,7 +2072,7 @@ mod tests {
         let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
         assert_eq!(
             level(&a),
-            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep],
+            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter],
             "Settings: Theme and Web view first, then its headings"
         );
         a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };
@@ -2302,7 +2342,10 @@ mod tests {
         a.handle(Up, 0);
         assert!(a.tick(TOAST_MS));
         assert!(a.toast().is_none());
-        // Only the "welcome back" card, a break later; nothing with it off.
+        // Only the sleep timer (10 minutes) and the "welcome back" card (3
+        // hours); nothing with both off.
+        assert_eq!(a.next_wake(), Some(10 * 60_000));
+        a.settings.sleep_after = 0;
         assert_eq!(a.next_wake(), Some(180 * 60_000));
         a.settings.welcome = 0;
         assert_eq!(a.next_wake(), None);
@@ -2482,6 +2525,7 @@ mod tests {
     fn welcome_back_card_after_a_break() {
         let mut a = app();
         a.settings.welcome = 2; // after 20 minutes
+        a.settings.sleep_after = 0; // (the sleep timer would come first)
         a.reader.seek(5, 0);
         a.tick(1_000);
         assert!(a.welcome.is_none());
@@ -2564,6 +2608,29 @@ mod tests {
         a.card_removed(30);
         assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "the card book: the Library opens");
         assert!(!a.reader.is_playing());
+    }
+
+    #[test]
+    fn the_sleep_timer_puts_the_reader_to_sleep() {
+        let mut a = app();
+        a.settings.sleep_after = 2; // 5 minutes
+        a.handle(Select, 0); // read for a while: no sleep
+        let mut t = 0;
+        while t < 8 * 60_000 && a.reader.is_playing() {
+            t += 100;
+            a.tick(t);
+        }
+        while a.take_effect().is_some() {}
+        let stop = t;
+        a.tick(stop + 4 * 60_000);
+        assert!(a.take_effect().is_none(), "4 minutes after reading stopped: awake");
+        assert_eq!(a.next_wake().map(|w| w <= stop + 5 * 60_000), Some(true), "wakes itself up to sleep in time");
+        a.tick(stop + 5 * 60_000);
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Sleep), "5 minutes: asleep");
+        let mut b = app();
+        b.settings.sleep_after = 0;
+        b.tick(3_600_000);
+        assert!(!core::iter::from_fn(|| b.take_effect()).any(|e| e == Effect::Sleep), "Never: never");
     }
 
     #[test]
