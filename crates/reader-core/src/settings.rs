@@ -59,6 +59,9 @@ pub struct Pacing {
     /// Tables: false = the table below the word the whole time; true = its
     /// grid flashes before each cell (a beat more for it).
     pub table_flash: bool,
+    /// Figure references: false = the word stays in its place and the
+    /// figure fits below it; true = the word moves up for a bigger figure.
+    pub figure_up: bool,
 }
 
 /// Sleep timer: after how many minutes with nothing happening (no touch,
@@ -67,6 +70,7 @@ pub const SLEEP_MIN: [u16; 6] = [0, 2, 5, 10, 20, 30];
 pub const SLEEP_NAMES: [&str; 6] = ["Never", "After 2 minutes", "After 5 minutes", "After 10 minutes", "After 20 minutes", "After 30 minutes"];
 
 pub const TABLE_NAMES: [&str; 2] = ["Below the word", "Flash before each cell"];
+pub const FIGURE_NAMES: [&str; 2] = ["Word stays, figure below", "Word moves up, bigger figure"];
 
 /// Picture display times, in ms; 0 = reading pauses on the picture until ▶.
 pub const PICTURE_MS: [u64; 6] = [2_000, 3_000, 4_000, 8_000, 15_000, 0];
@@ -74,7 +78,7 @@ pub const PICTURE_NAMES: [&str; 6] = ["2 seconds", "3 seconds", "4 seconds", "8 
 
 impl Default for Pacing {
     fn default() -> Self {
-        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 2, table_flash: false }
+        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 2, table_flash: false, figure_up: false }
     }
 }
 
@@ -198,7 +202,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 38] = [
+pub const FIELDS: [(&str, u16, u16); 39] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -217,6 +221,7 @@ pub const FIELDS: [(&str, u16, u16); 38] = [
     ("ramp", 0, 1),
     ("pictures", 0, 5),
     ("tables", 0, 1),
+    ("figures", 0, 1),
     ("book", 0, 255),
     ("phrase", 1, 3),
     ("spacing", 0, 2),
@@ -288,6 +293,7 @@ impl Settings {
             "ramp" => p.ramp as u16,
             "pictures" => p.picture as u16,
             "tables" => p.table_flash as u16,
+            "figures" => p.figure_up as u16,
             "book" => self.book as u16,
             _ => return None,
         })
@@ -337,6 +343,7 @@ impl Settings {
             "ramp" => p.ramp = v != 0,
             "pictures" => p.picture = b,
             "tables" => p.table_flash = v != 0,
+            "figures" => p.figure_up = v != 0,
             "book" => self.book = b,
             _ => unreachable!("FIELDS and set() list the same names"),
         }

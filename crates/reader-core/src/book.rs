@@ -368,6 +368,11 @@ impl Book {
         refs
     }
 
+    /// Word `i` ends a reference to a figure (the "11" of "figure 11").
+    pub fn ends_figure_ref(&self, i: usize) -> bool {
+        self.figure_ref(i).is_some() && self.figure_ref(i + 1).is_none()
+    }
+
     /// The picture word a reference at word `i` points to ("figure 11").
     pub fn figure_ref(&self, i: usize) -> Option<usize> {
         let i = i as u32;
@@ -485,12 +490,9 @@ impl Book {
     /// grid shows for that beat, then the word for its own time).
     fn weight_at(&self, i: usize, w: &Word, p: &Pacing) -> u32 {
         let n = i as u32;
-        // A reference to a figure ("figure 11"): the picture shows below
-        // the word, so its number stays two beats longer.
-        let figure = if self.figure_refs.binary_search_by_key(&n, |r| r.0).is_ok() && self.figure_refs.binary_search_by_key(&(n + 1), |r| r.0).is_err() { 200 } else { 0 };
         match self.tables.iter().find(|t| t.cells[0].0 <= n && n < t.end) {
             Some(t) => w.weight(p) * 2 + if p.table_flash && t.cells.iter().any(|c| c.0 == n) { 100 } else { 0 },
-            None => w.weight(p) + figure,
+            None => w.weight(p),
         }
     }
 

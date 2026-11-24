@@ -72,6 +72,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] In the fungi book (Agrodok 41), "see figure 11": the number on top, the figure's drawing below it, a little longer than a word; read on and the screen joins again.
 - [ ] Inside a table, ‹ › step cell by cell; ⏮ ⏭ jump over the whole table.
 
+## Figure references
+- [ ] At "figure 1" the word stays where it is and the figure shows below it, for half the picture time (Settings > Content > Figure references > "Word moves up, bigger figure" for the other way).
+
 ## Nested lists
 - [ ] Tour book > A nested list: sub-items step to the right in the side column (dot, ring, square by level); with brackets as side marks the "(" sits after the column.
 

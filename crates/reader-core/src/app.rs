@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, SLEEP_MIN, SLEEP_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, FIGURE_NAMES, SLEEP_MIN, SLEEP_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// Dim when idle: after this long with nothing happening.
 pub const DIM_MS: u64 = 60_000;
@@ -65,6 +65,7 @@ pub enum MenuItem {
     Welcome,
     MenuColours,
     Tables,
+    Figures,
     SleepAfter,
     AutoDim,
     Card,
@@ -139,6 +140,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Brackets,
             MenuItem::Pictures,
             MenuItem::Tables,
+            MenuItem::Figures,
         ],
     ),
 ];
@@ -149,7 +151,7 @@ pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
     (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours, MenuItem::AutoDim]),
     (MenuItem::SubConnections, &[MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
-    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables]),
+    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables, MenuItem::Figures]),
 ];
 
 /// The submenu heading an item sits under, if any.
@@ -222,7 +224,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 43;
+pub const MENU_LEN: u8 = 44;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -256,6 +258,7 @@ impl MenuItem {
             MenuItem::Pictures => "Picture time",
             MenuItem::MenuColours => "Menu buttons",
             MenuItem::Tables => "Tables",
+            MenuItem::Figures => "Figure references",
             MenuItem::SleepAfter => "Sleep timer",
             MenuItem::AutoDim => "Dim when idle",
             MenuItem::Welcome => "Welcome back",
@@ -299,6 +302,7 @@ impl MenuItem {
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::MenuColours => PickKind::MenuColours,
             MenuItem::Tables => PickKind::Tables,
+            MenuItem::Figures => PickKind::Figures,
             MenuItem::SleepAfter => PickKind::SleepAfter,
             MenuItem::AutoDim => PickKind::AutoDim,
             MenuItem::Welcome => PickKind::Welcome,
@@ -332,6 +336,7 @@ pub enum PickKind {
     Welcome,
     MenuColours,
     Tables,
+    Figures,
     SleepAfter,
     AutoDim,
     Card,
@@ -365,6 +370,7 @@ impl PickKind {
             PickKind::Pictures => "Picture time",
             PickKind::MenuColours => "Menu buttons",
             PickKind::Tables => "Tables",
+            PickKind::Figures => "Figure references",
             PickKind::SleepAfter => "Sleep timer",
             PickKind::AutoDim => "Dim when idle",
             PickKind::Welcome => "Welcome back",
@@ -396,7 +402,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::AutoDim)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::Figures | PickKind::AutoDim)
     }
 }
 
@@ -1833,7 +1839,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::AutoDim => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::Figures | PickKind::AutoDim => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
@@ -1871,6 +1877,7 @@ impl App {
             PickKind::Guides => ["Off", "On"][i.min(1)].into(),
             PickKind::MenuColours => ["Theme", "Colourful"][i.min(1)].into(),
             PickKind::Tables => TABLE_NAMES[i.min(1)].into(),
+            PickKind::Figures => FIGURE_NAMES[i.min(1)].into(),
             PickKind::AutoDim => ["Never", "After a minute"][i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
@@ -1915,6 +1922,7 @@ impl App {
             MenuItem::Guides => (if self.settings.guides { "On" } else { "Off" }).into(),
             MenuItem::MenuColours => (if self.settings.menu_colours { "Colourful" } else { "Theme" }).into(),
             MenuItem::Tables => (if self.settings.pacing.table_flash { "Flash" } else { "Below" }).into(),
+            MenuItem::Figures => (if self.settings.pacing.figure_up { "Bigger" } else { "Below" }).into(),
             MenuItem::AutoDim => (if self.settings.auto_dim { "After a minute" } else { "Never" }).into(),
             MenuItem::LongWords => (if self.settings.split_long { "Split if too long" } else { "Keep whole" }).into(),
             MenuItem::ProgressBlocks => (if self.settings.blue_blocks { "Blue" } else { "Grey" }).into(),
@@ -1953,6 +1961,7 @@ impl App {
             PickKind::Guides => self.settings.guides as u8,
             PickKind::MenuColours => self.settings.menu_colours as u8,
             PickKind::Tables => self.settings.pacing.table_flash as u8,
+            PickKind::Figures => self.settings.pacing.figure_up as u8,
             PickKind::AutoDim => self.settings.auto_dim as u8,
             PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
@@ -1993,6 +2002,7 @@ impl App {
             PickKind::Guides => self.settings.guides = v == 1,
             PickKind::MenuColours => self.settings.menu_colours = v == 1,
             PickKind::AutoDim => self.settings.auto_dim = v == 1,
+            PickKind::Figures => self.settings.pacing.figure_up = v == 1,
             PickKind::Tables => {
                 self.settings.pacing.table_flash = v == 1;
                 self.reader.set_pacing(self.settings.pacing);

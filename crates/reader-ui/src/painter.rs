@@ -867,7 +867,10 @@ fn word_px(c: &Ctx) -> f32 {
 /// Baseline that centres the word vertically in its area.
 fn word_baseline(f: &mut Fonts, c: &Ctx) -> f32 {
     let m = f.line(family(c.app.settings.font).face(Style::PLAIN), word_px(c));
-    let cy = if split_below(c.app) { table_zones(c).0.cy() } else { c.l.word.cy() };
+    // A table moves the word up for the whole table; a figure reference
+    // keeps it where it is (the figure goes below), so the eye stays put.
+    let up = table_below(c.app).is_some() || (c.app.settings.pacing.figure_up && figure_below(c.app).is_some());
+    let cy = if up { table_zones(c).0.cy() } else { c.l.word.cy() };
     cy + (m.ascent - m.descent) / 2.0
 }
 
@@ -901,6 +904,15 @@ fn table_zones(c: &Ctx) -> (Rect, Rect) {
     let stage = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&paper(th, l));
     let top = (stage.h as f32 * 0.42) as i32;
     (Rect::new(stage.x, stage.y, stage.w, top), Rect::new(stage.x, stage.y + top, stage.w, stage.h - top))
+}
+
+/// A referenced figure's place: under the word (left where it always is)
+/// down to the bottom of the stage.
+fn figure_zone(c: &Ctx) -> Rect {
+    let (th, l) = (c.th, c.l);
+    let stage = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&paper(th, l));
+    let top = (l.word.cy() + word_px(c) * 0.55) as i32;
+    Rect::new(stage.x, top, stage.w, stage.bottom() - top)
 }
 
 /// The table below the word, stretched to fill its zone: header rows
@@ -1155,11 +1167,12 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         draw_table_below(f, cv, c, zone, t, cell);
         column = column.union(&zone);
     } else if let Some(pic) = figure_below(app) {
-        // A reference to a figure: the figure below the word.
-        let zone = table_zones(c).1;
+        // A reference to a figure: the figure below the word, which stays
+        // in its usual place.
+        let zone = if app.settings.pacing.figure_up { table_zones(c).1 } else { figure_zone(c) };
         clear(cv, th, l, zone);
         if let Some(img) = book.image_of(book.word(pic).unwrap()) {
-            cv.image(zone.inset(l.i(8.0), l.i(4.0)), img.w, img.h, &img.px);
+            cv.image(zone.inset(l.i(4.0), l.i(2.0)), img.w, img.h, &img.px);
         }
         column = column.union(&zone);
     }

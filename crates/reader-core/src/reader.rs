@@ -161,11 +161,15 @@ impl Reader {
         let base = self.ms_for(self.book.weight_of(self.shown()) as u64);
         // Each half of a split word gets half its time.
         let base = if self.split_part().is_some() { base / 2 } else { base };
-        if self.ramp > 0 && self.pacing.ramp {
-            base * (100 + 25 * self.ramp as u64) / 100
-        } else {
-            base
+        let t = if self.ramp > 0 && self.pacing.ramp { base * (100 + 25 * self.ramp as u64) / 100 } else { base };
+        // A reference to a figure ("see figure 11") shows the figure below
+        // the word: it stays half a picture's time, so there's time to look.
+        let s = self.shown();
+        if s.end > s.start && self.book.ends_figure_ref(s.end - 1) {
+            let pic = crate::settings::PICTURE_MS[(self.pacing.picture as usize).min(crate::settings::PICTURE_MS.len() - 1)];
+            return t.max(if pic == 0 { 2_000 } else { pic / 2 });
         }
+        t
     }
 
     pub fn ms_left(&self) -> u64 {
