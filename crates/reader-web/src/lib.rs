@@ -94,6 +94,20 @@ pub extern "C" fn start(w: u32, h: u32) {
     });
 }
 
+/// A new screen size (window resized, phone turned, another display
+/// chosen): the reader lays itself out again for it.
+#[no_mangle]
+pub extern "C" fn resize(w: u32, h: u32) {
+    with(|d| {
+        if (d.cv.w as u32, d.cv.h as u32) != (w, h) {
+            d.ui = Ui::new(w, h);
+            d.cv = Canvas::new(w, h);
+            d.rgba = vec![255; (w * h * 4) as usize];
+            d.redraw = true;
+        }
+    });
+}
+
 /// Adds the book in the inbox (converter output: markup and pictures) to
 /// the library; the first one added is opened. `added` = 1 for a book the
 /// visitor added (it can be deleted), 0 for one that came with the page
@@ -318,6 +332,10 @@ mod tests {
         assert!(changed > 3, "words went by");
         let px = unsafe { std::slice::from_raw_parts(pixels(), 320 * 240 * 4) };
         assert!(px.chunks(4).any(|c| c[0] < 100), "something dark was drawn");
+        // Another screen: laid out again at its size.
+        resize(960, 540);
+        assert_eq!(frame(4_000.0), 1);
+        with(|d| assert_eq!((d.cv.w, d.cv.h), (960, 540)));
         // An added book can be deleted (the page hears which); built-in ones can't.
         let mine = "<!-- title: Mine -->\nMy own book.";
         let p = inbox(mine.len());

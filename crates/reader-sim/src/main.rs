@@ -272,9 +272,23 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
         }
     }
 
+    let (mut w, mut h) = (w, h);
     let mut cv = Canvas::new(w, h);
     let mut ui = Ui::new(w, h);
-    let mut window = Window::new("Fast Reader", w as usize, h as usize, WindowOptions { scale, ..WindowOptions::default() }).expect("window");
+    // Drawn at the window's own size (not scaled up): drag its edge or
+    // maximize it and the reader lays itself out for the new screen, like a
+    // different display would. --device keeps the reader's fixed pixels.
+    let resizable = matches!(scale, Scale::X1);
+    let mut window = Window::new(
+        "Fast Reader",
+        w as usize,
+        h as usize,
+        WindowOptions { scale, resize: resizable, scale_mode: minifb::ScaleMode::Stretch, ..WindowOptions::default() },
+    )
+    .expect("window");
+    if resizable {
+        println!("Window: drag its edge or maximize it; the reader fills any size.");
+    }
     let mut out = vec![0u32; (w * h) as usize];
     let mut held: Option<(Key, u64, u64)> = None;
     let mut touch = Touch::default();
@@ -282,6 +296,18 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
 
     while window.is_open() {
         let now = start.elapsed().as_millis() as u64;
+        if resizable {
+            let (nw, nh) = window.get_size();
+            let (nw, nh) = (nw.max(200) as u32, nh.max(150) as u32);
+            if (nw, nh) != (w, h) {
+                (w, h) = (nw, nh);
+                cv = Canvas::new(w, h);
+                ui = Ui::new(w, h);
+                out = vec![0u32; (w * h) as usize];
+                dirty = true;
+                println!("Window: now {w}x{h}");
+            }
+        }
         {
             let mut a = app.lock().unwrap();
             for k in window.get_keys_pressed(KeyRepeat::No) {

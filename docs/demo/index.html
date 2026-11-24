@@ -20,6 +20,8 @@
   #screen { touch-action: none; display: block; border-radius: 10px; box-shadow: 0 6px 30px rgba(0,0,0,.25); background: #000; }
   .bar { width: 100%; max-width: 960px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--dim); font-size: 13px; }
   .bar label { cursor: pointer; color: var(--link); }
+  .bar select { font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 1px 4px; }
+  #screen.pixels { image-rendering: pixelated; }
   .bar input { display: none; }
   a { color: var(--link); }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
@@ -34,6 +36,15 @@
 <div class="bar">
   <span>Tap ▶ to read · ⚙ 📖 📚 Aa for the menus · keys <kbd>space</kbd> <kbd>←</kbd><kbd>→</kbd> <kbd>↑</kbd><kbd>↓</kbd> <kbd>M</kbd></span>
   <label>Add a book (EPUB, PDF, .md, .txt, or drop it here)<input type="file" id="file" accept=".epub,.pdf,.md,.txt,text/plain,application/pdf"></label>
+  <span>Screen <select id="display" aria-label="Screen">
+    <option value="fill">Fill the page</option>
+    <option value="320x240">The reader: ES3C28P, 320×240</option>
+    <option value="480x320">3.5″ display, 480×320</option>
+    <option value="800x480">5″/7″ display, 800×480</option>
+    <option value="960x540">M5Stack PaperS3 · LilyGO T5, 960×540</option>
+    <option value="540x960">The same, portrait, 540×960</option>
+    <option value="1280x800">Tablet, 1280×800</option>
+  </select></span>
   <span id="msg" role="status"></span>
   <a href="https://github.com/aallevi/fastreader">Build one · source on GitHub</a>
 </div>
@@ -47,22 +58,25 @@ globalThis.PDFJS_BASE = new URL('pdfjs/', location.href).href;
 'use strict';
 const canvas = document.getElementById('screen');
 const msg = t => document.getElementById('msg').textContent = t;
-const KEY = 'fastreader-demo-settings';
+const KEY = 'fastreader-demo-settings-2'; // -2: new defaults (Windows 98, recognition point, guide lines)
 
-// Size: as large as fits, 4:3 (3:4 on a portrait phone), drawn at the
-// screen's own pixels so text is sharp.
-function size() {
-  const portrait = innerHeight > innerWidth * 1.1;
-  const [aw, ah] = portrait ? [3, 4] : [4, 3];
-  const maxW = Math.min(innerWidth - 32, 960), maxH = innerHeight - 140;
-  const k = Math.min(maxW / aw, maxH / ah);
-  const cssW = Math.max(240, Math.floor(aw * k)), cssH = Math.round(cssW * ah / aw);
+// Size: "fill" uses all the room on the page at the screen's own pixels
+// (sharp, any shape); a display from the list is drawn at its real
+// resolution and shown as large as fits, so you see that screen as it is.
+const DISPLAY = 'fastreader-demo-display';
+function size(choice) {
+  const roomW = Math.max(240, innerWidth - 32), roomH = Math.max(180, innerHeight - 150);
+  if (choice && choice !== 'fill') {
+    const [w, h] = choice.split('x').map(Number);
+    const k = Math.min(roomW / w, roomH / h);
+    return {cssW: Math.floor(w * k), cssH: Math.floor(h * k), w, h, pixels: k >= 1.5};
+  }
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let w = Math.round(roomW * dpr), h = Math.round(roomH * dpr);
   // The reader's layout scales with the screen; keep the work reasonable.
-  let w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
-  const cap = 1280 / Math.max(w, h);
+  const cap = 1600 / Math.max(w, h);
   if (cap < 1) { w = Math.round(w * cap); h = Math.round(h * cap); }
-  return {cssW, cssH, w, h};
+  return {cssW: roomW, cssH: roomH, w, h, pixels: false};
 }
 
 (async () => {
@@ -73,9 +87,16 @@ function size() {
   } catch (e) { msg('Could not start: ' + e.message); return; }
   const put = bytes => { const p = wasm.inbox(bytes.length); new Uint8Array(wasm.memory.buffer, p, bytes.length).set(bytes); };
 
-  const s = size();
-  canvas.width = s.w; canvas.height = s.h;
-  canvas.style.width = s.cssW + 'px'; canvas.style.height = s.cssH + 'px';
+  const pick = document.getElementById('display');
+  try { pick.value = localStorage.getItem(DISPLAY) || 'fill'; } catch (e) {}
+  if (!pick.value) pick.value = 'fill';
+  let s = size(pick.value);
+  const place = () => {
+    canvas.width = s.w; canvas.height = s.h;
+    canvas.style.width = s.cssW + 'px'; canvas.style.height = s.cssH + 'px';
+    canvas.classList.toggle('pixels', s.pixels);
+  };
+  place();
   let saved = null;
   try { saved = localStorage.getItem(KEY); } catch (e) {}
   put(saved ? Uint8Array.from(atob(saved), c => c.charCodeAt(0)) : new Uint8Array(0));
@@ -105,7 +126,19 @@ function size() {
   }
 
   const ctx = canvas.getContext('2d');
-  const image = ctx.createImageData(s.w, s.h);
+  let image = ctx.createImageData(s.w, s.h);
+  // Window resized, phone turned or another display chosen: lay out again.
+  function relayout() {
+    const n = size(pick.value);
+    if (n.w === s.w && n.h === s.h && n.cssW === s.cssW && n.cssH === s.cssH) return;
+    s = n;
+    place();
+    image = ctx.createImageData(s.w, s.h);
+    wasm.resize(s.w, s.h);
+  }
+  pick.onchange = () => { try { localStorage.setItem(DISPLAY, pick.value); } catch (e) {} relayout(); };
+  let pending = 0;
+  addEventListener('resize', () => { clearTimeout(pending); pending = setTimeout(relayout, 120); });
   const t0 = performance.now();
   const now = () => performance.now() - t0;
   // The finger: a quick click goes down and up between two frames, so the
@@ -168,9 +201,6 @@ function size() {
   document.getElementById('file').onchange = e => addFile(e.target.files[0]);
   addEventListener('dragover', e => e.preventDefault());
   addEventListener('drop', e => { e.preventDefault(); addFile(e.dataTransfer.files[0]); });
-  // A new size needs a new start: reload keeps the settings.
-  let was = innerWidth > innerHeight;
-  addEventListener('resize', () => { if ((innerWidth > innerHeight) !== was) location.reload(); });
 })();
 </script>
 </body>

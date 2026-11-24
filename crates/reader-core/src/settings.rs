@@ -149,7 +149,7 @@ impl Default for Settings {
             brackets: true,
             position: 1,
             split_long: false,
-            guides: false,
+            guides: true,
             welcome: 4,
             captions: false,
             progress_bar: true,
