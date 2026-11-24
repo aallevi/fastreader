@@ -142,6 +142,7 @@ async fn main(spawner: Spawner) -> ! {
     let card_cell: card::Shared = mk_static!(RefCell<Option<card::Card>>, RefCell::new(card::init(sd_spi, sd_cs)));
     let mut card_books = card_cell.borrow_mut().as_mut().map(|c| c.scan()).unwrap_or_default();
     match &*card_cell.borrow() {
+        Some(c) if !c.present() => println!("card: none in the slot"),
         Some(c) => println!("card: {} MB, {}, {} books", c.total_mb, if c.formatted() { "FAT" } else { "not formatted" }, card_books.len()),
         None => println!("card: none"),
     }
@@ -204,7 +205,10 @@ async fn main(spawner: Spawner) -> ! {
                 // No books anywhere: the welcome text says how to add some.
                 return Book::from_bytes(WELCOME, "Welcome");
             }
-            return Book::new("Missing book", "# Missing book\nThe SD card with this book is not in the reader.");
+            // A stand-in: reading it never moves the book's saved place.
+            let mut book = Book::new("SD card out", "# The SD card is out\nThis book is on the SD card. Put the card back to go on reading where you were, or choose another book in the Library.");
+            book.stand_in = true;
+            return book;
         };
         // Card book: only the text comes into memory; pictures stay on the card.
         let opened = card_cell.borrow_mut().as_mut().and_then(|c| c.open_text(s));
@@ -235,7 +239,7 @@ async fn main(spawner: Spawner) -> ! {
         .map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Flash, bytes: s.len })
         .chain(card_books.iter().map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes: s.len }))
         .collect();
-    app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+    app.card = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
     println!("library: {} books ({} uploaded to flash, {} on the card)", app.library.len(), uploads.len(), card_books.len());
     app.positions = load_positions(&mut flash);
     app.positions.resize(app.library.len(), 0);
@@ -257,6 +261,7 @@ async fn main(spawner: Spawner) -> ! {
     let start = Instant::now();
     let mut asleep = false;
     let mut last_battery = 0u64;
+    let mut next_card_check = 3_000u64;
     let mut px_buf: alloc::vec::Vec<Rgb565> = alloc::vec::Vec::with_capacity((WIDTH * HEIGHT) as usize);
     apply_display(&mut lcd, &mut delay, &mut backlight, &app.settings);
     println!("fastreader: ready (touch {})", touch_ok);
@@ -374,6 +379,56 @@ async fn main(spawner: Spawner) -> ! {
         let app = &mut *app_guard;
         let now = start.elapsed().as_millis();
 
+        // The SD card taken out or put back: a card that's in is checked
+        // every 2 s (one block read, even while reading); an empty slot
+        // every 4 s, only while paused (starting a card takes longer).
+        if now >= next_card_check {
+            let present = card_cell.borrow().as_ref().is_some_and(|c| c.present());
+            next_card_check = now + if present { 2_000 } else { 4_000 };
+            let change = if present || !app.reader.is_playing() { card_cell.borrow_mut().as_mut().and_then(|c| c.check()) } else { None };
+            match change {
+                Some(card::Change::Removed) => {
+                    card_books.clear();
+                    app.card = None;
+                    let book = app.settings.book;
+                    let on_card = app.library_info.get(book as usize).is_some_and(|b| b.place == reader_core::app::Place::Card);
+                    if on_card {
+                        // Its place is saved; a stand-in page takes its place.
+                        app.park_book();
+                        save_positions(&mut flash, &app.positions);
+                        app.open_book(open_book(book, &mut flash, &uploads, &card_books), book);
+                    }
+                    app.card_removed(now);
+                    ui.invalidate();
+                }
+                Some(card::Change::Inserted) => {
+                    card_books = card_cell.borrow_mut().as_mut().map(|c| c.scan()).unwrap_or_default();
+                    app.library = BOOKS
+                        .iter()
+                        .map(|(t, bytes)| Book::parse(&alloc::string::String::from_utf8_lossy(&bytes[..bytes.len().min(200)]), t).title)
+                        .chain(uploads.iter().map(|s| s.title.clone()))
+                        .chain(card_books.iter().map(|s| s.title.clone()))
+                        .collect();
+                    app.library_info = uploads
+                        .iter()
+                        .map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Flash, bytes: s.len })
+                        .chain(card_books.iter().map(|s| reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes: s.len }))
+                        .collect();
+                    app.positions.resize(app.library.len().max(1), 0);
+                    app.card = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
+                    println!("card: {} books", card_books.len());
+                    if app.reader.book.stand_in {
+                        // Back to the book, where it was.
+                        let book = app.settings.book.min(app.library.len().saturating_sub(1) as u8);
+                        app.open_book(open_book(book, &mut flash, &uploads, &card_books), book);
+                    }
+                    app.card_inserted(now);
+                    ui.invalidate();
+                }
+                None => {}
+            }
+        }
+
         // Battery every 10 s (and at start).
         if now >= last_battery {
             last_battery = now + 10_000;
@@ -453,9 +508,7 @@ async fn main(spawner: Spawner) -> ! {
             let _ = flash.write(HOME_ADDR, &record);
             println!("wifi: home network {}", if home.is_some() { "saved" } else { "forgotten" });
             let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
-            app.positions.resize(app.library.len().max(1), 0);
-            let book = app.settings.book as usize;
-            app.positions[book] = app.reader.pos() as u32;
+            app.park_book();
             save_positions(&mut flash, &app.positions);
             delay.delay_millis(500); // let the page get its answer
             esp_hal::system::software_reset();
@@ -465,7 +518,7 @@ async fn main(spawner: Spawner) -> ! {
             // flash uploads, keeping the library in its order.
             println!("card: stored {:?} ({} bytes)", stored.title, stored.len);
             card_books.push(stored.clone());
-            app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+            app.card = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
             let bytes = stored.len;
             app.book_added(stored.title, reader_core::app::BookInfo { place: reader_core::app::Place::Card, bytes }, now);
         }
@@ -494,7 +547,7 @@ async fn main(spawner: Spawner) -> ! {
                     app.park_book();
                 }
                 app.book_removed(i, now);
-                app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+                app.card = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
             }
         }
         if let Some(place) = request.clear {
@@ -514,7 +567,7 @@ async fn main(spawner: Spawner) -> ! {
             for i in (from..from + count).rev() {
                 app.book_removed(i, now);
             }
-            app.card = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+            app.card = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
         }
 
         app.tick(now);
@@ -542,7 +595,9 @@ async fn main(spawner: Spawner) -> ! {
                     let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
                     app.positions.resize(app.library.len().max(1), 0);
                     let book = app.settings.book as usize;
-                    app.positions[book] = app.reader.pos() as u32;
+                    if !app.reader.book.stand_in {
+                        app.positions[book] = app.reader.pos() as u32;
+                    }
                     save_positions(&mut flash, &app.positions);
                     let damage = ui.paint(app, now, &mut cv);
                     flush!(damage);
@@ -579,7 +634,7 @@ async fn main(spawner: Spawner) -> ! {
                     let ok = card_cell.borrow_mut().as_mut().is_some_and(|c| c.format(id, |d, t| println!("card: formatting {}%", d * 100 / t.max(1))));
                     println!("card: format {}", if ok { "done" } else { "failed" });
                     card_books.clear();
-                    let info = card_cell.borrow().as_ref().map(|c| c.info(&card_books));
+                    let info = card_cell.borrow().as_ref().and_then(|c| c.status(&card_books));
                     app.books_removed(BOOKS.len() + uploads.len(), now);
                     app.card_formatted(if ok { info } else { None }, now);
                     if !ok {
@@ -598,7 +653,9 @@ async fn main(spawner: Spawner) -> ! {
                     let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
                     app.positions.resize(app.library.len().max(1), 0);
                     let book = app.settings.book as usize;
-                    app.positions[book] = app.reader.pos() as u32;
+                    if !app.reader.book.stand_in {
+                        app.positions[book] = app.reader.pos() as u32;
+                    }
                     save_positions(&mut flash, &app.positions);
                     let damage = ui.paint(app, now, &mut cv);
                     flush!(damage);

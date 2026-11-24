@@ -1777,6 +1777,8 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::CantDelete => "This book can't be deleted".into(),
         Msg::PictureHeld => "Picture: press play to go on".into(),
         Msg::CaptionShown => "Description shown".into(),
+        Msg::CardRemoved => "SD card removed".into(),
+        Msg::CardInserted => "SD card inserted".into(),
         Msg::CaptionHidden => "Description hidden".into(),
         Msg::Formatting => "Formatting the card…".into(),
         Msg::CardReady => "SD card ready".into(),

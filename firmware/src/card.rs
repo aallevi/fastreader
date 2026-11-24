@@ -48,7 +48,16 @@ enum State {
     Mounted { vm: Vm, vol: RawVolume, dir: RawDirectory },
     /// A card that isn't FAT (new, exFAT, broken): it can still be formatted.
     Unformatted(Dev),
+    /// No card in the slot (taken out, or none at start): the bus is kept
+    /// so a card put in later is found.
+    Absent(Dev),
     Gone,
+}
+
+/// What `check` noticed.
+pub enum Change {
+    Removed,
+    Inserted,
 }
 
 pub struct Card {
@@ -62,7 +71,9 @@ pub type Shared = &'static RefCell<Option<Card>>;
 /// 20 MHz. `None` without a card.
 pub fn init(spi: Spi<'static, Blocking>, cs: Output<'static>) -> Option<Card> {
     let dev = SdCard::new(ExclusiveDevice::new(spi, cs, Delay::new()).ok()?, Delay::new());
-    let bytes = dev.num_bytes().ok()?;
+    let Ok(bytes) = dev.num_bytes() else {
+        return Some(Card { state: State::Absent(dev), total_mb: 0 });
+    };
     let fast = dev.spi(|s| s.bus_mut().apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20))));
     esp_println::println!("card: 20 MHz {}", if fast.is_ok() { "ok" } else { "refused" });
     let mut card = Card { state: State::Unformatted(dev), total_mb: (bytes >> 20) as u32 };
@@ -75,6 +86,10 @@ impl Card {
         let dev = match core::mem::replace(&mut self.state, State::Gone) {
             State::Unformatted(d) => d,
             State::Mounted { vm, .. } => vm.free().0,
+            State::Absent(d) => {
+                self.state = State::Absent(d);
+                return;
+            }
             State::Gone => return,
         };
         let vm: Vm = VolumeManager::new_with_limits(dev, Clock, 5000);
@@ -114,6 +129,61 @@ impl Card {
             Some((vol, dir)) => State::Mounted { vm, vol, dir },
             None => State::Unformatted(vm.free().0),
         };
+    }
+
+    /// A card is in the slot (formatted or not).
+    pub fn present(&self) -> bool {
+        matches!(self.state, State::Mounted { .. } | State::Unformatted(_))
+    }
+
+    /// The card for the menus, or None when the slot is empty.
+    pub fn status(&self, books: &[Stored]) -> Option<reader_core::app::Card> {
+        self.present().then(|| self.info(books))
+    }
+
+    /// Notices a card taken out or put in: a card that's in must answer a
+    /// one-block read; an empty slot is tried with the start-up sequence
+    /// (slow bus first, as the SD rules want).
+    pub fn check(&mut self) -> Option<Change> {
+        let mut block = [embedded_sdmmc::Block::new()];
+        let answers = match &self.state {
+            State::Mounted { vm, .. } => vm.device(|d| embedded_sdmmc::BlockDevice::read(d, &mut block, embedded_sdmmc::BlockIdx(0))).is_ok(),
+            State::Unformatted(d) => embedded_sdmmc::BlockDevice::read(d, &mut block, embedded_sdmmc::BlockIdx(0)).is_ok(),
+            State::Absent(d) => {
+                d.mark_card_uninit();
+                let _ = d.spi(|s| s.bus_mut().apply_config(&SpiConfig::default().with_frequency(Rate::from_khz(400))));
+                match d.num_bytes() {
+                    Ok(bytes) => {
+                        let _ = d.spi(|s| s.bus_mut().apply_config(&SpiConfig::default().with_frequency(Rate::from_mhz(20))));
+                        self.total_mb = (bytes >> 20) as u32;
+                        let State::Absent(d) = core::mem::replace(&mut self.state, State::Gone) else { unreachable!() };
+                        self.state = State::Unformatted(d);
+                        self.mount();
+                        esp_println::println!("card: inserted, {} MB, {}", self.total_mb, if self.formatted() { "FAT" } else { "not formatted" });
+                        return Some(Change::Inserted);
+                    }
+                    Err(_) => return None,
+                }
+            }
+            State::Gone => return None,
+        };
+        if answers {
+            return None;
+        }
+        // Gone: drop the volume, keep the bus for the next card.
+        let dev = match core::mem::replace(&mut self.state, State::Gone) {
+            State::Mounted { vm, .. } => vm.free().0,
+            State::Unformatted(d) => d,
+            other => {
+                self.state = other;
+                return None;
+            }
+        };
+        dev.mark_card_uninit();
+        self.state = State::Absent(dev);
+        self.total_mb = 0;
+        esp_println::println!("card: removed");
+        Some(Change::Removed)
     }
 
     pub fn formatted(&self) -> bool {
@@ -288,6 +358,10 @@ impl Card {
                 vm.free().0
             }
             State::Unformatted(d) => d,
+            State::Absent(d) => {
+                self.state = State::Absent(d);
+                return false; // no card to format
+            }
             State::Gone => return false,
         };
         let ok = fat_format::format(&dev, volume_id, progress).is_ok();

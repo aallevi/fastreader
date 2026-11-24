@@ -239,6 +239,9 @@ pub struct Book {
     pub title: String,
     /// From an `<!-- author: ... -->` line; empty when the book has none.
     pub author: String,
+    /// A page shown in a book's place while it can't be read (its SD card
+    /// is out): reading it never moves the book's saved place.
+    pub stand_in: bool,
     /// Lists and tables, in reading order.
     pub lists: Vec<List>,
     pub tables: Vec<Table>,
@@ -283,7 +286,7 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), author: String::new(), lists, tables, images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), author: String::new(), stand_in: false, lists, tables, images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
     }

@@ -578,6 +578,9 @@ pub enum Msg {
     /// Reading waits on a picture ("Until I press play").
     PictureHeld,
     CaptionShown,
+    /// The SD card was taken out / put back.
+    CardRemoved,
+    CardInserted,
     CaptionHidden,
     Formatting,
     CardReady,
@@ -857,6 +860,25 @@ impl App {
         }
     }
 
+    /// The SD card was taken out. Says so; if the book being read was on it
+    /// (the platform has already put a stand-in page in its place), the
+    /// Library opens so another book can be chosen.
+    pub fn card_removed(&mut self, now: u64) {
+        self.card = None;
+        let on_card = self.library_info.get(self.settings.book as usize).is_some_and(|b| b.place == Place::Card);
+        if on_card {
+            self.reader.pause();
+            self.screen = Screen::Menu { sel: menu_start(2) };
+            let _ = self.activate(MenuItem::Library, now);
+        }
+        self.feedback(Feedback::limit(Msg::CardRemoved), now);
+    }
+
+    /// The SD card was put back (the platform has rebuilt the library).
+    pub fn card_inserted(&mut self, now: u64) {
+        self.feedback(Feedback::ok(Msg::CardInserted), now);
+    }
+
     /// Which of the four title-bar menus is open (0 Settings, 1 Book,
     /// 2 Library, 3 Text), if one is.
     pub fn active_group(&self) -> Option<u8> {
@@ -973,7 +995,9 @@ impl App {
             (Hit::StepWord { forward }, Screen::Reading | Screen::Page) => {
                 self.reader.pause();
                 let fb = if self.reader.step_word(forward, now) {
-                    self.settings.pos = self.reader.pos() as u32;
+                    if !self.reader.book.stand_in {
+                        self.settings.pos = self.reader.pos() as u32;
+                    }
                     let prev = self.prev_net(now, |m| if let Msg::Stepped { net } = m { Some(net) } else { None });
                     Feedback::ok(Msg::Stepped { net: prev + if forward { 1 } else { -1 } })
                 } else {
@@ -1115,7 +1139,9 @@ impl App {
 
     fn save(&mut self) {
         self.settings.wpm = self.reader.wpm();
-        self.settings.pos = self.reader.pos() as u32;
+        if !self.reader.book.stand_in {
+            self.settings.pos = self.reader.pos() as u32;
+        }
         self.effect(Effect::SaveSettings);
     }
 
@@ -1124,13 +1150,15 @@ impl App {
     pub fn open_book(&mut self, book: Book, index: u8) {
         let n = self.library.len().max(index as usize + 1).max(self.settings.book as usize + 1);
         self.positions.resize(n, 0);
-        if !self.reader.book.is_empty() {
+        if !self.reader.book.is_empty() && !self.reader.book.stand_in {
             self.positions[self.settings.book as usize] = self.reader.pos() as u32;
         }
         let pos = self.positions[index as usize] as usize;
+        let stand_in = book.stand_in;
         self.reader.set_book(book, pos);
         self.settings.book = index;
-        self.settings.pos = self.reader.pos() as u32;
+        // A stand-in page keeps the book's own place (it is far shorter).
+        self.settings.pos = if stand_in { pos as u32 } else { self.reader.pos() as u32 };
         self.pages.clear();
         self.screen = self.home();
         self.effect(Effect::SaveSettings);
@@ -1288,7 +1316,7 @@ impl App {
     pub fn park_book(&mut self) {
         let n = self.library.len().max(self.settings.book as usize + 1);
         self.positions.resize(n, 0);
-        if !self.reader.book.is_empty() {
+        if !self.reader.book.is_empty() && !self.reader.book.stand_in {
             self.positions[self.settings.book as usize] = self.reader.pos() as u32;
         }
         self.reader.set_book(Book::new("", ""), 0);
@@ -2493,6 +2521,37 @@ mod tests {
             a.tick(t);
         }
         assert!(a.welcome.is_none(), "reading for a long time is not a break");
+    }
+
+    #[test]
+    fn a_stand_in_page_never_moves_the_books_place() {
+        let mut a = app();
+        a.positions = alloc::vec![0, 40];
+        let mut missing = Book::new("Missing book", "# Missing book\nThe SD card is out.");
+        missing.stand_in = true;
+        a.open_book(missing, 1);
+        a.handle(Select, 0); // read the stand-in a little
+        a.tick(5_000);
+        a.handle(Select, 5_000);
+        a.open_book(Book::new("other", TEXT), 0);
+        assert_eq!(a.positions[1], 40, "the card book's place is kept");
+        assert_eq!(a.settings.pos, a.reader.pos() as u32);
+    }
+
+    #[test]
+    fn card_removed_opens_the_library_when_its_book_was_open() {
+        let mut a = app();
+        a.library = alloc::vec!["flash book".into(), "card book".into()];
+        a.library_info = alloc::vec![BookInfo { place: Place::Flash, bytes: 1 }, BookInfo { place: Place::Card, bytes: 1 }];
+        a.settings.book = 0;
+        a.card_removed(10);
+        assert_eq!(a.screen, Screen::Reading, "a flash book reads on");
+        assert_eq!(a.toast().map(|t| t.feedback.msg), Some(Msg::CardRemoved));
+        a.settings.book = 1;
+        a.handle(Select, 20); // playing
+        a.card_removed(30);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "the card book: the Library opens");
+        assert!(!a.reader.is_playing());
     }
 
     #[test]
