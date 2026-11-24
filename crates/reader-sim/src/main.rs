@@ -1,6 +1,8 @@
 //! Desktop simulator for the fast reader.
 //!
-//!   reader-sim [book.md] [--size 320x240] [--scale 2]   window + web view
+//!   reader-sim [book.md]                                window (sharp, 960x720) + web view
+//!   reader-sim [book.md] --device                       the reader's real 320x240 pixels, shown 2x
+//!   reader-sim [book.md] [--size WxH] [--scale 1|2|4]   any size; --lan lets phones on the network in
 //!   reader-sim walkthrough <dir> [--size WxH]           PNG of every function, every theme
 //!
 //! The mouse is a finger: press lights a button, release acts, slide off
@@ -58,12 +60,18 @@ fn main() {
         return;
     }
     let book = positional.first().map(PathBuf::from);
+    // The window: drawn sharp at 960x720 unless asked otherwise (everything
+    // scales with the screen); --device shows the reader's own pixels.
+    let device = args.iter().any(|a| a == "--device");
+    let (size, default_scale) = if device || arg(&args, "--size").is_some() { (size, Scale::X2) } else { ((960, 720), Scale::X1) };
     let scale = match arg(&args, "--scale").as_deref() {
         Some("1") => Scale::X1,
+        Some("2") => Scale::X2,
         Some("4") => Scale::X4,
-        _ => Scale::X2,
+        _ => default_scale,
     };
-    run_window(book, size, scale, args.iter().any(|a| a == "--headless"));
+    let lan = args.iter().any(|a| a == "--lan");
+    run_window(book, size, scale, args.iter().any(|a| a == "--headless"), lan);
 }
 
 pub fn load_book(path: &Path) -> Book {
@@ -210,7 +218,7 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
     redraw
 }
 
-fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless: bool) {
+fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless: bool, lan: bool) {
     let books = Arc::new(Mutex::new(library(first)));
     let first_count = books.lock().unwrap().len();
     let mut settings = std::fs::read(settings_path()).ok().and_then(|b| Settings::from_bytes(&b)).unwrap_or_default();
@@ -245,8 +253,12 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
     app.card = Some(sim_card());
     let app = Arc::new(Mutex::new(app));
     let start = Instant::now();
-    web::serve(app.clone(), books.clone(), "127.0.0.1:8080", start);
+    // --lan: phones and other computers on the same network can open it too.
+    web::serve(app.clone(), books.clone(), if lan { "0.0.0.0:8080" } else { "127.0.0.1:8080" }, start);
     println!("Web view: http://localhost:8080");
+    if lan {
+        println!("From a phone on the same Wi-Fi: http://<this computer's address>:8080");
+    }
     if headless {
         // Only the web view and the reader's clock: no window.
         loop {
