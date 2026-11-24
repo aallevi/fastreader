@@ -58,7 +58,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
 ## Menu buttons
 - [ ] In any menu the four title-bar buttons stay; the open one is pressed in (amber); tapping another switches menu; ‹ and ✕ sit on the right, a little apart.
-- [ ] Settings > Screen > Menu buttons > Colourful: red ⚙, blue 📖, green 📚, yellow Aa with white icons; the open one darker, pressed in.
+- [ ] Settings > Screen > Menu buttons > Colourful: red ⚙, blue 📖, green 📚, yellow Aa with white icons; the open one brighter, pressed in.
 
 ## Lists and tables
 - [ ] A book with a bulleted list: bullets down the left margin, the current one amber; a numbered list shows its numbers.

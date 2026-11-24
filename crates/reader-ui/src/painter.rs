@@ -649,7 +649,7 @@ const MENU_COLOURS: [Rgb; 4] = [0xE0362C, 0x1E7FD8, 0x2FA24A, 0xF2A900];
 
 /// One of the four title-bar menu buttons. `open`: its menu is on screen,
 /// so it stays pressed in (amber, the colour of "current" everywhere, or
-/// its own colour darker when colourful); `hot`: a finger is on it.
+/// its own colour brighter when colourful); `hot`: a finger is on it.
 fn draw_menu_button(cv: &mut Canvas, c: &Ctx, b: &Button, k: usize, open: bool, hot: bool) {
     let (th, l) = (c.th, c.l);
     let colourful = c.app.settings.menu_colours;
@@ -660,7 +660,8 @@ fn draw_menu_button(cv: &mut Canvas, c: &Ctx, b: &Button, k: usize, open: bool, 
     let pressed = open || hot;
     let (face, ink) = if colourful {
         let base = MENU_COLOURS[k];
-        (if pressed { mix(base, BLACK, 70) } else { base }, WHITE)
+        // Pressed lights up: brighter, still pressed in.
+        (if pressed { mix(base, WHITE, 70) } else { base }, WHITE)
     } else {
         // The same amber as the current list item and table cell.
         marker_colour(th)
