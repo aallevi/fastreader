@@ -45,7 +45,23 @@ function toMarkup(doc, docPath) {
     }
     return t;
   };
-  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,img,image,figcaption')) {
+  for (const el of doc.querySelectorAll('h1,h2,h3,h4,p,li,blockquote,img,image,figcaption,table')) {
+    // A table: one "| a | b |" line per row, the header marked by "|---|".
+    if (el.localName === 'table') {
+      if (el.parentElement && el.parentElement.closest('table')) continue;
+      const rows = [...el.querySelectorAll('tr')].filter(tr => tr.closest('table') === el)
+        .map(tr => [...tr.children].filter(c => /^t[dh]$/.test(c.localName)).map(c => walk(c, false, false).replace(/\s+/g, ' ').replace(/\|/g, '/').trim()))
+        .filter(r => r.some(Boolean));
+      if (!rows.length) continue;
+      const width = Math.max(...rows.map(r => r.length));
+      const head = el.querySelector('th') && [...el.querySelectorAll('tr')][0]?.querySelector('th');
+      rows.forEach((r, k) => {
+        out.push('| ' + [...r, ...Array(width - r.length).fill('')].join(' | ') + ' |');
+        if (k === 0 && head) out.push('|' + '---|'.repeat(width));
+      });
+      continue;
+    }
+    if (el.closest('table')) continue;
     if (el.localName === 'figcaption') {
       // A picture's description: kept with the picture, not read as text.
       const t = walk(el, false, false).replace(/\s+/g, ' ').trim();
@@ -61,7 +77,16 @@ function toMarkup(doc, docPath) {
     if (el.closest('p,li,blockquote') && el.closest('p,li,blockquote') !== el) continue;
     const text = walk(el, false, false).replace(/\s+/g, ' ').trim();
     if (!text) continue;
-    out.push(/^h[1-4]$/.test(el.localName) ? '# ' + text.replace(/\*/g, '') : text);
+    // A list item: its marker first ("•", or its number in an <ol>).
+    let marker = '';
+    if (el.localName === 'li') {
+      const list = el.parentElement;
+      if (list && list.localName === 'ol') {
+        const items = [...list.children].filter(c => c.localName === 'li');
+        marker = (parseInt(list.getAttribute('start') || '1', 10) + items.indexOf(el)) + '. ';
+      } else marker = '• ';
+    }
+    out.push(/^h[1-4]$/.test(el.localName) ? '# ' + text.replace(/\*/g, '') : marker + text);
   }
   return out.join('\n\n');
 }

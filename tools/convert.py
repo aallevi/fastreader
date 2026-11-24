@@ -62,6 +62,12 @@ class XhtmlText(HTMLParser):
         self.bold_classes, self.italic_classes = bold_classes, italic_classes
         # picture(src) -> "{image:N}" or "" for an <img>/<image>.
         self.picture = picture
+        # Lists: [ordered, next number] per open <ul>/<ol>; the marker for
+        # the <li> being read. Tables: rows of cells, read as | a | b | lines.
+        self.lists = []
+        self.marker = ""
+        self.table = None  # (rows, header?) while inside a <table>
+        self.cell = None
 
     def style(self):
         b = any(t in ("b", "strong") or c & self.bold_classes for t, c in self.stack)
@@ -71,9 +77,17 @@ class XhtmlText(HTMLParser):
     def flush(self):
         text = re.sub(r"\s+", " ", "".join(self.line)).strip()
         self.line = []
+        if self.cell is not None:
+            # Inside a table cell: the text belongs to the cell.
+            if text:
+                self.cell.append(text)
+            return
         if text:
             if self.heading:
                 self.out.append("# " + re.sub(r"\*+", "", text))
+            elif self.marker:
+                self.out.append(self.marker + " " + text)
+                self.marker = ""
             else:
                 self.out.append(text)
 
@@ -93,6 +107,27 @@ class XhtmlText(HTMLParser):
         if tag in self.SKIP:
             self.skip += tag not in ("br", "img")
             return
+        if tag in ("ul", "ol"):
+            self.flush()
+            start = dict(attrs).get("start") or "1"
+            self.lists.append([tag == "ol", int(start) if start.isdigit() else 1])
+        if tag == "li":
+            self.flush()
+            if self.lists and self.lists[-1][0]:
+                self.marker = f"{self.lists[-1][1]}."
+                self.lists[-1][1] += 1
+            else:
+                self.marker = "•"
+        if tag == "table":
+            self.flush()
+            self.table = ([], False)
+        if tag in ("td", "th") and self.table is not None:
+            self.flush()
+            self.cell = []
+            if tag == "th" and len(self.table[0]) <= 1:
+                self.table = (self.table[0], True)
+        if tag == "tr" and self.table is not None:
+            self.table[0].append([])
         if tag in self.BLOCK or tag in self.HEAD:
             self.flush()
             if tag in self.HEAD:
@@ -113,6 +148,28 @@ class XhtmlText(HTMLParser):
         if tag in self.SKIP:
             self.skip = max(0, self.skip - (tag not in ("br", "img")))
             return
+        if tag in ("ul", "ol") and self.lists:
+            self.flush()
+            self.lists.pop()
+        if tag in ("td", "th") and self.cell is not None:
+            self.flush()
+            text = " ".join(self.cell).replace("|", "/")
+            self.cell = None
+            if self.table is not None:
+                if not self.table[0]:
+                    self.table[0].append([])
+                self.table[0][-1].append(text)
+        if tag == "table" and self.table is not None:
+            rows, header = self.table
+            self.table = None
+            rows = [r for r in rows if any(c.strip() for c in r)]
+            if rows:
+                width = max(len(r) for r in rows)
+                for k, r in enumerate(rows):
+                    r = r + [""] * (width - len(r))
+                    self.out.append("| " + " | ".join(r) + " |")
+                    if k == 0 and header:
+                        self.out.append("|" + "---|" * width)
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i][0] == tag:
                 del self.stack[i:]

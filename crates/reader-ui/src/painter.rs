@@ -53,7 +53,7 @@ struct View {
     look: Settings,
     frame: Frame,
     header: (String, Option<Battery>, Option<u32>, Option<Hit>),
-    word: (usize, u8, bool, u16, bool, Option<bool>, bool),
+    word: (usize, u8, bool, u16, bool, Option<bool>, bool, bool),
     context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
     toolbar: (bool, Option<Hit>, u16, PageInfo),
@@ -162,6 +162,8 @@ impl Ui {
                 app.reader.split_part(),
                 // The Description button pressed.
                 lit == Some(Hit::Caption),
+                // A table's grid flashing before a cell.
+                app.grid_flash(now),
             ),
             context: (paused || matches!(app.screen, Screen::Line { .. })).then_some((app.reader.pos(), app.context_scroll)),
             status: (progress_px(app, &l), app.reader.ms_left() / 60_000, app.page_index(), app.reader.book.chapter_index(app.reader.pos()), paused),
@@ -769,6 +771,14 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         }
         return area;
     }
+    if app.grid_flash(c.now) {
+        if let Some((t, cell)) = book.cell_at(shown.start) {
+            let area = l.word.intersect(&p);
+            clear(cv, th, l, area);
+            draw_grid(cv, c, area, t, cell);
+            return area;
+        }
+    }
     if mode == Mode::Ticker {
         // Only the strip the line of text occupies is redrawn each frame.
         let band = ticker_band(f, c).intersect(&l.word.intersect(&p));
@@ -868,15 +878,97 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     if app.settings.guides {
         draw_guides(cv, c, base, m.ascent, m.descent);
     }
+    // In a list: its bullets or numbers down the left margin.
+    let column = book.list_at(shown.start).map(|(list, item)| draw_list_column(f, cv, c, list, item)).unwrap_or_default();
     let top = base - m.ascent - l.px(3.0);
     let pad = l.px(3.0);
     if side_marks {
         // The marks sit at the edges: the whole strip is this frame's box.
         let tall = word_px(c) * 1.15;
-        return Rect::new(p.x, (base - tall) as i32, p.w, (tall * 1.4) as i32).intersect(&l.word.intersect(&p));
+        return Rect::new(p.x, (base - tall) as i32, p.w, (tall * 1.4) as i32).intersect(&l.word.intersect(&p)).union(&column);
     }
     Rect::new((x0 - pad) as i32, top as i32, (total + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
         .intersect(&l.word.intersect(&p))
+        .union(&column)
+}
+
+/// The highlight for the current list item and table cell: a clear amber,
+/// like a warning light, darker on dark themes.
+fn marker_colour(th: &Theme) -> (Rgb, Rgb) {
+    if th.light_on_dark { (0xB8860B, 0x1A1400) } else { (0xF5C542, 0x1A1400) }
+}
+
+/// A list's markers down the left margin, one per item (a window around
+/// the current one when there are many); the current item's marker is lit
+/// in the colour of the title-bar messages. Returns the area drawn.
+fn draw_list_column(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, list: &reader_core::book::List, item: usize) -> Rect {
+    let (th, l) = (c.th, c.l);
+    let p = paper(th, l);
+    let area = l.word.intersect(&p);
+    let px = l.px(11.0);
+    let row = l.px(15.0);
+    // Between the guide lines (when shown), with a little air.
+    let room = area.h as f32 - if c.app.settings.guides { l.px(34.0) } else { l.px(8.0) };
+    let fit = ((room / row) as usize).max(1);
+    let n = list.items.len();
+    let shown = n.min(fit);
+    let first = item.saturating_sub(shown / 2).min(n - shown);
+    let label = |m: &str| if list.numbered() { String::from(m) } else { String::from("•") };
+    // Bullets drawn larger: a dot at text size is too small to see.
+    let px = if list.numbered() { px } else { l.px(17.0) };
+    let (hi, hi_text) = marker_colour(th);
+    let widest = (first..first + shown).map(|k| f.measure(th.ui.1, px, &label(&list.items[k].1))).fold(0.0f32, f32::max).max(l.px(8.0));
+    let w = widest + l.px(10.0);
+    let x = p.x as f32 + l.px(5.0);
+    let y0 = area.cy() - shown as f32 * row / 2.0;
+    for (k, idx) in (first..first + shown).enumerate() {
+        let s = label(&list.items[idx].1);
+        let tw = f.measure(th.ui.1, px, &s);
+        let cy = y0 + (k as f32 + 0.5) * row;
+        if idx == item {
+            let r = Rect::new(x as i32, (cy - row * 0.42) as i32, w as i32, (row * 0.84) as i32);
+            cv.fill(r, hi);
+            if th.chrome == Chrome::Win98 {
+                bevel(cv, r, true);
+            }
+            f.draw(cv, th.ui.1, px, &s, x + (w - tw) / 2.0, cy + px * 0.36, hi_text);
+        } else {
+            f.draw(cv, th.ui.0, px, &s, x + (w - tw) / 2.0, cy + px * 0.36, th.dim);
+        }
+    }
+    Rect::new(x as i32 - 1, (y0 - 2.0) as i32, w as i32 + 3, (shown as f32 * row + 4.0) as i32).intersect(&area)
+}
+
+/// A table's shape, flashed before each cell: its grid of boxes, header
+/// rows shaded, the cell about to be read filled in the message colour.
+/// Many rows: a window of rows around the current one.
+fn draw_grid(cv: &mut Canvas, c: &Ctx, area: Rect, t: &reader_core::book::Table, cell: usize) {
+    let th = c.th;
+    let (_, row, col) = t.cells[cell];
+    let cols = t.cols.max(1) as i32;
+    let rows_shown = (t.rows as i32).clamp(1, 8);
+    let first = (row as i32 - rows_shown / 2).clamp(0, (t.rows as i32 - rows_shown).max(0));
+    let cw = ((area.w as f32 * 0.8) / cols as f32).min(c.l.px(46.0)) as i32;
+    let ch = ((area.h as f32 * 0.8) / rows_shown as f32).min(c.l.px(22.0)) as i32;
+    let (gw, gh) = (cw * cols, ch * rows_shown);
+    let x0 = area.x + (area.w - gw) / 2;
+    let y0 = area.y + (area.h - gh) / 2;
+    let line = mix(th.page, th.text, 150);
+    for r in 0..rows_shown {
+        for k in 0..cols {
+            let box_ = Rect::new(x0 + k * cw, y0 + r * ch, cw + 1, ch + 1);
+            let rr = first + r;
+            if rr == row as i32 && k == col as i32 {
+                cv.fill(box_.inset(1, 1), marker_colour(th).0);
+            } else if rr < t.header as i32 {
+                cv.fill(box_.inset(1, 1), mix(th.page, th.text, 40));
+            }
+            cv.fill(Rect::new(box_.x, box_.y, box_.w, 1), line);
+            cv.fill(Rect::new(box_.x, box_.bottom() - 1, box_.w, 1), line);
+            cv.fill(Rect::new(box_.x, box_.y, 1, box_.h), line);
+            cv.fill(Rect::new(box_.right() - 1, box_.y, 1, box_.h), line);
+        }
+    }
 }
 
 /// Phrase and ticker text size relative to the single-word size.

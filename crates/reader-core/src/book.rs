@@ -239,6 +239,9 @@ pub struct Book {
     pub title: String,
     /// From an `<!-- author: ... -->` line; empty when the book has none.
     pub author: String,
+    /// Lists and tables, in reading order.
+    pub lists: Vec<List>,
+    pub tables: Vec<Table>,
     /// Pictures referenced by `{image:N}` marks in the text.
     pub images: Pictures,
     /// Descriptions of pictures, by the picture's word index, in order.
@@ -256,7 +259,7 @@ pub struct Book {
 
 impl Book {
     pub fn new(title: impl Into<String>, source: &str) -> Self {
-        let (text, mut words, captions) = tokenize(source);
+        let (text, mut words, captions, lists, tables) = tokenize(source);
         let mut chapters: Vec<(u32, String)> = Vec::new();
         let mut i = 0;
         while i < words.len() {
@@ -280,7 +283,7 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), author: String::new(), images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), author: String::new(), lists, tables, images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
         b.set_pacing(&Pacing::default());
         b
     }
@@ -341,6 +344,27 @@ impl Book {
         let mut b = Book::new(title, body);
         b.author = author.into();
         b
+    }
+
+    /// The list word `i` is in, and which item.
+    pub fn list_at(&self, i: usize) -> Option<(&List, usize)> {
+        let i = i as u32;
+        let l = self.lists.iter().find(|l| l.items[0].0 <= i && i < l.end)?;
+        let item = l.items.iter().rposition(|(w, _)| *w <= i)?;
+        Some((l, item))
+    }
+
+    /// The table word `i` is in, and which cell (index into `cells`).
+    pub fn cell_at(&self, i: usize) -> Option<(&Table, usize)> {
+        let i = i as u32;
+        let t = self.tables.iter().find(|t| t.cells[0].0 <= i && i < t.end)?;
+        let cell = t.cells.iter().rposition(|(w, _, _)| *w <= i)?;
+        Some((t, cell))
+    }
+
+    /// Word `i` is the first of a table cell (the grid flashes before it).
+    pub fn starts_cell(&self, i: usize) -> bool {
+        self.cell_at(i).is_some_and(|(t, c)| t.cells[c].0 as usize == i)
     }
 
     /// Recomputes the running time totals for new pause settings.
@@ -525,6 +549,24 @@ impl Book {
                 open = false;
                 continue;
             }
+            // A list item starts on its own line with its marker; a table
+            // row on its own line, its cells apart.
+            let fresh = i == r.start || self.words.get(i - 1).is_none_or(|p| p.pause == Pause::Paragraph);
+            if let Some((l, k)) = self.list_at(i).filter(|(l, k)| l.items[*k].0 as usize == i) {
+                if !fresh {
+                    out.write_str("<br>\n")?;
+                }
+                let m = if l.numbered() { l.items[k].1.as_str() } else { "•" };
+                write!(out, "<span class=\"mk\">{m} </span>")?;
+            } else if let Some((t, c)) = self.cell_at(i).filter(|(t, c)| t.cells[*c].0 as usize == i) {
+                if t.cells[c].2 == 0 {
+                    if !fresh {
+                        out.write_str("<br>\n")?;
+                    }
+                } else {
+                    out.write_str("<span class=\"mk\">· </span>")?;
+                }
+            }
             write!(out, "<span id=\"w{i}\">")?;
             if b { out.write_str("<b>")?; }
             if it { out.write_str("<i>")?; }
@@ -565,7 +607,63 @@ const TRAILING_PUNCT: &[char] = &['.', ',', ';', ':', '!', '?', '…', '"', '\''
 /// Pictures' descriptions: (word index of the picture, text).
 type Captions = Vec<(u32, String)>;
 
-fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
+/// A list: each item's first word and its marker as printed ("•", "1.",
+/// "a)"), and the word after the last item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct List {
+    pub items: Vec<(u32, String)>,
+    pub end: u32,
+}
+
+impl List {
+    /// Numbered ("1.", "a)", "iv.") rather than bulleted.
+    pub fn numbered(&self) -> bool {
+        self.items.first().is_some_and(|(_, m)| m.chars().any(|c| c.is_alphanumeric()))
+    }
+}
+
+/// A table, read row by row: its size, how many rows are headers, and each
+/// cell's first word (row, column). Empty cells have no words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    pub rows: u16,
+    pub cols: u16,
+    pub header: u16,
+    pub cells: Vec<(u32, u16, u16)>,
+    pub end: u32,
+}
+
+/// A list item's marker, if `tok` (the first on a line) is one: bullets
+/// "•", "*", "+", "◦", "▪", "‣"; numbers and letters "1." "1)" "(1)" "a."
+/// "b)" "iv."; not "-" or "–", which start dialogue in many books.
+fn item_marker(tok: &str) -> Option<&str> {
+    if matches!(tok, "•" | "*" | "+" | "◦" | "▪" | "‣" | "●" | "○" | "■" | "□") {
+        return Some(tok);
+    }
+    let inner = tok.strip_prefix('(').map_or(tok, |t| t);
+    let body = inner.strip_suffix(['.', ')'])?;
+    let roman = |b: &str| !b.is_empty() && b.len() <= 4 && b.bytes().all(|c| b"ivx".contains(&c));
+    let ok = (1..=3).contains(&body.len()) && body.bytes().all(|c| c.is_ascii_digit())
+        || body.len() == 1 && body.bytes().all(|c| c.is_ascii_lowercase())
+        || roman(body);
+    ok.then_some(tok)
+}
+
+/// A table row: `| a | b |`. Returns its cells, or None. A separator row
+/// (`|---|:---:|`) gives Some(empty).
+fn table_row(line: &str) -> Option<Vec<&str>> {
+    let t = line.trim();
+    if !(t.len() >= 3 && t.starts_with('|') && t.ends_with('|')) {
+        return None;
+    }
+    let cells: Vec<&str> = t[1..t.len() - 1].split('|').map(str::trim).collect();
+    if cells.iter().all(|c| !c.is_empty() && c.trim_matches(':').bytes().all(|b| b == b'-') && c.contains("--")) {
+        return Some(Vec::new());
+    }
+    Some(cells)
+}
+
+fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, Vec<Table>) {
     let mut text = ChunkedText::default();
     let mut words: Chunked<Word> = Chunked::new();
     let mut style = Style::PLAIN;
@@ -574,8 +672,54 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
     let mut captions: Captions = Vec::new();
     // Inside {caption}…{/caption}: words go to the last picture's description.
     let mut caption: Option<String> = None;
+    let mut lists: Vec<List> = Vec::new();
+    let mut tables: Vec<Table> = Vec::new();
+    // A list or table still open (blank lines don't close a list).
+    let mut in_list = false;
+    let mut in_table = false;
+    // The next word starts a table cell: it gets a beat for the grid flash.
+    let mut cell_beat = false;
+    let mut row_cells: Vec<&str> = Vec::new();
+    let mut row_line = String::new();
 
-    for line in source.lines() {
+    for raw in source.lines() {
+        // Table rows become one line of cells, each opened by "{cell}".
+        let mut line = raw;
+        match table_row(raw) {
+            Some(cells) if cells.is_empty() => {
+                if let Some(t) = tables.last_mut().filter(|_| in_table) {
+                    t.header = t.rows; // the rows above are headers
+                }
+                continue;
+            }
+            Some(cells) => {
+                if !in_table {
+                    in_table = true;
+                    if let Some(last) = words.last_mut() {
+                        last.pause = Pause::Paragraph;
+                    }
+                    tables.push(Table { rows: 0, cols: 0, header: 0, cells: Vec::new(), end: 0 });
+                }
+                row_cells.clear();
+                row_cells.extend(cells);
+                row_line.clear();
+                for c in &row_cells {
+                    row_line.push_str(" {cell} ");
+                    row_line.push_str(c);
+                }
+                line = row_line.as_str();
+            }
+            None => {
+                if in_table && !raw.trim().is_empty() {
+                    in_table = false;
+                    if let Some(t) = tables.last_mut() {
+                        t.end = words.len() as u32;
+                    }
+                }
+            }
+        }
+        let row = in_table && table_row(raw).is_some();
+        let mut col: u16 = 0;
         let mut tokens = line.split_whitespace().peekable();
         let Some(&first) = tokens.peek() else {
             // Blank line: paragraph break.
@@ -588,9 +732,50 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
         if heading {
             tokens.next();
         }
+        // A list item: its marker is shown beside the word, not read.
+        let marker = (!heading && !row).then(|| item_marker(first)).flatten().filter(|_| line.split_whitespace().nth(1).is_some());
+        match marker {
+            Some(m) => {
+                tokens.next();
+                if !in_list {
+                    in_list = true;
+                    if let Some(last) = words.last_mut() {
+                        last.pause = Pause::Paragraph;
+                    }
+                    lists.push(List { items: Vec::new(), end: 0 });
+                } else if let Some(last) = words.last_mut() {
+                    // Between items: at least a sentence's breath.
+                    last.pause = last.pause.max(Pause::Sentence);
+                }
+                lists.last_mut().unwrap().items.push((words.len() as u32, String::from(m)));
+            }
+            None if in_list => {
+                in_list = false;
+                lists.last_mut().unwrap().end = words.len() as u32;
+                if let Some(last) = words.last_mut() {
+                    last.pause = Pause::Paragraph;
+                }
+            }
+            None => {}
+        }
         let first_word = words.len();
 
         for tok in tokens {
+            if tok == "{cell}" {
+                // A table cell starts: the reader flashes the grid first.
+                if let Some(t) = tables.last_mut() {
+                    if col > 0 && words.len() > first_word {
+                        if let Some(last) = words.last_mut() {
+                            last.pause = last.pause.max(Pause::Clause);
+                        }
+                    }
+                    t.cells.push((words.len() as u32, t.rows, col));
+                    col += 1;
+                    t.cols = t.cols.max(col);
+                }
+                cell_beat = true;
+                continue;
+            }
             // A picture's description: kept with the picture, not read as words.
             if tok == "{caption}" {
                 caption = Some(String::new());
@@ -661,11 +846,17 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
             let closes = shown.chars().any(|c| CLOSERS.contains(&c));
             // Which words are inside brackets is worked out once the whole
             // text is read (`mark_asides`): an aside may cross a page break.
+            let mut st = style.with(Style::HEADING, heading);
+            if cell_beat {
+                // One more beat on a cell's first word: the grid flashes first.
+                st = st.with_beats(st.beats() + 1);
+                cell_beat = false;
+            }
             words.push(Word {
                 start: text.push(shown),
                 len: shown.len() as u16,
                 pause: classify(shown),
-                style: style.with(Style::HEADING, heading),
+                style: st,
             });
             // Brackets are punctuation: a breath as the aside opens and closes.
             if shown.starts_with(OPENERS) && words.len() >= 2 {
@@ -689,6 +880,16 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
         if heading && words.len() > first_word {
             words.last_mut().unwrap().pause = Pause::Paragraph;
         }
+        if row {
+            // A row ends with a sentence's breath.
+            if let Some(t) = tables.last_mut() {
+                t.rows += 1;
+            }
+            if let Some(last) = words.last_mut() {
+                last.pause = last.pause.max(Pause::Sentence);
+            }
+            cell_beat = false;
+        }
         // In verse, every line break is a break on the page and a breath.
         if verse && !heading && words.len() > first_word {
             let last = words.last_mut().unwrap();
@@ -699,9 +900,17 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions) {
     if let Some(last) = words.last_mut() {
         last.pause = Pause::Paragraph;
     }
+    if in_list {
+        lists.last_mut().unwrap().end = words.len() as u32;
+    }
+    if in_table {
+        tables.last_mut().unwrap().end = words.len() as u32;
+    }
+    lists.retain(|l| !l.items.is_empty());
+    tables.retain(|t| !t.cells.is_empty());
     text.shrink_to_fit();
     words.shrink_to_fit();
-    (text, words, captions)
+    (text, words, captions, lists, tables)
 }
 
 #[derive(Clone, Copy)]
@@ -1232,6 +1441,48 @@ mod tests {
         assert_eq!(split_long("antichissimi"), None, "13 letters or fewer stay whole");
         let (a, b) = split_long("precipitevolissimevolmente,").unwrap();
         assert!(a.ends_with('-') && b.ends_with(','), "{a} {b}");
+    }
+
+    #[test]
+    fn lists_bulleted_and_numbered() {
+        let b = Book::new("t", "Before the list.\n• apples and pears\n• bread\n\n• milk\nAfter it.\n\n1. first step\n2) second step\niv. roman\n- dialogue, not an item\n– nor this");
+        assert_eq!(words(&b)[..6], ["Before", "the", "list.", "apples", "and", "pears"], "markers are not read");
+        assert_eq!(b.lists.len(), 2);
+        let (l, item) = b.list_at(5).unwrap();
+        assert_eq!((l.items.len(), item, l.numbered()), (3, 0, false), "a blank line doesn't end a list");
+        assert_eq!(b.list_at(6).unwrap().1, 1);
+        assert!(b.list_at(8).is_none(), "\"After it.\" is past the list");
+        let (n, _) = b.list_at(12).unwrap();
+        assert!(n.numbered());
+        assert_eq!(n.items.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>(), ["1.", "2)", "iv."]);
+        assert!(b.list_at(b.len() - 1).is_none(), "dashes start dialogue, not lists");
+        // A breath between items.
+        assert!(b.word(5).unwrap().pause >= Pause::Sentence);
+    }
+
+    #[test]
+    fn lists_and_tables_in_the_web_view() {
+        let b = Book::new("t", "Intro.\n• one\n• two\n\n| A | B |\n| 1 | 2 |");
+        let mut html = String::new();
+        b.write_html_range(0..b.len(), &mut html).unwrap();
+        assert!(html.contains("<span class=\"mk\">• </span><span id=\"w1\">one"), "{html}");
+        assert!(html.contains("<br>\n<span class=\"mk\">• </span><span id=\"w2\">two"), "{html}");
+        assert!(html.contains("<span class=\"mk\">· </span><span id=\"w4\">B"), "{html}");
+        assert!(html.contains("<br>\n<span id=\"w5\">1"), "{html}");
+    }
+
+    #[test]
+    fn tables_read_row_by_row() {
+        let b = Book::new("t", "Some works.\n\n| Year | Work |\n|---|:--:|\n| 1503 | Mona Lisa |\n| 1498 | |\n\nAfter.");
+        assert_eq!(words(&b), ["Some", "works.", "Year", "Work", "1503", "Mona", "Lisa", "1498", "After."]);
+        let t = &b.tables[0];
+        assert_eq!((t.rows, t.cols, t.header), (3, 2, 1));
+        assert_eq!(b.cell_at(5).map(|(t, c)| (t.cells[c].1, t.cells[c].2)), Some((1, 1)), "Mona: row 1, column 1");
+        assert!(b.starts_cell(5) && !b.starts_cell(6));
+        assert!(b.cell_at(8).is_none(), "\"After.\" is outside");
+        // A cell's first word stays longer (the grid flashes first).
+        assert!(b.word(5).unwrap().style.beats() > b.word(6).unwrap().style.beats());
+        assert!(b.word(3).unwrap().pause >= Pause::Sentence, "a row ends with a breath");
     }
 
     #[test]

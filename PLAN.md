@@ -13,6 +13,7 @@
 - Bookmarks (dog-ear corner), positions per book in flash, page view steps phrase by phrase, uploads from the phone (EPUB converted in the browser, pictures included), captive portal, deep sleep, pictures and vector charts, brackets as punctuation with aside speed and optional side marks, typewriter ticker.
 
 - Captive portal, PDF upload from the phone (pdf.js), microSD library (SPI mode), card formatting, captions, guide lines.
+- Lists and tables: bulleted and numbered lists (•, *, +, 1., 1), a), iv.) with their markers down the left margin, the current one lit amber, a breath between items; tables (| a | b |, header from |---|) read row by row with the grid flashed before each cell, the cell about to be read in amber. Converters turn EPUB <ul>/<ol>/<table> into these.
 - Home Wi-Fi: saved from the web page, joined alongside the FastReader network, `http://fastreader.local` by multicast DNS, rejoins on its own.
 - Welcome back card (at power-on and after a set break, off/10 min/20 min/1 h/3 h; play restarts at the sentence start), the open book at the top of the Book menu, authors from the converters, drag and drop on the web page.
 
@@ -24,11 +25,7 @@
    - Earbuds, wireless: through the phone page. **Done:** 🔊 Read aloud on the phone page: the phone's voice reads sentence by sentence from the reader's place, at the reader's speed, and the reader shows each word as it is spoken.
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
 3. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
-4. **Lists and tables.** Today a bulleted or numbered list is read as running text and a table as a jumble of cells.
-   - Lists: the converters keep `- ` / `1. ` items, and the reader pauses between items like short sentences.
-     - **The list on the left:** in the margin where the bracket marks go, one bullet (or number) per item, as many as the list has; the item being read is highlighted in the yellow of the title-bar messages ("Paused", "Bookmarked"), the others dim. Long lists show a window of bullets around the current one.
-     - Page view indents them.
-   - Tables: before each cell, a **quick flash of a stylized table** (just its grid: rows × columns as boxes) with the cell about to be read filled in colour (red, green or yellow: to be decided), then the cell's text as words. The column header can come first ("Year: 1503"). Very large tables are kept as a picture (rendered by the converter) with the caption as a description.
+4. **Lists and tables**: done in word and phrase mode, the converters and the phone page's book view (see Done). Still to do: page view indents list items with their markers and lays tables out as a grid; PDF tables (only EPUB/markup tables are recognised).
 5. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
 6. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
 7. Battery reading calibration once a LiPo is connected (GPIO 9 currently reads full scale on USB).

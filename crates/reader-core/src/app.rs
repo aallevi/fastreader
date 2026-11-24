@@ -723,6 +723,10 @@ pub struct App {
     last_input: u64,
     /// The minute the card last showed, to redraw "… ago" as it changes.
     welcome_minute: Option<u64>,
+    /// A table's grid flashes until then, before a cell's words.
+    grid_until: u64,
+    /// The word the grid flash last looked at.
+    grid_seen: usize,
     /// Lines the sentence under the word is scrolled from where it starts
     /// (the renderer keeps it in range and resets it when the word changes).
     pub context_scroll: i16,
@@ -768,6 +772,8 @@ impl App {
             welcome: None,
             last_input: 0,
             welcome_minute: None,
+            grid_until: 0,
+            grid_seen: usize::MAX,
             toast: None,
             serial: 0,
             flash: None,
@@ -997,6 +1003,19 @@ impl App {
         if was_playing || self.screen.is_overlay() {
             self.last_input = now; // reading, or in a menu, is not a break
         }
+        // Reading reaches a table cell: its grid flashes for half the
+        // first word's time (that word has a beat more for it).
+        let pos = self.reader.pos();
+        if pos != self.grid_seen {
+            self.grid_seen = pos;
+            if self.reader.is_playing() && self.reader.book.starts_cell(pos) {
+                self.grid_until = now + (self.reader.current_delay() / 2).clamp(120, 400);
+                changed = true;
+            }
+        } else if self.grid_until != 0 && now >= self.grid_until {
+            self.grid_until = 0;
+            changed = true;
+        }
         if let Some(w) = self.welcome {
             // The "… ago" line moves on every minute.
             if w.before.is_some() && Some(now.saturating_sub(w.since) / 60_000) != self.welcome_minute {
@@ -1041,11 +1060,17 @@ impl App {
         }
     }
 
+    /// A table's grid is flashing (before a cell's words).
+    pub fn grid_flash(&self, now: u64) -> bool {
+        self.grid_until != 0 && now < self.grid_until
+    }
+
     /// When the platform needs to call `tick` next (sleep until then).
     pub fn next_wake(&self) -> Option<u64> {
         // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due()].into_iter().flatten().min()
+        let grid = (self.grid_until != 0).then_some(self.grid_until);
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid].into_iter().flatten().min()
     }
 
     /// True while something moves between words, so the screen must be
@@ -2326,6 +2351,26 @@ mod tests {
         assert_eq!(a.handle(Right, 1200 + TOAST_MS + 1).msg, Msg::Skipped { net: 1, skip: Skip::Sentence }, "after the message is gone the count starts fresh");
         a.tap(Hit::StepWord { forward: true }, 9_000);
         assert_eq!(a.tap(Hit::StepWord { forward: true }, 9_100).msg, Msg::Stepped { net: 2 }, "words count on their own");
+    }
+
+    #[test]
+    fn table_grid_flashes_before_each_cell_while_playing() {
+        let mut a = App::new(Book::new("t", "Intro words here.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |"), CAT, base());
+        a.reader.seek(2, 0);
+        a.handle(Key::Select, 0); // play
+        let mut flashes = Vec::new();
+        let mut t = 0;
+        while a.reader.is_playing() && t < 20_000 {
+            t += 10;
+            a.tick(t);
+            if a.grid_flash(t) && flashes.last() != Some(&a.reader.pos()) {
+                flashes.push(a.reader.pos());
+            }
+        }
+        assert_eq!(flashes, [3, 4, 5, 6], "Year, Work, 1503, Mona: each cell's first word");
+        a.reader.seek(3, t);
+        a.tick(t + 10);
+        assert!(!a.grid_flash(t + 10), "stepping by hand: no flash");
     }
 
     #[test]

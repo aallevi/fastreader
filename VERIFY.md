@@ -56,6 +56,10 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
+## Lists and tables
+- [ ] A book with a bulleted list: bullets down the left margin, the current one amber; a numbered list shows its numbers.
+- [ ] A table: before each cell a quick grid with the cell in amber, then its words; header row shaded.
+
 ## Read aloud (phone)
 - [ ] Phone page > 🔊 Read aloud: the phone reads from the reader's place; the reader shows each word as it is spoken; ■ Stop reading leaves the reader paused there. Try Italian and English books (the voice follows the language).
 
