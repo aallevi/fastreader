@@ -15,7 +15,7 @@ TURN = 50  # frames per turn: one slow turn in 10 s, one loop of the z's
 FRAME_MS = 200  # (as HAT_FRAME_MS in reader-core: 50 frames = the 10 s z loop)
 # The z's come and go on the same beat as the battery's (Z_STEPS in
 # reader-core): one by one, then leaving from the lowest up. (start ms, which)
-Z_STEPS = [(0, 0b000), (1400, 0b001), (2800, 0b011), (4200, 0b111), (5700, 0b110), (7100, 0b100), (8500, 0b000)]
+Z_STEPS = [(0, 0b001), (1430, 0b011), (2860, 0b111), (5710, 0b110), (7140, 0b100), (8570, 0b000)]
 # Roles (the painter maps them to a theme's colours).
 CLEAR, A, A_HI, A_LO, B, B_LO, FUR, FUR_LO, POM, POM_LO, INSIDE, OUT, ZED = range(13)
 

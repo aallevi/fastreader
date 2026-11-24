@@ -1017,9 +1017,9 @@ fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, p
 }
 
 /// The battery warning's place, its shadow included.
-/// The night's solid black, width to height (in thousandths): being tried
-/// (750 = 3:4 upright, 707 = A4); the window widens to fit it.
-pub static NIGHT_RATIO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(750);
+/// The night's solid black is 3:4 upright (width to height, in
+/// thousandths); the window widens to fit it.
+const NIGHT_RATIO: i32 = 750;
 
 /// The warning's widths: the dithered edge, and room for the text.
 const NIGHT_FADE: f32 = 44.0;
@@ -1028,7 +1028,7 @@ const WARNING_TEXT: f32 = 118.0;
 fn night_solid(l: &Layout, h: i32) -> i32 {
     // The body under the title bar: the window less its edges and title.
     let body_h = h - l.i(3.0) - l.i(21.0);
-    body_h * NIGHT_RATIO.load(core::sync::atomic::Ordering::Relaxed) as i32 / 1000
+    body_h * NIGHT_RATIO / 1000
 }
 
 fn warning_rect(c: &Ctx) -> Rect {
