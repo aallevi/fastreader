@@ -72,7 +72,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Title bar: the level in battery brackets "(82%)", green / orange / red.
 - [ ] Plugged in: only a bolt "(⚡)" in the level's colour; at 100% the number again.
 - [ ] 5% and below: "(!)", reading goes on.
-- [ ] 2%: reading pauses, "Battery almost empty" counts down from 30, z's float out of the battery; OK closes the window; then sleep with the place kept. Plugging in during the countdown cancels it.
+- [ ] 2%: the empty brackets with z's floating out for a minute (reading goes on), then reading pauses and "Battery almost empty" counts down from 30; OK closes the window; then sleep with the place kept. Plugging in at any point cancels it.
 - [ ] Charging is guessed from a voltage jump (no status pin): check plug/unplug are seen within a few seconds.
 
 ## Figure references

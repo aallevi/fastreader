@@ -733,8 +733,27 @@ pub struct Battery {
 pub const BATTERY_LOW: u8 = 5;
 /// At or below this the reader warns once and sleeps soon after.
 pub const BATTERY_SLEEP: u8 = 2;
+/// How long the sleepy battery shows before the warning comes up.
+pub const BATTERY_DROWSY_MS: u64 = 60_000;
 /// How long the warning gives before sleeping (plugging in cancels it).
 pub const BATTERY_SLEEP_MS: u64 = 30_000;
+
+/// The z's floating out of a sleepy battery: when each step starts in its
+/// 2.5 s loop (none, one, two, three, then a pause on three).
+const Z_STEPS: [u64; 4] = [0, 700, 1_150, 1_600];
+const Z_LOOP: u64 = 2_500;
+
+/// How many z's show at `now`.
+pub fn z_count(now: u64) -> u8 {
+    let t = now % Z_LOOP;
+    Z_STEPS.iter().filter(|&&s| t >= s).count() as u8 - 1
+}
+
+/// When the z's next change after `now`.
+fn z_next(now: u64) -> u64 {
+    let (lap, t) = (now - now % Z_LOOP, now % Z_LOOP);
+    lap + Z_STEPS.iter().copied().find(|&s| s > t).unwrap_or(Z_LOOP)
+}
 
 impl Battery {
     /// About to go to sleep (not charging, nearly empty).
@@ -787,6 +806,9 @@ pub struct App {
     pub welcome: Option<Welcome>,
     /// A notice (a new version), while it shows; before the welcome card.
     pub notice: Option<Notice>,
+    /// Since when the battery has been nearly empty (the sleepy battery
+    /// shows; a minute later the warning).
+    pub low_since: Option<u64>,
     /// The battery is nearly empty: the reader sleeps at this moment
     /// (plugging in cancels it).
     pub low_sleep_at: Option<u64>,
@@ -858,6 +880,7 @@ impl App {
             delete_pending: None,
             welcome: None,
             notice: None,
+            low_since: None,
             low_sleep_at: None,
             low_warning: false,
             last_input: 0,
@@ -1214,10 +1237,17 @@ impl App {
                 changed = true;
             }
         }
-        // Battery nearly empty: pause, warn once, sleep a little later with
-        // the place saved. Charging (or the level coming back) cancels it.
+        // Battery nearly empty: the sleepy battery for a minute, then pause,
+        // warn once, and sleep a little later with the place saved.
+        // Charging (or the level coming back) cancels it.
         let mut battery_paused = false;
-        match (self.battery.is_some_and(|b| b.sleepy()), self.low_sleep_at) {
+        let sleepy = self.battery.is_some_and(|b| b.sleepy());
+        if sleepy && self.low_since.is_none() {
+            self.low_since = Some(now);
+            changed = true;
+        }
+        let drowsy = self.low_since.is_some_and(|since| now < since + BATTERY_DROWSY_MS);
+        match (sleepy && !drowsy, self.low_sleep_at) {
             (true, None) => {
                 battery_paused = self.reader.is_playing();
                 self.reader.pause();
@@ -1234,12 +1264,15 @@ impl App {
                 self.low_warning = false;
                 changed = true;
             }
-            (false, Some(_)) => {
+            (false, Some(_)) if !sleepy => {
                 self.low_sleep_at = None;
                 self.low_warning = false;
                 changed = true;
             }
             _ => {}
+        }
+        if !sleepy && self.low_since.take().is_some() {
+            changed = true;
         }
         // Reading reaches a table cell: its grid shows first, for the time
         // of a plain word.
@@ -1327,9 +1360,10 @@ impl App {
             return None;
         }
         let t = self.last_tick;
-        let z = (t / 600 + 1) * 600;
+        let z = z_next(t);
         let second = self.low_warning.then_some((t / 1000 + 1) * 1000);
-        [Some(z), second, self.low_sleep_at.filter(|&at| at != u64::MAX)].into_iter().flatten().min()
+        let warn = self.low_since.filter(|_| self.low_sleep_at.is_none()).map(|since| since + BATTERY_DROWSY_MS);
+        [Some(z), second, warn, self.low_sleep_at.filter(|&at| at != u64::MAX)].into_iter().flatten().min()
     }
 
     /// True while something moves between words, so the screen must be
@@ -2151,23 +2185,30 @@ mod tests {
         assert!(a.reader.is_playing() && !a.low_warning, "very low: \"(!)\" only, reading goes on");
         a.battery = low(BATTERY_SLEEP, false);
         a.tick(2_000);
-        assert!(!a.reader.is_playing() && a.low_warning, "about to sleep: paused, warned");
+        assert!(a.reader.is_playing() && !a.low_warning, "nearly empty: the sleepy battery first, reading goes on");
+        assert_eq!(a.next_wake().map(|w| w <= 2_000 + BATTERY_DROWSY_MS), Some(true));
+        a.tick(1_900 + BATTERY_DROWSY_MS);
+        assert!(!a.low_warning, "not yet");
+        a.tick(2_000 + BATTERY_DROWSY_MS);
+        assert!(!a.reader.is_playing() && a.low_warning, "a minute later: paused, warned");
         assert!(a.toast().is_none_or(|t| t.feedback.msg != Msg::Finished), "no \"Finished\" message for that pause");
-        assert_eq!(a.low_sleep_at, Some(2_000 + BATTERY_SLEEP_MS));
-        assert!(a.next_wake().is_some_and(|w| w <= 2_600), "wakes for the z's and the countdown");
-        a.tap(Hit::Key(Key::Select), 3_000);
+        let warned = 2_000 + BATTERY_DROWSY_MS;
+        assert_eq!(a.low_sleep_at, Some(warned + BATTERY_SLEEP_MS));
+        assert!(a.next_wake().is_some_and(|w| w <= warned + 1_000), "wakes for the z's and the countdown");
+        a.tap(Hit::Key(Key::Select), warned + 1_000);
         assert!(!a.low_warning && !a.reader.is_playing(), "a touch closes the warning, nothing else");
         while a.take_effect().is_some() {}
-        a.tick(2_000 + BATTERY_SLEEP_MS);
+        a.tick(warned + BATTERY_SLEEP_MS);
         assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Sleep), "30 s later: asleep");
         // Plugged in during the countdown: no sleep.
         let mut b = app();
         b.battery = low(1, false);
         b.tick(1_000);
+        b.tick(1_000 + BATTERY_DROWSY_MS);
         assert!(b.low_warning);
         b.battery = low(1, true);
-        b.tick(2_000);
-        assert!(b.low_sleep_at.is_none() && !b.low_warning, "charging cancels it");
+        b.tick(2_000 + BATTERY_DROWSY_MS);
+        assert!(b.low_sleep_at.is_none() && !b.low_warning && b.low_since.is_none(), "charging cancels it");
         while b.take_effect().is_some() {}
         b.tick(60_000);
         assert!(!core::iter::from_fn(|| b.take_effect()).any(|e| e == Effect::Sleep), "and it stays awake");

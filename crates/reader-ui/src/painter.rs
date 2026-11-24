@@ -817,7 +817,7 @@ fn battery_look(b: &Battery, now: u64) -> BatteryLook {
     } else if b.charging {
         BatteryLook::Charging(b.percent)
     } else if b.sleepy() {
-        BatteryLook::Sleepy(((now / 600) % 4) as u8)
+        BatteryLook::Sleepy(reader_core::app::z_count(now))
     } else if b.percent <= BATTERY_LOW {
         BatteryLook::Low
     } else {
@@ -861,7 +861,9 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
     let (th, l) = (c.th, c.l);
     let look = battery_look(&b, c.now);
     let small = l.px(11.0);
-    let face = th.ui.1;
+    // Always Atkinson Hyperlegible bold (its slashed zero, its brackets),
+    // whatever the theme's title-bar font.
+    let face = family(0).face(Style::BOLD);
     let colour = match look {
         BatteryLook::Low | BatteryLook::Sleepy(_) => battery_colour(th, 0),
         BatteryLook::Level(p) | BatteryLook::Charging(p) => battery_colour(th, p),
@@ -898,9 +900,9 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
         }
         BatteryLook::Sleepy(n) => {
             // z's float up and away from the tip, each smaller.
-            let zs = [(l.px(9.0), l.px(3.5), l.px(0.0)), (l.px(7.0), l.px(9.0), l.px(-5.0)), (l.px(5.0), l.px(13.5), l.px(-9.0))];
+            let zs = [(l.px(9.0), l.px(3.5), l.px(-1.0)), (l.px(7.0), l.px(9.0), l.px(-6.0)), (l.px(5.0), l.px(13.5), l.px(-10.0))];
             for &(px, dx, dy) in zs.iter().take(n as usize) {
-                f.draw(cv, face, px, "z", tip_x + tip_w + dx, mid + px * 0.35 + dy, colour);
+                f.draw(cv, face, px, "z", tip_x + dx, mid + px * 0.33 + dy, colour);
             }
         }
         _ => {

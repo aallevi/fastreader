@@ -719,7 +719,8 @@ fn battery_states_draw_cleanly_and_stay_put() {
         let mut t = 0u64;
         for (pct, charging) in states {
             a.battery = Some(Battery { percent: pct, charging, millivolts: 3700 });
-            for _ in 0..12 {
+            // (Nearly empty: through the sleepy minute into the warning.)
+            for _ in 0..if pct <= reader_core::app::BATTERY_SLEEP { 240 } else { 12 } {
                 t += 300;
                 a.tick(t);
                 ui.paint(&mut a, t, &mut cv);
