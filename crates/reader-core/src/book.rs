@@ -447,6 +447,10 @@ impl Book {
 
     /// First word of the sentence containing `i`.
     pub fn sentence_start(&self, i: usize) -> usize {
+        // A table is one sentence (⏮ ⏭ jump over it whole; ‹ › go by cell).
+        if let Some((t, _)) = self.cell_at(i) {
+            return t.cells[0].0 as usize;
+        }
         let mut j = i.min(self.words.len().saturating_sub(1));
         while j > 0 && self.words[j - 1].pause < Pause::Sentence {
             j -= 1;
@@ -456,6 +460,9 @@ impl Book {
 
     /// First word of the sentence after the one containing `i`, if any.
     pub fn next_sentence(&self, i: usize) -> Option<usize> {
+        if let Some((t, _)) = self.cell_at(i) {
+            return ((t.end as usize) < self.words.len()).then_some(t.end as usize);
+        }
         let mut j = i;
         while j < self.words.len() {
             if self.words[j].pause >= Pause::Sentence {
@@ -1548,6 +1555,15 @@ mod tests {
         assert_eq!(b.cell_text(t, 5), "", "an empty cell");
         assert!(b.word(3).unwrap().pause >= Pause::Paragraph, "a row ends with a breath");
         assert!(b.word(2).unwrap().pause >= Pause::Sentence, "and a cell, before the next column");
+    }
+
+    #[test]
+    fn a_table_is_one_sentence() {
+        let b = Book::new("t", "Before it.\n\n| A | B |\n| one two | three |\n\nAfter it.");
+        let first = b.tables[0].cells[0].0 as usize;
+        assert_eq!(b.sentence_start(first + 3), first, "from inside: back to the table's start");
+        assert_eq!(b.next_sentence(first), Some(b.tables[0].end as usize), "forward: past the whole table");
+        assert_eq!(b.sentence_start(b.tables[0].end as usize), b.tables[0].end as usize, "after it: its own sentence");
     }
 
     #[test]

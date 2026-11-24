@@ -304,7 +304,21 @@ impl Reader {
 
     /// One word back or forward. Returns false at either end.
     pub fn step_word(&mut self, forward: bool, now: u64) -> bool {
-        let target = if forward { self.pos + 1 } else { self.pos.wrapping_sub(1) };
+        // In a table a cell is a word: ‹ › go cell by cell.
+        let in_table = self.book.cell_at(self.pos).map(|(t, c)| (t.cells.iter().map(|x| x.0 as usize).collect::<alloc::vec::Vec<_>>(), c, t.end as usize));
+        let target = match in_table {
+            Some((starts, c, end)) if forward => starts.iter().copied().skip(c + 1).find(|&s| s > self.pos).unwrap_or(end),
+            Some((starts, c, _)) if self.pos > starts[c] => starts[c],
+            Some((starts, c, _)) if c > 0 => starts[..c].iter().rev().copied().find(|&s| s < self.pos).unwrap_or(starts[0]),
+            _ => {
+                let t = if forward { self.pos + 1 } else { self.pos.wrapping_sub(1) };
+                // Stepping back into a table from just after it: its last cell.
+                match self.book.cell_at(t).filter(|_| !forward) {
+                    Some((tb, c)) => tb.cells[c].0 as usize,
+                    None => t,
+                }
+            }
+        };
         if target >= self.book.len() {
             return false;
         }
@@ -418,6 +432,26 @@ impl Reader {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn in_a_table_a_cell_is_a_word() {
+        let book = crate::Book::new("t", "Before it.\n\n| A | B |\n| one two | three |\n\nAfter it.");
+        let cells: alloc::vec::Vec<usize> = book.tables[0].cells.iter().map(|c| c.0 as usize).collect();
+        let end = book.tables[0].end as usize;
+        let mut r = Reader::new(book, 300);
+        r.seek(cells[0], 0);
+        let mut seen = alloc::vec![r.pos()];
+        while r.step_word(true, 0) && r.pos() <= end {
+            seen.push(r.pos());
+            if r.pos() == end { break; }
+        }
+        assert_eq!(seen, [cells[0], cells[1], cells[2], cells[3], end], "cell by cell, then out");
+        r.step_word(false, 0);
+        assert_eq!(r.pos(), cells[3], "back in: the last cell");
+        r.seek(cells[2] + 1, 0); // "two", inside the cell "one two"
+        r.step_word(false, 0);
+        assert_eq!(r.pos(), cells[2], "back: to the start of this cell first");
+    }
+
     use super::*;
     use alloc::string::String;
     use core::fmt::Write;

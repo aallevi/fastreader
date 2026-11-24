@@ -34,7 +34,7 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 fn use_app_folder() {
     let Ok(exe) = std::env::current_exe() else { return };
     let Some(contents) = exe.ancestors().find(|p| p.file_name().is_some_and(|n| n == "Contents")) else { return };
-    if !contents.parent().is_some_and(|a| a.extension().is_some_and(|e| e == "app")) {
+    if contents.parent().is_none_or(|a| a.extension().is_none_or(|e| e != "app")) {
         return;
     }
     let Some(home) = std::env::var_os("HOME") else { return };
