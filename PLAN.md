@@ -42,7 +42,9 @@
    - Sources, each assigned to readers: an RSS/article feed (which reader gets which feeds), Zotero (collections to readers), folders on the Mac.
    - Feeds in and out: import subscriptions from another feed reader as OPML, and export them back as OPML, so feeds can move between this app and others (or be backed up).
    - Each reader's page (from its own Wi-Fi or the local network) keeps showing its own options and reader view; the manager uses the same routes the page uses today (books, upload, delete, settings).
-   - Updates: the manager also offers firmware updates to the readers it knows (the update image at 0x10000, settings and books kept).
+   - Flashing: the app flashes readers itself, no command line. Over USB (built in, the same work as espflash): first install of a new board, updates, and rescue of a reader that won't start, with progress shown; settings, places and books kept unless a fresh start is chosen.
+   - Over Wi-Fi (OTA): updates sent to a paired reader, which checks the image and starts it only if it boots fine (else it falls back to the old one). This needs two program slots in the reader's flash layout (the program is ~2.8 MB, the flash 16 MB), a one-time change made over USB.
+   - The app offers each reader the matching firmware when a new version is out, with its changes, like its own update notice.
    - The manager's screens need real forms and lists: a small native window around a web view (the phone page's tech) next to the reader's own window.
 4. **Try it without the device**: the browser demo is built (docs/demo: the reader compiled to WebAssembly, mouse/touch/keys, settings and added EPUB/PDF/text books kept, fills the page or shows a chosen display's resolution); next, publish it on GitHub Pages, EPUB/PDF in the demo (the phone page's converters), and a one-click web flasher with ready firmware for people who have the board.
 5. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
