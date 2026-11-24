@@ -1,6 +1,8 @@
 #!/bin/sh
 # One release, everything together: tests, the Mac app (DMG) and the ESP32
-# firmware (one image, written at 0x0), a git tag and the GitHub release.
+# firmware (an update image for 0x10000 that keeps the reader's settings and
+# books, and a full image for a first install at 0x0), a git tag and the
+# GitHub release.
 #   packaging/release.sh 0.2.0 notes.md
 # notes.md: what changed, for people (the release page). Its "- " lines are
 # what the Mac app's update notice lists, so put the changes as bullets.
@@ -19,16 +21,21 @@ cargo test --release --workspace -q
 # The Mac app.
 packaging/make_dmg.sh
 
-# The firmware: the normal build (web view off until chosen in Settings),
-# merged with bootloader and partition table into one image at 0x0.
+# The firmware: the normal build (web view off until chosen in Settings).
+# The update image is the program alone (written at 0x10000: settings,
+# places and books in the flash stay). The full image adds bootloader and
+# partition table, without padding (a padded image would wipe the books).
 ( . "$HOME/export-esp.sh" && cd firmware && cargo build --release )
-espflash save-image --chip esp32s3 --merge --flash-size 16mb --partition-table firmware/partitions.csv \
-  firmware/target/xtensa-esp32s3-none-elf/release/fastreader "dist/fastreader-es3c28p-$VERSION.bin"
+ELF=firmware/target/xtensa-esp32s3-none-elf/release/fastreader
+espflash save-image --chip esp32s3 --flash-size 16mb "$ELF" "dist/fastreader-es3c28p-$VERSION-update.bin"
+espflash save-image --chip esp32s3 --merge --skip-padding --flash-size 16mb --partition-table firmware/partitions.csv \
+  "$ELF" "dist/fastreader-es3c28p-$VERSION-full.bin"
 
 git add Cargo.toml Cargo.lock firmware/Cargo.toml firmware/Cargo.lock
 git commit -q -m "Release $VERSION"
 git tag "v$VERSION"
 git push -q && git push -q --tags
-gh release create "v$VERSION" "dist/FastReader-$VERSION.dmg" "dist/fastreader-es3c28p-$VERSION.bin" \
+gh release create "v$VERSION" "dist/FastReader-$VERSION.dmg" \
+  "dist/fastreader-es3c28p-$VERSION-update.bin" "dist/fastreader-es3c28p-$VERSION-full.bin" \
   --repo aallevi/fastreader --title "Fast Reader $VERSION" --notes-file "$NOTES"
 echo "released v$VERSION"

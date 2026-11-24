@@ -88,8 +88,9 @@ System Settings > Privacy & Security > Open Anyway).
 
 `packaging/make_dmg.sh` builds the disk image (Apple silicon + Intel);
 `packaging/release.sh <version> <notes.md>` makes a whole release: tests,
-the Mac app and the reader's firmware image (`fastreader-es3c28p-<version>.bin`,
-written at 0x0: `espflash write-bin 0 fastreader-es3c28p-<version>.bin`).
+the Mac app and the reader's firmware: `…-update.bin` for an update
+(`espflash write-bin 0x10000 …`, settings and books stay) and `…-full.bin`
+for a first install (`espflash write-bin 0 …`).
 
 ## Run it
 
