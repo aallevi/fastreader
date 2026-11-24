@@ -56,10 +56,10 @@ moves pixels, touches and bytes.
 
 ## The whole book, not just its words
 
-No other RSVP reader shows pictures, figures, lists and tables while you
-read: the others turn a book into a stream of words and leave the rest
-behind. Fast Reader keeps it all in the reading, each shown the way it
-works best one word at a time.
+RSVP readers turn a book into a stream of words and leave the rest behind.
+Fast Reader keeps it all in the reading, pictures, figures, lists and
+tables, each shown the way it works best one word at a time, like no other
+RSVP reader.
 
 - **Pictures** come in the word stream, shown for a set time (or until ▶);
   their description shows when paused.
