@@ -608,9 +608,11 @@ fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
     file.extend((0..320 * 130).flat_map(|i: u32| ((i % 320 / 16) as u16 * 0x0841).to_le_bytes()));
     let book = Book::from_bytes(&file, "t");
     assert_eq!((book.lists.len(), book.tables.len()), (2, 1), "the list goes on after its picture");
-    for theme in 0..4u8 {
+    for (theme, flash) in (0..4u8).flat_map(|t| [(t, false), (t, true)]) {
         for mode in [0u8, 1, 3] {
-            let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { theme, mode, guides: true, ..Settings::default() });
+            let mut s = Settings { theme, mode, guides: true, ..Settings::default() };
+            s.pacing.table_flash = flash;
+            let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, s);
             let mut cv = Canvas::new(320, 240);
             let mut whole = Canvas::new(320, 240);
             let mut ui = Ui::new(320, 240);
@@ -639,7 +641,7 @@ fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
             }
             assert!(frames > 20, "theme {theme}, mode {mode}: played");
             if mode == 0 {
-                assert!(grids > 0, "theme {theme}: the table's grid flashed");
+                assert_eq!(grids > 0, flash, "theme {theme}: the grid flashes only in flash mode");
             }
         }
     }

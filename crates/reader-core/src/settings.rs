@@ -56,7 +56,12 @@ pub struct Pacing {
     pub ramp: bool,
     /// How long a picture stays: an index into `PICTURE_MS` (last = until ▶).
     pub picture: u8,
+    /// Tables: false = the table below the word the whole time; true = its
+    /// grid flashes before each cell (a beat more for it).
+    pub table_flash: bool,
 }
+
+pub const TABLE_NAMES: [&str; 2] = ["Below the word", "Flash before each cell"];
 
 /// Picture display times, in ms; 0 = reading pauses on the picture until ▶.
 pub const PICTURE_MS: [u64; 6] = [2_000, 3_000, 4_000, 8_000, 15_000, 0];
@@ -64,7 +69,7 @@ pub const PICTURE_NAMES: [&str; 6] = ["2 seconds", "3 seconds", "4 seconds", "8 
 
 impl Default for Pacing {
     fn default() -> Self {
-        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 2 }
+        Pacing { comma: 15, sentence: 22, paragraph: 30, title: 20, long_words: true, ramp: true, picture: 2, table_flash: false }
     }
 }
 
@@ -182,7 +187,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 35] = [
+pub const FIELDS: [(&str, u16, u16); 36] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -200,6 +205,7 @@ pub const FIELDS: [(&str, u16, u16); 35] = [
     ("long_words", 0, 1),
     ("ramp", 0, 1),
     ("pictures", 0, 5),
+    ("tables", 0, 1),
     ("book", 0, 255),
     ("phrase", 1, 3),
     ("spacing", 0, 2),
@@ -266,6 +272,7 @@ impl Settings {
             "long_words" => p.long_words as u16,
             "ramp" => p.ramp as u16,
             "pictures" => p.picture as u16,
+            "tables" => p.table_flash as u16,
             "book" => self.book as u16,
             _ => return None,
         })
@@ -312,6 +319,7 @@ impl Settings {
             "long_words" => p.long_words = v != 0,
             "ramp" => p.ramp = v != 0,
             "pictures" => p.picture = b,
+            "tables" => p.table_flash = v != 0,
             "book" => self.book = b,
             _ => unreachable!("FIELDS and set() list the same names"),
         }

@@ -394,17 +394,31 @@ impl Book {
         self.cum[c] + (c * CHECKPOINT..i).zip(self.words.range(c * CHECKPOINT..i)).map(|(k, w)| self.weight_at(k, w, p)).sum::<u32>()
     }
 
-    /// Word `i`'s time: inside a table read at half speed (its own time
-    /// doubled; the grid's extra beat stays one plain word).
+    /// Word `i`'s time: inside a table read at half speed; with the table
+    /// flashing before each cell, a cell's first word has a beat more (the
+    /// grid shows for that beat, then the word for its own time).
     fn weight_at(&self, i: usize, w: &Word, p: &Pacing) -> u32 {
-        let all = w.weight(p);
-        let i = i as u32;
-        if self.tables.iter().any(|t| t.cells[0].0 <= i && i < t.end) {
-            let beat = w.style.beats() * 100;
-            (all - beat) * 2 + beat
-        } else {
-            all
+        let n = i as u32;
+        match self.tables.iter().find(|t| t.cells[0].0 <= n && n < t.end) {
+            Some(t) => w.weight(p) * 2 + if p.table_flash && t.cells.iter().any(|c| c.0 == n) { 100 } else { 0 },
+            None => w.weight(p),
         }
+    }
+
+    /// A table cell's words as one line of text (for drawing the table).
+    pub fn cell_text(&self, t: &Table, cell: usize) -> String {
+        let start = t.cells[cell].0 as usize;
+        let end = t.cells.get(cell + 1).map_or(t.end, |c| c.0) as usize;
+        let mut s = String::new();
+        for i in start..end.max(start) {
+            if let Some(w) = self.word(i) {
+                if !s.is_empty() {
+                    s.push(' ');
+                }
+                s.push_str(self.text_of(w));
+            }
+        }
+        s
     }
 
     pub fn len(&self) -> usize {
@@ -692,8 +706,6 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
     // A list or table still open (blank lines don't close a list).
     let mut in_list = false;
     let mut in_table = false;
-    // The next word starts a table cell: it gets a beat for the grid flash.
-    let mut cell_beat = false;
     let mut row_cells: Vec<&str> = Vec::new();
     let mut row_line = String::new();
 
@@ -790,7 +802,6 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                     col += 1;
                     t.cols = t.cols.max(col);
                 }
-                cell_beat = true;
                 continue;
             }
             // A picture's description: kept with the picture, not read as words.
@@ -863,12 +874,7 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
             let closes = shown.chars().any(|c| CLOSERS.contains(&c));
             // Which words are inside brackets is worked out once the whole
             // text is read (`mark_asides`): an aside may cross a page break.
-            let mut st = style.with(Style::HEADING, heading);
-            if cell_beat {
-                // One more beat on a cell's first word: the grid flashes first.
-                st = st.with_beats(st.beats() + 1);
-                cell_beat = false;
-            }
+            let st = style.with(Style::HEADING, heading);
             words.push(Word {
                 start: text.push(shown),
                 len: shown.len() as u16,
@@ -905,7 +911,6 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
             if let Some(last) = words.last_mut() {
                 last.pause = last.pause.max(Pause::Paragraph);
             }
-            cell_beat = false;
         }
         // In verse, every line break is a break on the page and a breath.
         if verse && !heading && words.len() > first_word {
@@ -1509,8 +1514,8 @@ mod tests {
         assert_eq!(b.cell_at(5).map(|(t, c)| (t.cells[c].1, t.cells[c].2)), Some((1, 1)), "Mona: row 1, column 1");
         assert!(b.starts_cell(5) && !b.starts_cell(6));
         assert!(b.cell_at(8).is_none(), "\"After.\" is outside");
-        // A cell's first word stays longer (the grid flashes first).
-        assert!(b.word(5).unwrap().style.beats() > b.word(6).unwrap().style.beats());
+        assert_eq!(b.cell_text(t, 3), "Mona Lisa");
+        assert_eq!(b.cell_text(t, 5), "", "an empty cell");
         assert!(b.word(3).unwrap().pause >= Pause::Paragraph, "a row ends with a breath");
         assert!(b.word(2).unwrap().pause >= Pause::Sentence, "and a cell, before the next column");
     }
@@ -1521,8 +1526,9 @@ mod tests {
         let b = Book::new("t", "word here\n\n| word | x |\n| y | z |\n\nEnd.");
         let w = |i: usize| b.weight_of(i..i + 1);
         let outside = w(0);
-        let cell_first = w(2); // "word": a cell's first word, with the grid's beat
-        assert_eq!(cell_first, outside * 2 + 100 + (Pause::Sentence.weight(&b.pacing) - Pause::Normal.weight(&b.pacing)) * 2, "own time doubled, plus one beat for the grid");
+        let cell = w(2); // "word" in a cell, then a breath before the next column
+        assert_eq!(cell, Pause::Sentence.weight(&b.pacing) * 2, "a cell's word: its time (with the column's breath) doubled");
+        assert_eq!(outside * 2, Pause::Normal.weight(&b.pacing) * 2);
     }
 
     #[test]

@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// How long a toast stays visible.
 /// How long a message (Paused, speed, Bookmarked…) stays in the title bar.
@@ -59,6 +59,7 @@ pub enum MenuItem {
     Guides,
     Welcome,
     MenuColours,
+    Tables,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -128,6 +129,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::SubContent,
             MenuItem::Brackets,
             MenuItem::Pictures,
+            MenuItem::Tables,
         ],
     ),
 ];
@@ -138,7 +140,7 @@ pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
     (MenuItem::SubScreen, &[MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours]),
     (MenuItem::SubConnections, &[MenuItem::Wifi, MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
-    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures]),
+    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables]),
 ];
 
 /// The submenu heading an item sits under, if any.
@@ -211,7 +213,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 40;
+pub const MENU_LEN: u8 = 41;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -244,6 +246,7 @@ impl MenuItem {
             MenuItem::Brackets => "Brackets",
             MenuItem::Pictures => "Picture time",
             MenuItem::MenuColours => "Menu buttons",
+            MenuItem::Tables => "Tables",
             MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
@@ -284,6 +287,7 @@ impl MenuItem {
             MenuItem::Brackets => PickKind::Brackets,
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::MenuColours => PickKind::MenuColours,
+            MenuItem::Tables => PickKind::Tables,
             MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
@@ -314,6 +318,7 @@ pub enum PickKind {
     Guides,
     Welcome,
     MenuColours,
+    Tables,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -344,6 +349,7 @@ impl PickKind {
             PickKind::Brackets => "Brackets",
             PickKind::Pictures => "Picture time",
             PickKind::MenuColours => "Menu buttons",
+            PickKind::Tables => "Tables",
             PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
@@ -373,7 +379,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables)
     }
 }
 
@@ -1032,9 +1038,10 @@ impl App {
         let pos = self.reader.pos();
         if pos != self.grid_seen {
             self.grid_seen = pos;
-            if self.reader.is_playing() && self.reader.book.starts_cell(pos) {
+            if self.settings.pacing.table_flash && self.reader.is_playing() && self.reader.book.starts_cell(pos) {
                 // As long as a plain word (the first word has a beat more,
-                // so it still gets its own full time after).
+                // so it still gets its own full time after). Only when the
+                // table flashes; otherwise it is drawn below the word.
                 self.grid_until = now + 60_000 / self.reader.wpm().max(1) as u64;
                 changed = true;
             }
@@ -1670,7 +1677,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
@@ -1705,6 +1712,7 @@ impl App {
             PickKind::ProgressBlocks => ["Grey", "Blue (classic 98)"][i.min(1)].into(),
             PickKind::Guides => ["Off", "On"][i.min(1)].into(),
             PickKind::MenuColours => ["Theme", "Colourful"][i.min(1)].into(),
+            PickKind::Tables => TABLE_NAMES[i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
                     Some(Place::Card) => "  · SD card",
@@ -1747,6 +1755,7 @@ impl App {
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
             MenuItem::Guides => (if self.settings.guides { "On" } else { "Off" }).into(),
             MenuItem::MenuColours => (if self.settings.menu_colours { "Colourful" } else { "Theme" }).into(),
+            MenuItem::Tables => (if self.settings.pacing.table_flash { "Flash" } else { "Below" }).into(),
             MenuItem::LongWords => (if self.settings.split_long { "Split if too long" } else { "Keep whole" }).into(),
             MenuItem::ProgressBlocks => (if self.settings.blue_blocks { "Blue" } else { "Grey" }).into(),
             MenuItem::ProgressBar => (if self.settings.progress_bar { "Shown" } else { "Hidden" }).into(),
@@ -1782,6 +1791,7 @@ impl App {
             PickKind::ProgressBlocks => self.settings.blue_blocks as u8,
             PickKind::Guides => self.settings.guides as u8,
             PickKind::MenuColours => self.settings.menu_colours as u8,
+            PickKind::Tables => self.settings.pacing.table_flash as u8,
             PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
             PickKind::DeleteConfirm => 0,
@@ -1820,6 +1830,10 @@ impl App {
             PickKind::ProgressBlocks => self.settings.blue_blocks = v == 1,
             PickKind::Guides => self.settings.guides = v == 1,
             PickKind::MenuColours => self.settings.menu_colours = v == 1,
+            PickKind::Tables => {
+                self.settings.pacing.table_flash = v == 1;
+                self.reader.set_pacing(self.settings.pacing);
+            }
             PickKind::LongWords => {
                 self.settings.split_long = v == 1;
                 self.apply_mode();
@@ -2404,7 +2418,9 @@ mod tests {
 
     #[test]
     fn table_grid_flashes_before_each_cell_while_playing() {
-        let mut a = App::new(Book::new("t", "Intro words here.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |"), CAT, base());
+        let mut s = base();
+        s.pacing.table_flash = true;
+        let mut a = App::new(Book::new("t", "Intro words here.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |"), CAT, s);
         a.reader.seek(2, 0);
         a.handle(Key::Select, 0); // play
         let mut flashes = Vec::new();
