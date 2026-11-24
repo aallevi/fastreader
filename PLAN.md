@@ -40,6 +40,7 @@
    - Readers: find the physical readers on the home Wi-Fi (fastreader.local) or by USB, pair each once with a code shown on its screen, name them; see each one's battery, version, card space used and free, and its books.
    - Library: one own library on the Mac (books, articles, pictures); per reader, choose what it gets: everything, some shelves, or picked books; sync sends what's missing and removes what was taken off; bookmarks follow you between readers. Places: the readers have no clock, so when a book's place differs between two readers the app asks which to keep ("Mac: 48% · Reader: 41%. Continue from…"), never decides by itself.
    - Sources, each assigned to readers: an RSS/article feed (which reader gets which feeds), Zotero (collections to readers), folders on the Mac.
+   - Feeds in and out: import subscriptions from another feed reader as OPML, and export them back as OPML, so feeds can move between this app and others (or be backed up).
    - Each reader's page (from its own Wi-Fi or the local network) keeps showing its own options and reader view; the manager uses the same routes the page uses today (books, upload, delete, settings).
    - Updates: the manager also offers firmware updates to the readers it knows (the update image at 0x10000, settings and books kept).
    - The manager's screens need real forms and lists: a small native window around a web view (the phone page's tech) next to the reader's own window.
