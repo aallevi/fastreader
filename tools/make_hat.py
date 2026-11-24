@@ -1,5 +1,5 @@
 """Draws the sleepy nightcap for the "Sleepy time" warning: 40x40 pixel art,
-25 frames of it turning once in 5 s on its tilted, slowly tumbling axis, z's floating
+50 frames of it turning once in 10 s on its tilted, slowly tumbling axis, z's floating
 off its tip and turning with it, its dark inside showing as it tips
 towards you. Written as colour roles (not colours) so each theme paints it
 in its own palette: assets/sprites/hat.bin = b"FRHAT1", frames, w, h, then
@@ -10,8 +10,8 @@ frames*w*h role bytes (0 = see-through).
 import math, sys
 from pathlib import Path
 
-N, F = 40, 25
-TURN = 25  # frames per turn: one turn = one loop of the z's
+N, F = 40, 50
+TURN = 50  # frames per turn: one slow turn in 10 s, two loops of the z's
 FRAME_MS = 200  # (as HAT_FRAME_MS in reader-core: 25 frames = the 5 s z loop)
 # The z's come in on the same beat as the battery's (Z_STEPS in reader-core).
 Z_STEPS = [0, 1400, 2300, 3200]
@@ -61,9 +61,11 @@ GLYPH = {5: ["#####", "...#.", "..#..", ".#...", "#####"], 4: ["####", "..#.", "
 
 
 def pose(t):
+    # Adrift like a little rock in space: one slow turn, a gentle rocking
+    # that now and then shows its open bottom, the axis leaning a little.
     spin = 2 * math.pi * t
-    tilt = -0.15 + 0.6 * math.sin(2 * math.pi * t)  # rocking: now its top towards us, now its open bottom
-    roll = -0.38 + 0.5 * math.sin(2 * math.pi * t)  # the axis swinging: a slow tumble
+    tilt = -0.1 + 0.5 * math.sin(2 * math.pi * t)
+    roll = -0.3 + 0.18 * math.sin(2 * math.pi * t + 1.3)
     return spin, tilt, roll
 
 
@@ -78,8 +80,9 @@ def rot(p, spin, tilt, roll):
 def frame(k):
     t = (k % TURN) / TURN
     spin, tilt, roll = pose(t)
-    cx, cy = N / 2 - 3 + 1.2 * math.sin(2 * math.pi * t), N / 2 + 3 + 1.5 * math.sin(4 * math.pi * t)
-    sc = 0.82
+    # Floating: a slow rise and fall, a little drift sideways.
+    cx, cy = N / 2 - 4 + 0.8 * math.sin(2 * math.pi * t + 0.7), N / 2 + 5 + 1.6 * math.sin(2 * math.pi * t)
+    sc = 1.0
     L = (-0.55, -0.6, 0.58)  # light from the upper left, towards us
     px = [[CLEAR] * N for _ in range(N)]
     depth = [[-1e9] * N for _ in range(N)]
@@ -124,7 +127,7 @@ def frame(k):
                 px[y][x] = OUT
     # z's: they turn with the hat (squeezed as they turn edge-on, mirrored
     # when seen from behind), hidden where the hat is in front of them.
-    shown = sum(1 for s in Z_STEPS if k * FRAME_MS >= s) - 1
+    shown = sum(1 for s in Z_STEPS if (k * FRAME_MS) % 5000 >= s) - 1
     for i in range(shown):
         (p, size) = ZS[i]
         X, Y, Zd = rot(p, spin, tilt, roll)

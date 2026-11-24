@@ -927,10 +927,30 @@ fn hat_frame(now: u64) -> usize {
     (now / reader_core::app::HAT_FRAME_MS) as usize % HAT[6] as usize
 }
 
+/// Looks being tried for the warning (switched by the previews only):
+/// the hat on a starry night dithered into the window's grey, and the
+/// hat's whites in grey.
+pub static HAT_SPACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub static HAT_GREY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
 /// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
 /// outline; z's.
 fn hat_palette(th: &Theme) -> [Rgb; 12] {
+    let mut p = hat_colours(th);
+    if HAT_GREY.load(core::sync::atomic::Ordering::Relaxed) {
+        // Whites (stripes, fur; and a white pom-pom) toned to light grey.
+        for i in [3, 5, 7] {
+            if p[i] == 0xFFFFFF || p[i] == 0xFFFAF0 || p[i] == 0xF4F8FD {
+                p[i] = 0xD4D4D4;
+                p[i + 1] = 0x9A9A9A;
+            }
+        }
+    }
+    p
+}
+
+fn hat_colours(th: &Theme) -> [Rgb; 12] {
     match th.name {
         "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0x000080],
         "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0x1F4E8C],
@@ -939,13 +959,54 @@ fn hat_palette(th: &Theme) -> [Rgb; 12] {
     }
 }
 
+/// The night behind the hat: black with stars at the left, dithered
+/// (4×4 ordered) into the window's grey by `fade` px further right.
+fn draw_space(cv: &mut Canvas, area: Rect, k: i32, black_to: i32, fade: i32, panel: Rgb) {
+    draw_space_part(cv, area, area, k, black_to, fade, panel);
+}
+
+/// Part of the night (`part`, inside `sky`), on the sky's own pixel grid.
+fn draw_space_part(cv: &mut Canvas, sky: Rect, part: Rect, k: i32, black_to: i32, fade: i32, panel: Rgb) {
+    const BAYER: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    let (i0, j0) = ((part.x - sky.x) / k, (part.y - sky.y) / k);
+    let (i1, j1) = ((part.right() - sky.x + k - 1) / k, (part.bottom() - sky.y + k - 1) / k);
+    for j in j0.max(0)..j1.min(sky.h / k) {
+        for i in i0.max(0)..i1.min(sky.w / k) {
+            let x = sky.x + i * k;
+            let t = ((x - black_to) * 16 / fade.max(1)).clamp(-1, 16);
+            let night = t < 0 || (t < 16 && (BAYER[((j & 3) * 4 + (i & 3)) as usize] as i32) >= t);
+            let c = if night {
+                // A few stars, fixed (a hash of the place); the far ones dim.
+                let hsh = ((i as u32).wrapping_mul(73_856_093) ^ (j as u32).wrapping_mul(19_349_663)) % 151;
+                match hsh {
+                    0 => 0xFFFFFF,
+                    1 => 0x808080,
+                    _ => BLACK,
+                }
+            } else {
+                panel
+            };
+            cv.fill(Rect::new(x, sky.y + j * k, k, k), c);
+        }
+    }
+}
+
 /// One frame of the hat at (x, y), each sprite pixel a k×k square, over
-/// the panel colour (its see-through pixels).
-fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, panel: Rgb) -> Rect {
+/// its background (see-through pixels): the panel colour, or the night.
+#[allow(clippy::too_many_arguments)]
+fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, panel: Rgb, night: Option<(Rect, i32, i32)>) -> Rect {
     let (w, h) = (HAT[7] as usize, HAT[8] as usize);
     let pal = hat_palette(th);
     let area = Rect::new(x, y, w as i32 * k, h as i32 * k);
-    cv.fill(area, panel);
+    match night {
+        Some((sky, black_to, fade)) => {
+            // Just the part of the sky behind the sprite (same pixels as the whole sky had).
+            let a = area.intersect(&sky);
+            let (ox, oy) = ((a.x - sky.x) / k * k + sky.x, (a.y - sky.y) / k * k + sky.y);
+            draw_space_part(cv, sky, Rect::new(ox, oy, a.right() - ox, a.bottom() - oy), k, black_to, fade, panel);
+        }
+        None => cv.fill(area, panel),
+    }
     let px = &HAT[9 + frame * w * h..9 + (frame + 1) * w * h];
     for (i, &role) in px.iter().enumerate() {
         if role != 0 {
@@ -959,7 +1020,7 @@ fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, p
 fn warning_rect(c: &Ctx) -> Rect {
     let (th, l) = (c.th, c.l);
     let stage = l.word.union(&l.context).intersect(&paper(th, l));
-    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(104.0));
+    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(112.0));
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
@@ -983,9 +1044,13 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let title_h = l.i(18.0);
     let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
     let k = (l.px(1.0).round() as i32).max(1);
-    let hat = (r.x + l.i(8.0), bar.bottom() + l.i(6.0));
+    let hat = (r.x + l.i(10.0), bar.bottom() + l.i(8.0));
+    // The night behind the hat (one of the looks being tried): the left of
+    // the window's body, black with stars, dithered into grey.
+    let body = Rect::new(r.x + l.i(3.0), bar.bottom(), l.i(96.0), r.bottom() - l.i(3.0) - bar.bottom());
+    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, r.x + l.i(52.0), l.i(40.0)));
     if redraw == Redraw::Hat {
-        return draw_hat(cv, th, hat.0, hat.1, k, frame, panel);
+        return draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
     }
     if redraw == Redraw::Window {
         // A shadow, then the window (drawn once: its smoothed edges can't
@@ -1009,16 +1074,22 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     }
     let title_ink = if win98 { WHITE } else { th.bar_text };
     f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Sleepy time"), bar.x as f32 + l.px(6.0), bar.cy() + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
-    let hat_box = draw_hat(cv, th, hat.0, hat.1, k, frame, panel);
-    let x = hat_box.right() as f32 + l.px(8.0);
-    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place kept."), String::from("Plug in to read on.")];
+    if let Some((sky, black_to, fade)) = night {
+        draw_space(cv, sky, k, black_to, fade, panel);
+    }
+    let hat_box = draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
+    // The text flush right (ragged left), the OK centred under it all.
+    let right = r.right() as f32 - l.px(10.0);
+    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
     let mut y = bar.bottom() as f32 + l.px(16.0);
+    let room = right - hat_box.right() as f32 - l.px(8.0);
     for t in &lines {
-        f.draw_fit(cv, th.ui.0, l.px(11.5), t, x, y, r.right() as f32 - x - l.px(8.0), ink);
+        let w = f.measure(th.ui.0, l.px(11.5), t).min(room);
+        f.draw_fit(cv, th.ui.0, l.px(11.5), t, right - w, y, room, ink);
         y += l.px(14.5);
     }
-    // OK, bottom right (any touch closes the warning).
-    let ok = Rect::new(r.right() - l.i(62.0), r.bottom() - l.i(22.0), l.i(54.0), l.i(17.0));
+    // OK, centred at the bottom (any touch closes the warning).
+    let ok = Rect::new(r.cx() as i32 - l.i(27.0), r.bottom() - l.i(22.0), l.i(54.0), l.i(17.0));
     if win98 {
         cv.fill(ok, panel);
         bevel(cv, ok, false);

@@ -742,8 +742,8 @@ pub const BATTERY_SLEEP_MS: u64 = 30_000;
 /// 5 s loop (none, one, two, three, then a pause on three).
 const Z_STEPS: [u64; 4] = [0, 1_400, 2_300, 3_200];
 const Z_LOOP: u64 = 5_000;
-/// The "Sleepy time" warning's nightcap turns a frame this often: 25
-/// frames, one turn in the same 5 s as the z's loop, in step with them.
+/// The "Sleepy time" warning's nightcap moves a frame this often: 50
+/// frames, one slow turn in 10 s (two of the z's 5 s loops, in step).
 pub const HAT_FRAME_MS: u64 = 200;
 
 /// How many z's show at `now`.
