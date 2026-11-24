@@ -35,6 +35,9 @@
    - RSS/Atom feeds: subscribe by link, or import your subscriptions as an OPML file (most feed readers can export one). New items show up in an Articles list with their source and date; read ones are marked; old ones are cleared after a while.
    - Fetching: when the reader is on the home Wi-Fi, it checks the feeds itself (HTTPS on the ESP32, a few at a time to keep memory free); otherwise the phone page or the Mac app fetches and sends them.
    - Offline: articles are kept on the SD card, so they can be read anywhere.
+   - Connecting: to fetch by itself the reader joins the home Wi-Fi or a phone hotspot automatically (saved networks, tried in turn), and switches the radio off again when done.
+   - Like an RSS app: at the last word of an article, ▶▶ (or ⏭) goes straight to the next unread article.
+   - Storage: everything except the firmware lives on the SD card (articles, feeds list, read marks); a "Clear old articles" button removes read and old feed items.
 3. **Try it without the device**: the browser demo is built (docs/demo: the reader compiled to WebAssembly, mouse/touch/keys, settings and added EPUB/PDF/text books kept, fills the page or shows a chosen display's resolution); next, publish it on GitHub Pages, EPUB/PDF in the demo (the phone page's converters), and a one-click web flasher with ready firmware for people who have the board.
 4. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
    - Speaker: a small 8 Ω speaker on JP3; the amplifier is enabled by pulling its SHUTDOWN pin low.
