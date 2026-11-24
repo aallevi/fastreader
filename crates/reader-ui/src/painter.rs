@@ -933,18 +933,14 @@ fn hat_frame(now: u64) -> usize {
 /// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
 /// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
 /// outline; z's (bright red, like the battery's).
-/// Being compared: the hat's whites in grey (previews only).
-pub static HAT_GREY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 fn hat_palette(th: &Theme) -> [Rgb; 12] {
     let mut p = hat_colours(th);
-    if HAT_GREY.load(core::sync::atomic::Ordering::Relaxed) {
-        // Whites (stripes, fur; a white pom-pom) toned to light grey.
-        for i in [3, 5, 7] {
-            if matches!(p[i], 0xFFFFFF | 0xFFFAF0 | 0xF4F8FD) {
-                p[i] = 0xD4D4D4;
-                p[i + 1] = 0x9A9A9A;
-            }
+    // The hat's whites (stripes, fur; a white pom-pom) in light grey: softer
+    // on the night than pure white.
+    for i in [3, 5, 7] {
+        if matches!(p[i], 0xFFFFFF | 0xFFFAF0 | 0xF4F8FD) {
+            p[i] = 0xD4D4D4;
+            p[i + 1] = 0x9A9A9A;
         }
     }
     p
