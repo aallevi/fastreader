@@ -1120,7 +1120,9 @@ fn marker_colour(th: &Theme) -> (Rgb, Rgb) {
 fn draw_list_column(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, list: &reader_core::book::List, item: usize) -> Rect {
     let (th, l) = (c.th, c.l);
     let p = paper(th, l);
-    let area = l.word.intersect(&p);
+    // The whole side, from the top of the word area to the bottom of the
+    // sentence area (when paused the sentence starts after the column).
+    let area = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
     // The whole height of the left border, the markers spread evenly over
     // it (at most a comfortable step apart); a list too long even packed
     // tight shows a window of markers around the current one.
@@ -1434,9 +1436,13 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     if table_below(app).is_some() {
         return None; // the table is the context here
     }
-    clear(cv, th, l, l.context);
+    // In a list the sentence starts after the column of markers (which
+    // runs the whole side); elsewhere it takes the full width.
     let p = paper(th, l);
-    let r = l.context.intersect(&p);
+    let skip = app.reader.book.list_at(app.reader.shown().start).map_or(0, |(list, _)| list_margin(l, list) - (l.context.x.max(p.x) - p.x));
+    let context = Rect::new(l.context.x + skip, l.context.y, l.context.w - skip, l.context.h);
+    clear(cv, th, l, context);
+    let r = context.intersect(&p);
     if let Screen::Line { .. } = app.screen {
         let s = up(th, "Release to keep reading from here");
         let w = f.measure(th.ui.0, l.px(11.0), &s);
@@ -1649,7 +1655,10 @@ fn bar_h_98(c: &Ctx) -> i32 {
 fn pane_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let l = c.l;
     let bar_top = l.stage.bottom() - bar_h_98(c);
-    let pane = Rect::new(l.stage.x, l.context.y, l.stage.w, bar_top - l.context.y);
+    // In a list the pane starts after the column of markers.
+    let p = paper(c.th, l);
+    let skip = c.app.reader.book.list_at(c.app.reader.shown().start).map_or(0, |(list, _)| (p.x + list_margin(l, list) - l.stage.x).max(0));
+    let pane = Rect::new(l.stage.x + skip, l.context.y, l.stage.w - skip, bar_top - l.context.y);
     cv.fill(pane, W98_FACE);
     cv.fill(Rect::new(pane.x, pane.y, pane.w, 1), 0x808080);
     cv.fill(Rect::new(pane.x, pane.y, 1, pane.h), 0x808080);
