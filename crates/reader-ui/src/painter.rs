@@ -2162,7 +2162,7 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             RowKind::Title(t, author, i) => {
                 // The open book in Resume's place (tap it to go on reading):
                 // one row in two parts, a small "Reading" label, then the title.
-                let hot = sel == Some(*i) || lit == Some(Hit::Row(*i));
+                let hot = lit == Some(Hit::Row(*i)) || (app.keyed && sel == Some(*i));
                 let fg = button(cv, th, l, r, Kind::Row, hot);
                 let dim = if hot { fg } else { mix(fg, th.row.face[0].1, 100) };
                 let base = r.cy() + l.px(4.5);
@@ -2198,7 +2198,9 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
                 // In the Theme list each row is its own theme's main button
                 // (as each font is shown in its own font).
                 let th = if theme_list { theme(*i) } else { th };
-                let hot = sel == Some(*i) || lit == Some(Hit::Row(*i));
+                // Lit: the finger on it, the current choice in a list of
+                // choices, and the ▲▼ selection only when keys are used.
+                let hot = lit == Some(Hit::Row(*i)) || (app.keyed && sel == Some(*i)) || original == Some(*i);
                 // Its main button (Vista's blue, like ▶): the theme at a glance.
                 let fg = button(cv, th, l, r, if theme_list { Kind::Primary } else { Kind::Row }, hot);
                 let dim = if hot { fg } else { mix(fg, th.row.face[0].1, 100) };

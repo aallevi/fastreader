@@ -89,13 +89,14 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
     (
         "Settings",
         &[
+            MenuItem::Theme,
+            MenuItem::Wifi,
             MenuItem::SubReading,
             MenuItem::Speed,
             MenuItem::Pace,
             MenuItem::Skip,
             MenuItem::Welcome,
             MenuItem::SubScreen,
-            MenuItem::Theme,
             MenuItem::Brightness,
             MenuItem::Rotate,
             MenuItem::ProgressBar,
@@ -103,7 +104,6 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::BookInfo,
             MenuItem::MenuColours,
             MenuItem::SubConnections,
-            MenuItem::Wifi,
             MenuItem::HomeWifi,
             MenuItem::Card,
             MenuItem::Info,
@@ -137,8 +137,8 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
 /// Submenus: a heading and the items it opens (they follow it in MENU).
 pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
     (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome]),
-    (MenuItem::SubScreen, &[MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours]),
-    (MenuItem::SubConnections, &[MenuItem::Wifi, MenuItem::HomeWifi, MenuItem::Card]),
+    (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours]),
+    (MenuItem::SubConnections, &[MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
     (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables]),
 ];
@@ -738,6 +738,9 @@ pub struct App {
     last_input: u64,
     /// The minute the card last showed, to redraw "… ago" as it changes.
     welcome_minute: Option<u64>,
+    /// The last move in a list was by the ▲▼ keys: the selection is shown
+    /// (by touch, only the current choice is lit).
+    pub keyed: bool,
     /// A table's grid flashes until then, before a cell's words.
     grid_until: u64,
     /// The word the grid flash last looked at.
@@ -787,6 +790,7 @@ impl App {
             welcome: None,
             last_input: 0,
             welcome_minute: None,
+            keyed: false,
             grid_until: 0,
             grid_seen: usize::MAX,
             toast: None,
@@ -828,6 +832,7 @@ impl App {
 
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
         self.last_input = now;
+        self.keyed = matches!(key, Key::Up | Key::Down) || (self.keyed && key == Key::Select);
         if self.welcome.take().is_some() && action_for(self.screen, key) == Action::TogglePlay {
             // ▶ continues from a sentence early; other keys close the card
             // and do what they always do.
@@ -932,6 +937,9 @@ impl App {
     pub fn tap(&mut self, hit: Hit, now: u64) -> Feedback {
         self.pressed = None;
         self.last_input = now;
+        if !matches!(hit, Hit::Key(Key::Up | Key::Down)) {
+            self.keyed = false;
+        }
         if self.welcome.is_some() && !matches!(hit, Hit::Key(_)) {
             // Buttons close the card and work as usual (⚙ opens the menu);
             // a touch on the card itself only closes it.
@@ -2022,25 +2030,29 @@ mod tests {
         let mut a = app();
         a.tap(Hit::Group(0), 0);
         let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
-        assert_eq!(level(&a), [MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep], "Settings shows its headings");
+        assert_eq!(
+            level(&a),
+            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep],
+            "Settings: Theme and Web view first, then its headings"
+        );
         a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };
         a.handle(Select, 0);
-        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) }, "a heading opens its submenu");
-        assert_eq!(menu_level_title(menu_index(MenuItem::Theme)), "Screen");
-        assert_eq!(level(&a).len(), 7);
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Brightness) }, "a heading opens its submenu");
+        assert_eq!(menu_level_title(menu_index(MenuItem::Brightness)), "Screen");
+        assert_eq!(level(&a).len(), 6);
         // ▲▼ stay inside the submenu.
         a.handle(Up, 0);
-        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) });
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Brightness) });
         for _ in 0..10 {
             a.handle(Down, 0);
         }
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::MenuColours) });
         // A setting chosen from a submenu comes back to it.
-        a.screen = Screen::Menu { sel: menu_index(MenuItem::Theme) };
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::ProgressBar) };
         a.handle(Select, 0);
-        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Theme, .. }));
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::ProgressBar, .. }));
         a.handle(Left, 0);
-        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) });
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::ProgressBar) });
         // ‹ goes up to the heading, then closes.
         a.handle(Left, 0);
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::SubScreen) });
@@ -2076,7 +2088,7 @@ mod tests {
         let mut a = app();
         a.reader.play(0);
         a.tap(Hit::Group(0), 0);
-        assert_eq!(menu_item(match a.screen { Screen::Menu { sel } => sel, _ => 99 }), MenuItem::SubReading);
+        assert_eq!(menu_item(match a.screen { Screen::Menu { sel } => sel, _ => 99 }), MenuItem::Theme);
         assert!(!a.reader.is_playing(), "a menu pauses");
         a.handle(Menu, 0);
         assert!(a.reader.is_playing(), "and closing it resumes");
@@ -2552,6 +2564,19 @@ mod tests {
         a.card_removed(30);
         assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "the card book: the Library opens");
         assert!(!a.reader.is_playing());
+    }
+
+    #[test]
+    fn the_selection_shows_only_when_keys_move_it() {
+        let mut a = app();
+        a.library = alloc::vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into(), "f".into(), "g".into(), "h".into()];
+        a.tap(Hit::Group(2), 0);
+        a.tap(Hit::Scroll { down: true, rows: 3 }, 10);
+        assert!(!a.keyed, "paging by touch: only the current book is lit");
+        a.handle(Down, 20);
+        assert!(a.keyed, "the ▼ key: its selection shows");
+        a.tap(Hit::Scroll { down: false, rows: 3 }, 30);
+        assert!(!a.keyed);
     }
 
     #[test]

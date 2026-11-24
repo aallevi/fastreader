@@ -72,7 +72,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Phone page > 🔊 Read aloud: the phone reads from the reader's place; the reader shows each word as it is spoken; ■ Stop reading leaves the reader paused there. Try Italian and English books (the voice follows the language).
 
 ## Menu levels
-- [ ] ⚙ shows Reading ▸, Screen ▸, Connections ▸, Device info, Sleep; each heading opens its own list with its name on top; ‹ goes back up, then closes.
+- [ ] ⚙ shows Theme, Web view, Reading ▸, Screen ▸, Connections ▸, Device info, Sleep; each heading opens its own list with its name on top; ‹ goes back up, then closes.
 - [ ] Aa shows Reading mode, Text size, Font, Layout ▸, Content ▸.
 - [ ] Choosing a setting inside a submenu comes back to that submenu.
 
