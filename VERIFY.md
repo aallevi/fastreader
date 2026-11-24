@@ -62,7 +62,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 
 ## Lists and tables
 - [ ] A book with a bulleted list: bullets down the left margin, the current one amber; a numbered list shows its numbers.
-- [ ] A table: before each cell a quick grid with the cell in amber, then its words at half speed, a breath before the next column; header row shaded.
+- [ ] A table (Text > Content > Tables: Below the word): the word on top, the whole table below with the current cell amber, at half speed, a breath before each next column. With Flash before each cell: the grid flashes, then the words.
 
 ## Read aloud (phone)
 - [ ] Phone page > 🔊 Read aloud: the phone reads from the reader's place; the reader shows each word as it is spoken; ■ Stop reading leaves the reader paused there. Try Italian and English books (the voice follows the language).

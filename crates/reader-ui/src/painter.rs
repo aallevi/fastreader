@@ -1074,7 +1074,8 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
-    if app.settings.guides {
+    if app.settings.guides && table_below(app).is_none() {
+        // (Not over a table below the word: the table shows the place.)
         // From the reading size, not this word's: a long word drawn smaller
         // must not move the lines (the old ones would stay beside the new).
         let g = f.line(fam.face(Style::PLAIN), word_px(c) * if phrase { PHRASE_SCALE } else { 1.0 });
