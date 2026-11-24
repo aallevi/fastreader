@@ -705,6 +705,9 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
     let mut tables: Vec<Table> = Vec::new();
     // A list or table still open (blank lines don't close a list).
     let mut in_list = false;
+    // This list puts each item's picture before its caption (a catalogue:
+    // picture, "1. title…"): a picture just before an item is that item's.
+    let mut pics_first = false;
     let mut in_table = false;
     let mut row_cells: Vec<&str> = Vec::new();
     let mut row_line = String::new();
@@ -759,13 +762,20 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
         if heading {
             tokens.next();
         }
+        // A line that is only a list number ("1." under a thumbnail in a
+        // catalogue's index): a label, nothing to read.
+        if !heading && !row && line.split_whitespace().count() == 1 && item_marker(first).is_some_and(|m| m.chars().any(|c| c.is_alphanumeric())) {
+            continue;
+        }
         // A list item: its marker is shown beside the word, not read.
         let marker = (!heading && !row).then(|| item_marker(first)).flatten().filter(|_| line.split_whitespace().nth(1).is_some());
         match marker {
             Some(m) => {
                 tokens.next();
+                let is_pic = |words: &Chunked<Word>, i: usize| words.get(i).is_some_and(|w| text.get(w.start, w.len as usize).starts_with(IMAGE_MARK));
                 if !in_list {
                     in_list = true;
+                    pics_first = !words.is_empty() && is_pic(&words, words.len() - 1);
                     if let Some(last) = words.last_mut() {
                         last.pause = Pause::Paragraph;
                     }
@@ -774,7 +784,14 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                     // Between items: at least a sentence's breath.
                     last.pause = last.pause.max(Pause::Sentence);
                 }
-                lists.last_mut().unwrap().items.push((words.len() as u32, String::from(m)));
+                // Picture-first lists: the pictures just before this item
+                // are its own (never the previous item's first word).
+                let floor = lists.last().unwrap().items.last().map_or(0, |(w, _)| *w as usize + 1);
+                let mut first = words.len();
+                while pics_first && first > floor && is_pic(&words, first - 1) {
+                    first -= 1;
+                }
+                lists.last_mut().unwrap().items.push((first as u32, String::from(m)));
             }
             // A picture (or its description) inside a list doesn't end it.
             None if in_list && !(first.starts_with("{image:") || first == "{caption}") => {
@@ -1478,6 +1495,17 @@ mod tests {
         assert!(n.numbered());
         assert_eq!(n.items.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>(), ["1.", "2)", "iv."]);
         assert!(b.list_at(b.len() - 1).is_none(), "dashes start dialogue, not lists");
+        let lone = Book::new("t", "Index:\n\n1.\n\n2.\n\nThe end.");
+        assert_eq!(words(&lone), ["Index:", "The", "end."], "lone numbers are labels, not words");
+        // A catalogue: each picture comes before its numbered caption.
+        let c = Book::new("t", "Works\n\n{image:0}\n\n1. Luigi, 2026.\n\n{image:1}\n\n2. DSG, 2025.\n\nEnd.");
+        let pic = |n: usize| (0..c.len()).filter(|&i| c.is_image(c.word(i).unwrap())).nth(n).unwrap();
+        assert_eq!(c.list_at(pic(0)).map(|(_, k)| k), Some(0), "picture 0 is item 1's");
+        assert_eq!(c.list_at(pic(1)).map(|(_, k)| k), Some(1), "picture 1 is item 2's, not item 1's");
+        // An item's text then its picture (EPUB lists): the picture stays with it.
+        let e = Book::new("t", "• one\n\n{image:0}\n\n• two\n\n{image:1}\n\nEnd.");
+        let epic = |n: usize| (0..e.len()).filter(|&i| e.is_image(e.word(i).unwrap())).nth(n).unwrap();
+        assert_eq!(e.list_at(epic(0)).map(|(_, k)| k), Some(0), "after item one: item one's");
         let p = Book::new("t", "• one\n\n{image:0}\n{caption} A cat. {/caption}\n\n• two\nEnd.");
         assert_eq!(p.lists.len(), 1, "a picture inside a list keeps it one list");
         assert_eq!(p.lists[0].items.len(), 2);
