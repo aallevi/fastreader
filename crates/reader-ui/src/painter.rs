@@ -2164,11 +2164,12 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
                 cv.fill(Rect::new(r.x, r.bottom() - 1, r.w, 1), mix(text_c, th.list[0].1, 215));
             }
             RowKind::Item(i) => {
-                // In the Theme list each row is a button of its own theme
+                // In the Theme list each row is its own theme's main button
                 // (as each font is shown in its own font).
                 let th = if theme_list { theme(*i) } else { th };
                 let hot = sel == Some(*i) || lit == Some(Hit::Row(*i));
-                let fg = button(cv, th, l, r, Kind::Row, hot);
+                // Its main button (Vista's blue, like ▶): the theme at a glance.
+                let fg = button(cv, th, l, r, if theme_list { Kind::Primary } else { Kind::Row }, hot);
                 let dim = if hot { fg } else { mix(fg, th.row.face[0].1, 100) };
                 let (label, value, sub) = layout::row_text(app, *i);
                 let mut x = r.x as f32 + l.px(10.0);
