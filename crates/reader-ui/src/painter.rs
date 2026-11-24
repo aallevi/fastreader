@@ -927,30 +927,10 @@ fn hat_frame(now: u64) -> usize {
     (now / reader_core::app::HAT_FRAME_MS) as usize % HAT[6] as usize
 }
 
-/// Looks being tried for the warning (switched by the previews only):
-/// the hat on a starry night dithered into the window's grey, and the
-/// hat's whites in grey.
-pub static HAT_SPACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-pub static HAT_GREY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 /// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
 /// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
 /// outline; z's (bright red, like the battery's).
 fn hat_palette(th: &Theme) -> [Rgb; 12] {
-    let mut p = hat_colours(th);
-    if HAT_GREY.load(core::sync::atomic::Ordering::Relaxed) {
-        // Whites (stripes, fur; and a white pom-pom) toned to light grey.
-        for i in [3, 5, 7] {
-            if p[i] == 0xFFFFFF || p[i] == 0xFFFAF0 || p[i] == 0xF4F8FD {
-                p[i] = 0xD4D4D4;
-                p[i + 1] = 0x9A9A9A;
-            }
-        }
-    }
-    p
-}
-
-fn hat_colours(th: &Theme) -> [Rgb; 12] {
     match th.name {
         "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0xFF0000],
         "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0xFF2A2A],
@@ -1045,8 +1025,8 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let title_h = l.i(18.0);
     let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
     let k = (l.px(1.0).round() as i32).max(1);
-    // The text flush right; the hat close to its left, on the night (one
-    // of the looks being tried) that fades into grey just before the text;
+    // The text flush right; the hat on a starry night filling the left,
+    // dithered into the window's grey just before the text;
     // OK under the text's right end, with some air above it.
     let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
     let right = r.right() as f32 - l.px(10.0);
@@ -1062,7 +1042,7 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     // room left above and right for the z's.
     let solid = text_left - l.i(3.0) - fade - body.x;
     let hat = (body.x + solid / 2 - 15 * k, body.y + body.h / 2 - (26.5 * k as f32) as i32);
-    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, text_left - l.i(3.0) - fade, fade));
+    let night = Some((body, text_left - l.i(3.0) - fade, fade));
     if redraw == Redraw::Hat {
         return draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
     }

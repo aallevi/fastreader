@@ -128,10 +128,20 @@ def frame(k):
     # z's: they turn with the hat (squeezed as they turn edge-on, mirrored
     # when seen from behind), hidden where the hat is in front of them.
     shown = sum(1 for s in Z_STEPS if (k * FRAME_MS) % 5000 >= s) - 1
+    # Where all three z's would be this frame; the trail is nudged as a
+    # whole to stay inside the frame (when the tip points up or right).
+    spots = []
+    for (p, size) in ZS:
+        X, Y, Zd = rot(p, spin, tilt, roll)
+        spots.append((cx + X * sc, cy - Y * sc, Zd, size))
+    top = min(zy - size / 2 for zx, zy, _, size in spots)
+    side = max(zx + size / 2 for zx, zy, _, size in spots)
+    nudge_y = max(0.0, 1 - top)
+    nudge_x = min(0.0, N - 1 - side)
     for i in range(shown):
         (p, size) = ZS[i]
-        X, Y, Zd = rot(p, spin, tilt, roll)
-        zx, zy = cx + X * sc, cy - Y * sc
+        zx, zy, Zd, _ = spots[i]
+        zx, zy = zx + nudge_x, zy + nudge_y
         g = GLYPH[size]
         face = math.cos(spin)  # how much of the z faces us (negative: its back)
         w = max(math.ceil(size * 0.5), round(size * abs(face)))  # never thinner than half: still a z
