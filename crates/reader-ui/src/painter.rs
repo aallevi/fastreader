@@ -230,7 +230,11 @@ impl Ui {
                 let now_drawn = (page_start(app), app.reader.shown(), page_highlight(app));
                 if self.page_drawn.as_ref() != Some(&now_drawn) {
                     // Same page, highlight moved: redraw only the lines it left and entered.
-                    let partial = self.page_drawn.as_ref().filter(|d| d.0 == now_drawn.0).map(|d| d.1.clone());
+                    // A highlight on a picture is drawn a little outside its
+                    // line: leaving or reaching one redraws the page whole.
+                    let book = &app.reader.book;
+                    let pic = |r: &core::ops::Range<usize>| r.clone().any(|i| book.word(i).is_some_and(|w| book.is_image(w)));
+                    let partial = self.page_drawn.as_ref().filter(|d| d.0 == now_drawn.0 && !pic(&d.1) && !pic(&now_drawn.1)).map(|d| d.1.clone());
                     let rects = draw_page(f, cv, &ctx, partial);
                     let corner = bookmark_corner(app, &l).rect;
                     let touches = |r: &Rect| rects.iter().any(|d| !d.intersect(r).is_empty());

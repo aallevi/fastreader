@@ -592,56 +592,89 @@ fn guide_lines_stay_put_from_word_to_word() {
 }
 
 #[test]
-fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
-    // A list, a picture inside it, a table, a long list: played through in
-    // every theme and reading mode. After every frame that changed, the
-    // screen must equal the same moment drawn whole: nothing left behind,
-    // nothing drawn over.
-    let mut file = "Intro words before the list, see figure 1 below.\n\n\u{2022} first item\n\u{2022} second item\n\n{image:0}\n{caption} Figure 1. A gradient. {/caption}\n\n\u{2022} third item, like figure 1.\n\nThen a table.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |\n| 1498 | Last Supper |\n\n".as_bytes().to_vec();
+fn every_reading_feature_together() {
+    // One book with every reading feature, played through every theme,
+    // reading mode and table mode (with the word position, guide lines and
+    // long-word splitting varied). After every frame that changed, the screen
+    // must equal the same moment drawn whole (nothing left behind or drawn
+    // over), and each feature must have been on screen.
+    let mut text = String::from(
+        "# Chapter one\n\nPlain words, **bold**, *italic* and an aside (in brackets, quietly) before Precipitevolissimevolmenteprecipitevolissimevolmente.{pause} Then {slow} slowly {/slow} on.\n\n\
+         {verse}\nA line of verse,\nand another one.\n{/verse}\n\n\
+         As figure 2 shows, and figure 1 too.\n\n\
+         \u{2022} first item\n\u{2022} second item\n\n{image:0}\n{caption} Figure 1. A gradient. {/caption}\n\n\u{2022} third item, like figure 1.\n\n\
+         {image:3}\n\nFigure 2: A plain picture.\n\n\
+         ## Catalogue\n\n{image:1}\n\n1. Luigi, 2026.\n\n{image:2}\n\n2. Calvin & Hobbes, 2025.\n\n\
+         Then a table.\n\n| Year | Work | City |\n|---|---|---|\n| 1503 | Mona Lisa | Paris |\n| 1498 | Last Supper | Milan |\n\nAnd a long list:\n\n",
+    );
     for k in 1..=30 {
-        file.extend_from_slice(format!("{k}. step number {k}\n").as_bytes());
+        text.push_str(&format!("{k}. step number {k}\n"));
     }
-    file.extend_from_slice(b"\nThe end.");
+    text.push_str("\nThe end.");
+    let mut file = text.into_bytes();
+    let pics: [(u16, u16); 4] = [(320, 130), (60, 40), (100, 60), (200, 200)];
     file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
-    file.extend_from_slice(&1u16.to_le_bytes());
-    file.extend_from_slice(&[0x40, 1, 0x82, 0]); // 320 x 130
-    file.extend((0..320 * 130).flat_map(|i: u32| ((i % 320 / 16) as u16 * 0x0841).to_le_bytes()));
+    file.extend_from_slice(&(pics.len() as u16).to_le_bytes());
+    for (k, (w, h)) in pics.into_iter().enumerate() {
+        file.extend_from_slice(&w.to_le_bytes());
+        file.extend_from_slice(&h.to_le_bytes());
+        file.extend((0..w as u32 * h as u32).flat_map(|i| (((i % w as u32) / 16) as u16 * 0x0841 + k as u16 * 0x1800).to_le_bytes()));
+    }
     let book = Book::from_bytes(&file, "t");
-    assert_eq!((book.lists.len(), book.tables.len()), (2, 1), "the list goes on after its picture");
+    assert_eq!(book.lists.len(), 3, "bulleted (one list across its picture), the catalogue, the numbered");
+    assert_eq!((book.tables.len(), book.figure_refs.len() / 2), (1, 3), "one table; figure 2, figure 1 and figure 1 again");
+    let amber = |c: u32| matches!(c, 0xF5C542 | 0xB8860B);
     for (theme, flash) in (0..4u8).flat_map(|t| [(t, false), (t, true)]) {
-        for mode in [0u8, 1, 3] {
-            let mut s = Settings { theme, mode, guides: true, ..Settings::default() };
+        for mode in [0u8, 1, 2, 3] {
+            let mut s = Settings { theme, mode, guides: theme < 2, position: theme % 2, split_long: theme == 3, ..Settings::default() };
             s.pacing.table_flash = flash;
+            s.pacing.picture = 0; // 2 s pictures: keep the run short
             let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, s);
             let mut cv = Canvas::new(320, 240);
             let mut whole = Canvas::new(320, 240);
             let mut ui = Ui::new(320, 240);
             let mut fresh = Ui::new(320, 240);
             a.handle(reader_core::Key::Select, 0);
-            let (mut t, mut frames, mut grids) = (0u64, 0, 0);
-            while a.reader.is_playing() && t < 120_000 {
+            let (mut t, mut frames) = (0u64, 0);
+            let (mut grids, mut marker, mut table, mut figure, mut picture) = (0, 0, 0, 0, 0);
+            while a.reader.is_playing() && t < 300_000 {
                 t += 20;
                 a.tick(t);
                 if ui.paint(&mut a, t, &mut cv).is_empty() {
                     continue;
                 }
                 frames += 1;
+                let l = ui.layout;
+                let b = &a.reader.book;
+                let at = a.reader.shown().start;
                 grids += a.grid_flash(t) as u32;
-                if mode == 0 && a.reader.on_picture() {
-                    // The picture in the list: its markers stay in the margin,
-                    // and the picture keeps clear of them.
-                    let l = ui.layout;
-                    let amber = (l.word.y..l.word.bottom()).any(|y| (0..30).any(|x| matches!(cv.pixel(x, y), 0xF5C542 | 0xB8860B)));
-                    assert!(amber, "theme {theme}: the current item's marker shows beside the picture");
+                picture += a.reader.on_picture() as u32;
+                if mode < 2 && b.list_at(at).is_some() && (l.word.y..l.context.bottom()).any(|y| (0..30).any(|x| amber(cv.pixel(x, y)))) {
+                    marker += 1; // the current item's marker, lit, down the side
+                }
+                let low = l.word.y + l.word.h / 2..l.context.bottom();
+                if mode < 2 && !flash && b.cell_at(at).is_some() && low.clone().any(|y| (0..320).any(|x| amber(cv.pixel(x, y)))) {
+                    table += 1; // the table below the word, its cell lit
+                }
+                let page = cv.pixel(l.word.x + 6, l.word.y + 3);
+                let drawn = low.clone().flat_map(|y| (40..280).map(move |x| (x, y))).filter(|&(x, y)| cv.pixel(x, y) != page).count();
+                if mode < 2 && a.reader.shown().any(|i| b.figure_ref(i).is_some()) && drawn > 2_000 {
+                    figure += 1; // the referenced figure's pixels below the word
                 }
                 fresh.invalidate();
                 fresh.paint(&mut a, t, &mut whole);
                 let diff = (0..240).flat_map(|y| (0..320).map(move |x| (x, y))).find(|&(x, y)| cv.pixel(x, y) != whole.pixel(x, y));
-                assert!(diff.is_none(), "theme {theme}, mode {mode}, word {}: differs from a full redraw at {diff:?}", a.reader.pos());
+                assert!(diff.is_none(), "theme {theme}, mode {mode}, flash {flash}, word {}: differs from a full redraw at {diff:?}", a.reader.pos());
             }
-            assert!(frames > 20, "theme {theme}, mode {mode}: played");
-            if mode == 0 {
-                assert_eq!(grids > 0, flash, "theme {theme}: the grid flashes only in flash mode");
+            let what = format!("theme {theme}, mode {mode}, flash {flash}");
+            assert!(frames > 40, "{what}: played");
+            assert!(!a.reader.is_playing(), "{what}: reached the end");
+            assert!(picture > 0, "{what}: pictures shown");
+            if mode < 2 {
+                assert!(marker > 0, "{what}: list markers shown");
+                assert_eq!(grids > 0, flash, "{what}: the grid flashes only in flash mode");
+                assert_eq!(table > 0, !flash, "{what}: the table below the word unless flashing");
+                assert!(figure > 0, "{what}: a referenced figure shown");
             }
         }
     }
