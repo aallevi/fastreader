@@ -166,7 +166,7 @@ fn positions_path() -> PathBuf {
 pub fn sim_device() -> DeviceInfo {
     DeviceInfo {
         board: "Simulator (ES3C28P layout)".into(),
-        firmware: format!("fastreader {}", env!("CARGO_PKG_VERSION")),
+        firmware: format!("fastreader {}{}", env!("CARGO_PKG_VERSION"), env!("FR_BUILD")),
         touch: "mouse".into(),
         free_memory_kb: 7_900,
         web: "http://localhost:8080 (simulator)".into(),

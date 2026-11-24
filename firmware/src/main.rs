@@ -103,7 +103,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut wifi_peripheral = Some(p.WIFI);
     let mut delay = Delay::new();
     let out = OutputConfig::default();
-    println!("fastreader: boot, heap {} KB free", esp_alloc::HEAP.free() / 1024);
+    println!("fastreader {}{}: boot, heap {} KB free", env!("CARGO_PKG_VERSION"), env!("FR_BUILD"), esp_alloc::HEAP.free() / 1024);
 
     // --- Backlight (PWM, so brightness works).
     let mut ledc = Ledc::new(p.LEDC);
@@ -247,7 +247,7 @@ async fn main(spawner: Spawner) -> ! {
     app.bookmarks = load_bookmarks(&mut flash);
     app.device = DeviceInfo {
         board: board::NAME.into(),
-        firmware: format!("fastreader {}", env!("CARGO_PKG_VERSION")),
+        firmware: format!("fastreader {}{}", env!("CARGO_PKG_VERSION"), env!("FR_BUILD")),
         touch: if touch_ok { "FT6336G ok".into() } else { "not found".into() },
         free_memory_kb: (esp_alloc::HEAP.free() / 1024) as u32,
         web: alloc::string::String::new(),
