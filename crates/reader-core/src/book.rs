@@ -242,6 +242,8 @@ pub struct Book {
     /// A page shown in a book's place while it can't be read (its SD card
     /// is out): reading it never moves the book's saved place.
     pub stand_in: bool,
+    /// Figure references: (word, the picture word it points to), by word.
+    pub figure_refs: Vec<(u32, u32)>,
     /// Lists and tables, in reading order.
     pub lists: Vec<List>,
     pub tables: Vec<Table>,
@@ -286,9 +288,90 @@ impl Book {
             }
         }
         mark_asides(&text, &mut words);
-        let mut b = Book { title: title.into(), author: String::new(), stand_in: false, lists, tables, images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        let mut b = Book { title: title.into(), author: String::new(), stand_in: false, lists, tables, figure_refs: Vec::new(), images: Pictures::Memory(Vec::new()), captions, text, words, cum: Vec::new(), chapters, pacing: Pacing::default() };
+        b.figure_refs = b.find_figure_refs();
         b.set_pacing(&Pacing::default());
         b
+    }
+
+    /// "see figure 11", "(fig. 3)": the words of each reference to a
+    /// numbered figure, with that figure's picture. A figure's number comes
+    /// from its caption ("Figure 4: Life cycle…", a paragraph starting so,
+    /// right after its picture).
+    fn find_figure_refs(&self) -> Vec<(u32, u32)> {
+        let n = self.words.len();
+        let plain = |i: usize| -> String {
+            let w = self.words[i];
+            self.text_of(w).trim_matches(|c: char| c == '(' || c == ')' || c == '*' || c == '[' || c == ']').to_lowercase()
+        };
+        let is_fig = |s: &str| matches!(s, "figure" | "figures" | "fig" | "fig." | "figs" | "figs." | "figura" | "figure:" | "fig:");
+        let number = |s: &str| -> Option<u32> {
+            let d: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+            d.parse().ok()
+        };
+        // Captions: number -> picture word.
+        let mut figures: Vec<(u32, u32)> = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            let starts_para = i == 0 || self.words[i - 1].pause == Pause::Paragraph;
+            if !starts_para || !is_fig(&plain(i)) {
+                continue;
+            }
+            let next = plain(i + 1);
+            let Some(num) = number(&next) else { continue };
+            if !next.ends_with([':', '.']) && !next.ends_with(|c: char| c.is_ascii_digit()) {
+                continue;
+            }
+            // Its picture: the nearest one before the caption (within about
+            // a page; PDFs put text between a drawing and its caption), not
+            // already another figure's; else one just after it.
+            let free = |k: usize| self.is_image(self.words[k]) && !figures.iter().any(|f| f.1 as usize == k);
+            // Several pictures in a row, then their captions: in order (the
+            // first caption is the first picture's).
+            let pic = (i.saturating_sub(250)..i).rev().find(|&k| free(k)).map(|mut k| {
+                while k > 0 && self.is_image(self.words[k - 1]) && free(k - 1) {
+                    k -= 1;
+                }
+                k
+            });
+            let pic = pic.or_else(|| (i + 2..(i + 40).min(n)).find(|&k| free(k)));
+            if let (Some(pic), false) = (pic, figures.iter().any(|f| f.0 == num)) {
+                figures.push((num, pic as u32));
+            }
+        }
+        // Descriptions kept with a picture (EPUB <figcaption>): "Figure 3. …".
+        for (pic, text) in &self.captions {
+            let mut t = text.split_whitespace().map(|w| w.trim_matches('*').to_lowercase());
+            if let (Some(f), Some(nb)) = (t.next(), t.next()) {
+                if let (true, Some(num)) = (is_fig(&f), number(&nb)) {
+                    if !figures.iter().any(|x| x.0 == num) {
+                        figures.push((num, *pic));
+                    }
+                }
+            }
+        }
+        // References: a figure word and its number anywhere else.
+        let mut refs = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            if !is_fig(&plain(i)) {
+                continue;
+            }
+            let starts_para = i == 0 || self.words[i - 1].pause == Pause::Paragraph;
+            let Some(num) = number(&plain(i + 1)) else { continue };
+            if starts_para && number(&plain(i + 1)).is_some() && plain(i + 1).ends_with([':', '.']) {
+                continue; // a caption ("Figure 4: …"), not a reference
+            }
+            if let Some(&(_, pic)) = figures.iter().find(|f| f.0 == num) {
+                refs.push((i as u32, pic));
+                refs.push((i as u32 + 1, pic));
+            }
+        }
+        refs
+    }
+
+    /// The picture word a reference at word `i` points to ("figure 11").
+    pub fn figure_ref(&self, i: usize) -> Option<usize> {
+        let i = i as u32;
+        self.figure_refs.binary_search_by_key(&i, |r| r.0).ok().map(|k| self.figure_refs[k].1 as usize)
     }
 
     /// Builds a book from a file's bytes: text, then optionally the image
@@ -402,9 +485,12 @@ impl Book {
     /// grid shows for that beat, then the word for its own time).
     fn weight_at(&self, i: usize, w: &Word, p: &Pacing) -> u32 {
         let n = i as u32;
+        // A reference to a figure ("figure 11"): the picture shows below
+        // the word, so its number stays two beats longer.
+        let figure = if self.figure_refs.binary_search_by_key(&n, |r| r.0).is_ok() && self.figure_refs.binary_search_by_key(&(n + 1), |r| r.0).is_err() { 200 } else { 0 };
         match self.tables.iter().find(|t| t.cells[0].0 <= n && n < t.end) {
             Some(t) => w.weight(p) * 2 + if p.table_flash && t.cells.iter().any(|c| c.0 == n) { 100 } else { 0 },
-            None => w.weight(p),
+            None => w.weight(p) + figure,
         }
     }
 
@@ -1555,6 +1641,26 @@ mod tests {
         assert_eq!(b.cell_text(t, 5), "", "an empty cell");
         assert!(b.word(3).unwrap().pause >= Pause::Paragraph, "a row ends with a breath");
         assert!(b.word(2).unwrap().pause >= Pause::Sentence, "and a cell, before the next column");
+    }
+
+    #[test]
+    fn figure_references_point_to_their_picture() {
+        let b = Book::new("t", "Grow them in jars (see figure 2) or in bags, as in fig. 1.\n\n{image:0}\n\n*Figure* *1:* A bag of straw.\n\n{image:1}\n\nFigure 2. A jar.\n\nAlso figure 7, which has no caption.");
+        let pic = |k: usize| (0..b.len()).filter(|&i| b.is_image(b.word(i).unwrap())).nth(k).unwrap();
+        let at = |w: &str| (0..b.len()).find(|&i| b.text_of(b.word(i).unwrap()) == w).unwrap();
+        assert_eq!(b.figure_ref(at("figure")), Some(pic(1)), "figure 2 is the second picture");
+        assert_eq!(b.figure_ref(at("2)")), Some(pic(1)), "its number too");
+        assert_eq!(b.figure_ref(at("fig.")), Some(pic(0)));
+        assert_eq!(b.figure_ref(pic(0) + 1), None, "a caption isn't a reference");
+        assert_eq!(b.text_of(b.word(pic(0) + 1).unwrap()), "Figure");
+        assert_eq!(b.figure_ref(at("7,")), None, "no caption for figure 7: read as words");
+        assert!(b.weight_of(at("2)")..at("2)") + 1) > b.weight_of(at("in")..at("in") + 1), "the number stays a little longer");
+        let two = Book::new("t", "See figure 26 and figure 27.\n\n{image:0}\n\n{image:1}\n\nFigure 26: Direct.\n\nFigure 27: Indirect.");
+        let pics: Vec<usize> = (0..two.len()).filter(|&i| two.is_image(two.word(i).unwrap())).collect();
+        assert_eq!((two.figure_ref(1), two.figure_ref(4)), (Some(pics[0]), Some(pics[1])), "two pictures, two captions: in order");
+        let e = Book::new("t", "As figure 5 shows.\n\n{image:0}\n{caption} Figure 5. A cat. {/caption}\n\nEnd.");
+        let epic = (0..e.len()).find(|&i| e.is_image(e.word(i).unwrap())).unwrap();
+        assert_eq!(e.figure_ref(1), Some(epic), "numbered by its description (EPUB)");
     }
 
     #[test]

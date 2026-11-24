@@ -597,7 +597,7 @@ fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
     // every theme and reading mode. After every frame that changed, the
     // screen must equal the same moment drawn whole: nothing left behind,
     // nothing drawn over.
-    let mut file = "Intro words before the list.\n\n\u{2022} first item\n\u{2022} second item\n\n{image:0}\n\n\u{2022} third item\n\nThen a table.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |\n| 1498 | Last Supper |\n\n".as_bytes().to_vec();
+    let mut file = "Intro words before the list, see figure 1 below.\n\n\u{2022} first item\n\u{2022} second item\n\n{image:0}\n{caption} Figure 1. A gradient. {/caption}\n\n\u{2022} third item, like figure 1.\n\nThen a table.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |\n| 1498 | Last Supper |\n\n".as_bytes().to_vec();
     for k in 1..=30 {
         file.extend_from_slice(format!("{k}. step number {k}\n").as_bytes());
     }

@@ -64,7 +64,7 @@ struct View {
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
-    /// Which table is drawn below the word (Tables: Below the word): the
+    /// Which table (or referenced figure) is drawn below the word: the
     /// screen splits on the way in and joins on the way out.
     table: Option<usize>,
 }
@@ -181,7 +181,7 @@ impl Ui {
                 let at = app.reader.shown().start as u32;
                 b.lists.iter().position(|l| l.items[0].0 <= at && at < l.end)
             },
-            table: table_below(app).map(|(t, _)| t as *const _ as usize),
+            table: table_below(app).map(|(t, _)| t as *const _ as usize).or_else(|| figure_below(app).map(|p| usize::MAX - p)),
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
@@ -819,10 +819,7 @@ fn word_px(c: &Ctx) -> f32 {
 /// Baseline that centres the word vertically in its area.
 fn word_baseline(f: &mut Fonts, c: &Ctx) -> f32 {
     let m = f.line(family(c.app.settings.font).face(Style::PLAIN), word_px(c));
-    let cy = match table_below(c.app) {
-        Some(_) => table_zones(c).0.cy(),
-        None => c.l.word.cy(),
-    };
+    let cy = if split_below(c.app) { table_zones(c).0.cy() } else { c.l.word.cy() };
     cy + (m.ascent - m.descent) / 2.0
 }
 
@@ -833,6 +830,21 @@ fn table_below(app: &App) -> Option<(&reader_core::book::Table, usize)> {
         return None;
     }
     app.reader.book.cell_at(app.reader.shown().start)
+}
+
+/// A reference to a figure ("see figure 11") on screen, in word or phrase
+/// mode: the picture word it points to (shown below the word).
+fn figure_below(app: &App) -> Option<usize> {
+    if app.screen != Screen::Reading || !matches!(app.settings.mode(), Mode::Word | Mode::Phrase) {
+        return None;
+    }
+    let b = &app.reader.book;
+    app.reader.shown().find_map(|i| b.figure_ref(i))
+}
+
+/// The stage is split (word on top, a table or a figure below).
+fn split_below(app: &App) -> bool {
+    table_below(app).is_some() || figure_below(app).is_some()
 }
 
 /// The stage split for a table: the word on top, the table filling the rest.
@@ -1074,7 +1086,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     }
     // Chapter titles: bold (from the markup) and the heading colour. No ornaments.
     cv.unclip();
-    if app.settings.guides && table_below(app).is_none() {
+    if app.settings.guides && !split_below(app) {
         // (Not over a table below the word: the table shows the place.)
         // From the reading size, not this word's: a long word drawn smaller
         // must not move the lines (the old ones would stay beside the new).
@@ -1088,6 +1100,14 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         let zone = table_zones(c).1;
         clear(cv, th, l, zone);
         draw_table_below(f, cv, c, zone, t, cell);
+        column = column.union(&zone);
+    } else if let Some(pic) = figure_below(app) {
+        // A reference to a figure: the figure below the word.
+        let zone = table_zones(c).1;
+        clear(cv, th, l, zone);
+        if let Some(img) = book.image_of(book.word(pic).unwrap()) {
+            cv.image(zone.inset(l.i(8.0), l.i(4.0)), img.w, img.h, &img.px);
+        }
         column = column.union(&zone);
     }
     let top = base - m.ascent - l.px(3.0);
@@ -1433,8 +1453,8 @@ fn draw_context(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Option<(bool, bool, 
     if on_picture {
         return None; // the picture covers this area
     }
-    if table_below(app).is_some() {
-        return None; // the table is the context here
+    if split_below(app) {
+        return None; // the table or figure below is the context here
     }
     // In a list the sentence starts after the column of markers (which
     // runs the whole side); elsewhere it takes the full width.
@@ -1672,7 +1692,7 @@ fn pane_98(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
 /// Whether the sentence under the word is on screen.
 fn context_shown(app: &App) -> bool {
     let on_picture = app.reader.shown().len() == 1 && app.reader.book.word(app.reader.pos()).is_some_and(|w| app.reader.book.is_image(w));
-    app.screen == Screen::Reading && !app.reader.is_playing() && !app.reader.book.is_empty() && app.settings.context && !on_picture && table_below(app).is_none()
+    app.screen == Screen::Reading && !app.reader.is_playing() && !app.reader.book.is_empty() && app.settings.context && !on_picture && !split_below(app)
 }
 
 /// The numbers (%, words, time left, chapter) in a 98 status row.
