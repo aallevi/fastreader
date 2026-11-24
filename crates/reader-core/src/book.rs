@@ -1528,9 +1528,8 @@ mod tests {
     fn the_lists_and_tables_tour_has_them_all() {
         let b = Book::parse(include_str!("../../../books/tour-lists-and-tables.md"), "f");
         assert_eq!(b.title, "Lists and tables");
-        assert_eq!(b.lists.len(), 3, "bulleted, numbered, lettered");
-        assert_eq!(b.lists.iter().map(|l| l.items.len()).collect::<Vec<_>>(), [5, 5, 3]);
-        assert_eq!((b.tables.len(), b.tables[0].rows, b.tables[0].cols, b.tables[0].header), (1, 4, 3, 1));
+        assert_eq!(b.lists.iter().map(|l| l.items.len()).collect::<Vec<_>>(), [5, 5, 3, 12, 15], "short and long, bulleted, numbered, lettered");
+        assert_eq!(b.tables.iter().map(|t| (t.rows, t.cols, t.header)).collect::<Vec<_>>(), [(4, 3, 1), (9, 4, 1), (13, 3, 1)]);
     }
 
     #[test]

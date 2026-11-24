@@ -41,4 +41,77 @@ A table is read row by row. Before each cell, a small grid shows where you are.
 | 1498 | The Last Supper | Milan |
 | 1486 | The Birth of Venus | Florence |
 
-After the table, the text goes on as usual. That is all there is to it.
+After the table, the text goes on as usual.
+
+## A longer list
+
+Things to pack for a week in the mountains:
+
+• a warm jacket
+• two pairs of walking boots
+• thick socks for the evenings
+• a map of the valley
+• a torch and spare batteries
+• a water bottle
+• sun cream and a hat
+• a small first aid kit
+• a notebook and a pencil
+• a book to read by the fire
+• a camera
+• something sweet for the long climbs
+
+## A longer recipe
+
+How to make a simple sourdough loaf:
+
+1. Feed the starter the night before.
+2. Mix the flour and the water.
+3. Let them rest for half an hour.
+4. Add the starter and the salt.
+5. Fold the dough every half hour, four times.
+6. Leave it to rise until it has grown by half.
+7. Turn it out gently onto the table.
+8. Shape it into a round loaf.
+9. Put it in a floured basket.
+10. Leave it in the fridge overnight.
+11. Heat the oven with a pot inside.
+12. Turn the loaf into the hot pot.
+13. Bake with the lid on for twenty minutes.
+14. Take the lid off and bake until dark.
+15. Let it cool before you cut it.
+
+## Fermented foods of the world
+
+A medium table, with four columns:
+
+| Food | Country | Made from | Microbes |
+|---|---|---|---|
+| Kimchi | Korea | Cabbage | Lactic bacteria |
+| Miso | Japan | Soybeans | Koji mould |
+| Sauerkraut | Germany | Cabbage | Lactic bacteria |
+| Kefir | Caucasus | Milk | Yeasts and bacteria |
+| Injera | Ethiopia | Teff flour | Wild yeasts |
+| Tempeh | Indonesia | Soybeans | Rhizopus mould |
+| Kombucha | China | Sweet tea | Yeasts and bacteria |
+| Natto | Japan | Soybeans | Bacillus subtilis |
+
+## Mushrooms and their growing times
+
+A longer table: the reader shows the rows around the one you are reading.
+
+| Mushroom | Substrate | Weeks to harvest |
+|---|---|---|
+| Oyster | Straw | 3 |
+| Shiitake | Oak logs | 26 |
+| Button | Compost | 5 |
+| Lion's mane | Sawdust | 6 |
+| Enoki | Sawdust | 8 |
+| King oyster | Sawdust | 7 |
+| Reishi | Hardwood | 12 |
+| Wood ear | Logs | 8 |
+| Paddy straw | Rice straw | 2 |
+| Maitake | Oak sawdust | 14 |
+| Nameko | Beech logs | 20 |
+| Pioppino | Poplar logs | 10 |
+
+That is all there is to it.
