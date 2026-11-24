@@ -819,6 +819,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reader-web"
+version = "0.1.0"
+dependencies = [
+ "reader-core",
+ "reader-ui",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -55,6 +55,7 @@ moves pixels, touches and bytes.
 
 ```sh
 cargo test --workspace                                   # logic, drawing, web, stress
+tools/build_demo.sh                                      # the reader in a web page (WebAssembly): docs/demo
 cargo run -p reader-sim --release                        # desktop window (sharp, 960x720) + web page on :8080
 cargo run -p reader-sim --release -- --device            # the reader's real 320x240 pixels
 cargo run -p reader-sim --release -- --lan               # let a phone on the same Wi-Fi open :8080 (allow it in the macOS firewall)

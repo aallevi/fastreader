@@ -1,0 +1,13 @@
+[package]
+name = "reader-web"
+description = "The reader in a web page: the same core and drawing, compiled to WebAssembly"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+reader-core.workspace = true
+reader-ui = { path = "../reader-ui" }

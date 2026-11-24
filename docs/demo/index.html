@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fast Reader: try it</title>
+<meta name="description" content="Try the Fast Reader in your browser: a one-word-at-a-time (RSVP) speed reader for a small ESP32-S3 touch screen. The same code as the device, running in the page.">
+<meta property="og:title" content="Fast Reader: a one-word-at-a-time speed reader">
+<meta property="og:description" content="RSVP speed reading on a 20 € ESP32-S3 touch screen: EPUB and PDF, pictures, four themes. Try it in the browser.">
+<meta property="og:image" content="../sonnet-18.gif">
+<style>
+  :root { --bg: #e9e6df; --ink: #1d1d1b; --dim: #6b6a65; --link: #1d4f91; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #17171a; --ink: #e8e6e1; --dim: #9a988f; --link: #8db7ff; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 12px 16px 20px; gap: 10px; }
+  header { width: 100%; max-width: 960px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  h1 { font-size: 18px; margin: 0; }
+  header p { margin: 0; color: var(--dim); }
+  #screen { touch-action: none; display: block; border-radius: 10px; box-shadow: 0 6px 30px rgba(0,0,0,.25); background: #000; }
+  .bar { width: 100%; max-width: 960px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--dim); font-size: 13px; }
+  .bar label { cursor: pointer; color: var(--link); }
+  .bar input { display: none; }
+  a { color: var(--link); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fast Reader</h1>
+  <p>One word at a time. This is the reader's own code, running in your browser.</p>
+</header>
+<canvas id="screen" aria-label="The reader's screen"></canvas>
+<div class="bar">
+  <span>Tap ▶ to read · ⚙ 📖 📚 Aa for the menus · keys <kbd>space</kbd> <kbd>←</kbd><kbd>→</kbd> <kbd>↑</kbd><kbd>↓</kbd> <kbd>M</kbd></span>
+  <label>Open a book (.md, .txt)<input type="file" id="file" accept=".md,.txt,text/plain"></label>
+  <span id="msg" role="status"></span>
+  <a href="https://github.com/aallevi/fastreader">Build one · source on GitHub</a>
+</div>
+<script>
+'use strict';
+const canvas = document.getElementById('screen');
+const msg = t => document.getElementById('msg').textContent = t;
+const KEY = 'fastreader-demo-settings';
+
+// Size: as large as fits, 4:3 (3:4 on a portrait phone), drawn at the
+// screen's own pixels so text is sharp.
+function size() {
+  const portrait = innerHeight > innerWidth * 1.1;
+  const [aw, ah] = portrait ? [3, 4] : [4, 3];
+  const maxW = Math.min(innerWidth - 32, 960), maxH = innerHeight - 140;
+  const k = Math.min(maxW / aw, maxH / ah);
+  const cssW = Math.max(240, Math.floor(aw * k)), cssH = Math.round(cssW * ah / aw);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // The reader's layout scales with the screen; keep the work reasonable.
+  let w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+  const cap = 1280 / Math.max(w, h);
+  if (cap < 1) { w = Math.round(w * cap); h = Math.round(h * cap); }
+  return {cssW, cssH, w, h};
+}
+
+(async () => {
+  let wasm;
+  try {
+    const r = await fetch('fastreader.wasm');
+    wasm = (await WebAssembly.instantiate(await r.arrayBuffer(), {})).instance.exports;
+  } catch (e) { msg('Could not start: ' + e.message); return; }
+  const put = bytes => { const p = wasm.inbox(bytes.length); new Uint8Array(wasm.memory.buffer, p, bytes.length).set(bytes); };
+
+  const s = size();
+  canvas.width = s.w; canvas.height = s.h;
+  canvas.style.width = s.cssW + 'px'; canvas.style.height = s.cssH + 'px';
+  let saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  put(saved ? Uint8Array.from(atob(saved), c => c.charCodeAt(0)) : new Uint8Array(0));
+  wasm.start(s.w, s.h);
+  for (const name of ['sample.md', 'sonnet-18.md']) {
+    try { put(new Uint8Array(await (await fetch('books/' + name)).arrayBuffer())); wasm.add_book(); } catch (e) {}
+  }
+
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(s.w, s.h);
+  const t0 = performance.now();
+  const now = () => performance.now() - t0;
+  // The finger: a quick click goes down and up between two frames, so the
+  // lift waits until the reader has seen the finger down at least once.
+  const fing = {x: 0, y: 0, down: false, lift: false, seen: false};
+  function loop() {
+    wasm.finger(fing.x, fing.y, fing.down ? 1 : 0);
+    if (fing.down) fing.seen = true;
+    if (wasm.frame(now())) {
+      image.data.set(new Uint8Array(wasm.memory.buffer, wasm.pixels(), s.w * s.h * 4));
+      ctx.putImageData(image, 0, 0);
+    }
+    const n = wasm.settings_len();
+    if (n) {
+      const b = new Uint8Array(wasm.memory.buffer, wasm.settings_ptr(), n);
+      try { localStorage.setItem(KEY, btoa(String.fromCharCode(...b))); } catch (e) {}
+    }
+    if (fing.lift && fing.seen) { fing.down = fing.lift = fing.seen = false; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // Mouse and touch as a finger.
+  const at = e => { const r = canvas.getBoundingClientRect(); return [Math.round((e.clientX - r.left) * s.w / r.width), Math.round((e.clientY - r.top) * s.h / r.height)]; };
+  canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); [fing.x, fing.y] = at(e); fing.down = true; fing.lift = fing.seen = false; e.preventDefault(); });
+  canvas.addEventListener('pointermove', e => { if (fing.down) [fing.x, fing.y] = at(e); });
+  for (const t of ['pointerup', 'pointercancel']) canvas.addEventListener(t, () => { fing.lift = true; });
+
+  const keys = {ArrowUp: 0, ArrowDown: 1, ArrowLeft: 2, ArrowRight: 3, ' ': 4, Enter: 4, m: 5, M: 5, Escape: 5};
+  addEventListener('keydown', e => { if (e.key in keys && !e.repeat) { wasm.key(keys[e.key], 1, now()); e.preventDefault(); } });
+  addEventListener('keyup', e => { if (e.key in keys) wasm.key(keys[e.key], 0, now()); });
+
+  document.getElementById('file').onchange = async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    let text = await f.text();
+    if (!text.startsWith('<!-- title:')) text = `<!-- title: ${f.name.replace(/\.[^.]*$/, '')} -->\n` + text;
+    put(new TextEncoder().encode(text));
+    wasm.add_book();
+    msg(`${f.name}: in the library (📚)`);
+  };
+  // A new size needs a new start: reload keeps the settings.
+  let was = innerWidth > innerHeight;
+  addEventListener('resize', () => { if ((innerWidth > innerHeight) !== was) location.reload(); });
+})();
+</script>
+</body>
+</html>
