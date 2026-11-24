@@ -90,13 +90,14 @@ In order, shipped as 0.2.x updates (details in [PLAN.md](PLAN.md)):
 
 1. **Battery** (mostly done): measurements, calibration, light sleep between words and a power switch wait for the battery.
 2. **Articles and RSS feeds** (next): web links sent from the phone, the Mac or the Share sheet become clean articles; feeds by link or OPML import, fetched by the reader itself over home Wi-Fi or a hotspot; ⏭ at the last word goes to the next unread article; everything on the SD card, with "Clear old articles".
-3. **Try it without the device** (next): the browser demo on GitHub Pages, EPUB and PDF in the demo, a one-click web flasher.
-4. **The reader speaks**: a small speaker or wired earbuds; MP3 audiobooks or speech made on the Mac, with the words following the voice.
-5. **Library, new look**: author, progress, last opened, audio or a second language.
-6. **Lists and tables, the rest**: page view indents and table grids; tables in the phone's PDF converter.
-7. **Read state**: unread, reading, finished.
-8. **Zotero and server library** over Tailscale.
-9. **Ideas for after**: bilingual books side by side, DRM-free Apple Books and Kindle imports, moving backgrounds, face-down to pause, a clock.
+3. **The Mac app as reader and readers manager**: pair your physical readers, see each one's space and books, sync your own library, articles and Zotero to each, places followed across readers.
+4. **Try it without the device** (next): the browser demo on GitHub Pages, EPUB and PDF in the demo, a one-click web flasher.
+5. **The reader speaks**: a small speaker or wired earbuds; MP3 audiobooks or speech made on the Mac, with the words following the voice.
+6. **Library, new look**: author, progress, last opened, audio or a second language.
+7. **Lists and tables, the rest**: page view indents and table grids; tables in the phone's PDF converter.
+8. **Read state**: unread, reading, finished.
+9. **Zotero and server library** over Tailscale.
+10. **Ideas for after**: bilingual books side by side, DRM-free Apple Books and Kindle imports, moving backgrounds, face-down to pause, a clock.
 
 ## The code, by size
 
