@@ -93,11 +93,13 @@ pub struct Ui {
     context_for: usize,
     /// The Description button on a picture, while it is shown.
     caption_button: Option<Rect>,
+    /// The break reminder's "Continue" button, while it shows.
+    continue_button: Option<Rect>,
 }
 
 impl Ui {
     pub fn new(w: u32, h: u32) -> Self {
-        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None, context_room: None, context_for: usize::MAX, caption_button: None }
+        Ui { layout: Layout::new(w, h), fonts: Fonts::new(), last: None, pages_key: None, word_box: Rect::default(), page_drawn: None, context_room: None, context_for: usize::MAX, caption_button: None, continue_button: None }
     }
 
     /// Forces a full repaint next time (after wake-up, rotation...).
@@ -108,6 +110,11 @@ impl Ui {
 
     /// The touch target under a point, in screen coordinates.
     pub fn hit(&self, app: &App, x: i32, y: i32) -> Option<Hit> {
+        if let (Some(b), true) = (self.continue_button, app.rest_warning) {
+            if b.inset(-4, -4).contains(x, y) {
+                return Some(Hit::Continue);
+            }
+        }
         if let (Some(b), Screen::Reading, false) = (self.caption_button, app.screen, app.reader.is_playing()) {
             if b.inset(-6, -6).contains(x, y) {
                 return Some(Hit::Caption);
@@ -349,6 +356,10 @@ impl Ui {
                 }
             }
         }
+        self.continue_button = matches!(view.warning, Some((Sleepy::Break, ..))).then(|| {
+            let ctx = Ctx { th, l: &l, app, now };
+            warning_buttons(&ctx)[1]
+        });
         self.last = Some(view);
         damage
     }
@@ -1083,9 +1094,10 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, why: Sleepy, n:
     // The text flush right; the hat on a starry night filling the left,
     // dithered into the window's grey just before the text;
     // OK under the text's right end, with some air above it.
-    let lines = match why {
-        Sleepy::Battery => [String::from("Battery almost empty."), format!("Sleeping in {n} s,"), String::from("your place is kept."), String::from("Plug in to read on.")],
-        Sleepy::Break => [String::from("Time for a pause:"), format!("{} of reading.", minutes(n)), String::from("Rest your eyes;"), String::from("your place is kept.")],
+    // (Short lines, like an old dungeon game's dialog box.)
+    let lines: Vec<String> = match why {
+        Sleepy::Battery => [String::from("Battery almost empty."), format!("Sleeping in {n} s,"), String::from("your place is kept."), String::from("Plug in to read on.")].into(),
+        Sleepy::Break => [String::from("Time for a pause?"), format!("You've done {}", minutes(n)), String::from("of reading."), String::from("Your place is kept,"), String::from("rest your eyes.")].into(),
     };
     let right = r.right() as f32 - l.px(10.0);
     let widths: Vec<f32> = lines.iter().map(|t| f.measure(th.ui.0, l.px(11.5), t)).collect();
@@ -1093,9 +1105,8 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, why: Sleepy, n:
     // narrow screen, wherever the longest line needs it).
     let solid_w = night_solid(l, r.h);
     let text_left = (r.x + l.i(3.0) + solid_w + l.i(NIGHT_FADE) + l.i(3.0)).min((right - widths.iter().copied().fold(0.0, f32::max)) as i32);
-    let line = l.px(14.5);
+    let line = if lines.len() > 4 { l.px(13.5) } else { l.px(14.5) };
     let lines_top = bar.bottom() as f32 + l.px(10.0);
-    let ok = Rect::new(right as i32 - l.i(54.0), r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
     let fade = l.i(NIGHT_FADE);
     let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_left - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
     // The hat in the middle of the night's solid black (left of the
@@ -1136,17 +1147,38 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, why: Sleepy, n:
     for (n, t) in lines.iter().enumerate() {
         f.draw(cv, th.ui.0, l.px(11.5), t, right - widths[n], lines_top + l.px(11.0) + n as f32 * line, ink);
     }
-    // OK (any touch closes the warning).
-    if win98 {
-        cv.fill(ok, panel);
-        bevel(cv, ok, false);
-    } else {
-        cv.rrect(ok, th.radius.min(l.px(6.0)), Paint::Solid(th.mark));
+    // Under the text's right end: "OK" (the battery: any touch closes
+    // it), or "OK…" and "Continue" (the break: stay paused, or read on).
+    let [ok, go_on] = warning_buttons(c);
+    let buttons: &[(Rect, &str)] = match why {
+        Sleepy::Battery => &[(go_on, "OK")],
+        Sleepy::Break => &[(ok, "OK…"), (go_on, "Continue")],
+    };
+    for &(b, label) in buttons {
+        if win98 {
+            cv.fill(b, panel);
+            bevel(cv, b, false);
+        } else {
+            cv.rrect(b, th.radius.min(l.px(6.0)), Paint::Solid(th.mark));
+        }
+        let ink = if win98 { BLACK } else { th.mark_text };
+        let tw = f.measure(th.ui.0, l.px(11.5), label);
+        f.draw(cv, th.ui.0, l.px(11.5), label, b.cx() - tw / 2.0, b.cy() + l.px(4.0), ink);
     }
-    let ok_ink = if win98 { BLACK } else { th.mark_text };
-    let tw = f.measure(th.ui.0, l.px(11.5), "OK");
-    f.draw(cv, th.ui.0, l.px(11.5), "OK", ok.cx() - tw / 2.0, ok.cy() + l.px(4.0), ok_ink);
     Rect::new(r.x, r.y, r.w + l.i(5.0), r.h + l.i(5.0))
+}
+
+/// The warning's buttons, under the text's right end: [left, right] (the
+/// battery's single "OK" is the right one; the break's "OK…", "Continue").
+fn warning_buttons(c: &Ctx) -> [Rect; 2] {
+    let l = c.l;
+    let r = warning_rect(c);
+    let r = Rect::new(r.x, r.y, r.w - l.i(5.0), r.h - l.i(5.0));
+    let right = r.right() - l.i(10.0);
+    let (y, h) = (r.bottom() - l.i(26.0), l.i(17.0));
+    let go_on = Rect::new(right - l.i(66.0), y, l.i(66.0), h);
+    let ok = Rect::new(go_on.x - l.i(8.0) - l.i(46.0), y, l.i(46.0), h);
+    [ok, go_on]
 }
 
 fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {

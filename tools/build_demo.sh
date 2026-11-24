@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 cargo build --release -p reader-web --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/reader_web.wasm docs/demo/fastreader.wasm
-cp books/sample.md books/sonnet-18.md books/tour-lists-and-tables.md docs/demo/books/
+cp books/through-the-looking-glass.md books/sample.md books/sonnet-18.md books/tour-lists-and-tables.md docs/demo/books/
 # The phone page's EPUB/PDF converters, and pdf.js for PDFs.
 sed -n '/---- converters begin/,/---- converters end/p' web/index.html > docs/demo/convert.js
 mkdir -p docs/demo/pdfjs

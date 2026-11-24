@@ -35,6 +35,11 @@ Fonts (SIL Open Font License 1.1, subsets): Atkinson Hyperlegible (Braille
 Institute), Literata (TypeTogether), IBM Plex (IBM), Crimson Pro, Courier
 Prime, Gelasio. See [assets/fonts/LICENSE.md](assets/fonts/LICENSE.md).
 
+## Books in the demo
+
+- *Through the Looking-Glass, and What Alice Found There* by Lewis Carroll (1871), with John Tenniel's illustrations: both in the public domain. The text and images come from the [Standard Ebooks](https://standardebooks.org/ebooks/lewis-carroll/through-the-looking-glass/john-tenniel) edition, whose own work is dedicated to the public domain (CC0); converted with `tools/convert.py` (its imprint and colophon pages left out).
+- Shakespeare's Sonnet 18 (1609), public domain.
+
 ## Bibliography
 
 Every entry below was checked against its source on 2026-11-23: articles

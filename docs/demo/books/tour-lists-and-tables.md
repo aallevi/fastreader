@@ -60,6 +60,19 @@ Things to pack for a week in the mountains:
 • a camera
 • something sweet for the long climbs
 
+## A nested list
+
+Lists can have lists inside them (each level steps to the right):
+
+• fruit
+  • apples (the green ones)
+  • pears
+    • conference
+    • williams
+• bread
+  • sourdough
+• cheese
+
 ## A longer recipe
 
 How to make a simple sourdough loaf:

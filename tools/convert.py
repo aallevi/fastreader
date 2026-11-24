@@ -68,6 +68,9 @@ class XhtmlText(HTMLParser):
         self.marker = ""
         self.table = None  # (rows, header?) while inside a <table>
         self.cell = None
+        # Verse (a poem or song in a <blockquote>): its lines, kept as lines.
+        self.verse = None
+        self.verse_depth = 0
 
     def style(self):
         b = any(t in ("b", "strong") or c & self.bold_classes for t, c in self.stack)
@@ -77,6 +80,10 @@ class XhtmlText(HTMLParser):
     def flush(self):
         text = re.sub(r"\s+", " ", "".join(self.line)).strip()
         self.line = []
+        if self.verse is not None:
+            if text:
+                self.verse.append(text)
+            return
         if self.cell is not None:
             # Inside a table cell: the text belongs to the cell.
             if text:
@@ -107,6 +114,12 @@ class XhtmlText(HTMLParser):
         if tag in self.SKIP:
             self.skip += tag not in ("br", "img")
             return
+        if tag == "blockquote" and self.verse is None:
+            kind = (dict(attrs).get("class") or "") + " " + (dict(attrs).get("epub:type") or "")
+            if re.search(r"poem|song|verse|hymn|lyric", kind):
+                self.flush()
+                self.verse = []
+                self.verse_depth = len(self.stack)
         if tag in ("ul", "ol"):
             self.flush()
             start = dict(attrs).get("start") or "1"
@@ -150,6 +163,11 @@ class XhtmlText(HTMLParser):
         if tag in self.SKIP:
             self.skip = max(0, self.skip - (tag not in ("br", "img")))
             return
+        if tag == "blockquote" and self.verse is not None and len(self.stack) - 1 <= self.verse_depth:
+            self.flush()
+            lines, self.verse = self.verse, None
+            if lines:
+                self.out.append("{verse}\n" + "\n".join(lines) + "\n{/verse}")
         if tag in ("ul", "ol") and self.lists:
             self.flush()
             self.lists.pop()
@@ -215,7 +233,13 @@ class Images:
         if pm.n - pm.alpha != 3:
             pm = pymupdf.Pixmap(pymupdf.csRGB, pm)
         if pm.alpha:
-            pm = pymupdf.Pixmap(pm, 0)
+            # See-through pictures (line drawings on transparent) go on white
+            # paper; dropping the alpha alone would leave them black.
+            import numpy as np
+            a = np.frombuffer(pm.samples, np.uint8).reshape(pm.height, pm.stride)[:, : pm.width * pm.n].reshape(pm.height, pm.width, pm.n).astype(np.uint16)
+            rgb, al = a[:, :, :3], a[:, :, 3:4]
+            flat = ((rgb * al + 255 * (255 - al)) // 255).astype(np.uint8)
+            pm = pymupdf.Pixmap(pymupdf.csRGB, pm.width, pm.height, flat.tobytes(), False)
         scale = min(IMG_W / pm.width, IMG_H / pm.height, 1.0)
         w, h = max(1, int(pm.width * scale)), max(1, int(pm.height * scale))
         if self.used + w * h * 2 > self.budget:
@@ -260,7 +284,9 @@ class Images:
 def css_classes(css: str):
     bold, italic = set(), set()
     for sel, body in re.findall(r"([^{}]+)\{([^}]*)\}", css):
-        names = set(re.findall(r"\.([\w-]+)", sel))
+        # Only plain ".name" or "tag.name" selectors: a class styled in one
+        # particular spot ("h2 + p.first-child") isn't bold everywhere.
+        names = {m.group(1) for part in sel.split(",") if (m := re.fullmatch(r"\s*[\w-]*\.([\w-]+)\s*", part))}
         if re.search(r"font-weight\s*:\s*(bold|[6-9]00)", body):
             bold |= names
         if re.search(r"font-style\s*:\s*(italic|oblique)", body):
@@ -298,8 +324,13 @@ def epub(path: Path, images: Images):
                 return images.add_bytes(z.read(name))
             except KeyError:
                 return ""
+        source = z.read(doc).decode("utf-8", "replace")
+        # A publisher's pages, not the book: imprint, colophon, copyright,
+        # list of illustrations, title pages (marked so in EPUB 3).
+        if re.search(r'<(?:body|section|nav)[^>]*epub:type="[^"]*\b(imprint|colophon|copyright-page|loi|halftitlepage|titlepage)\b', source):
+            continue
         p = XhtmlText(bold, italic, picture)
-        p.feed(z.read(doc).decode("utf-8", "replace"))
+        p.feed(source)
         p.flush()
         parts.extend(p.out)
     return title, "\n\n".join(parts)
@@ -529,11 +560,12 @@ def main():
     ap.add_argument("files", nargs="+", type=Path)
     ap.add_argument("--out", type=Path, default=Path("books/private"))
     ap.add_argument("--sd", type=Path, help="write straight to the reader's SD card (its mount point, e.g. /Volumes/FASTREADER), every picture kept")
+    ap.add_argument("--all-pictures", action="store_true", help="keep every picture (for the SD card) when writing to --out")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     for f in a.files:
         ext = f.suffix.lower()
-        images = Images(CARD_BUDGET if a.sd else IMG_BUDGET)
+        images = Images(CARD_BUDGET if a.sd or a.all_pictures else IMG_BUDGET)
         if ext == ".epub":
             title, text = epub(f, images)
         elif ext == ".pdf":
@@ -549,6 +581,10 @@ def main():
             return p
         # (Leading spaces kept: they are a nested list item's level.)
         text = "\n\n".join(promote(p.strip("\n").rstrip()) for p in text.split("\n\n"))
+        # An opening bracket or quote before bold/italic markers goes inside
+        # them ("(**check**)" -> "**(check**)"): the reader reads markers at
+        # a word's start only.
+        text = re.sub(r"([(\[“‘\"'«‹]+)(\*+)(?=\S)", r"\2\1", text)
         # Collapse 3+ blank lines; first line carries the title for the library.
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         if a.sd:

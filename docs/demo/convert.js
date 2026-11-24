@@ -22,6 +22,12 @@ async function unzip(buf) {
 }
 function toMarkup(doc, docPath) {
   const out = [];
+  // A publisher's pages, not the book (imprint, colophon, copyright, list of
+  // illustrations, title pages; marked so in EPUB 3): skipped.
+  const typed = [...doc.querySelectorAll('body,section,nav')].map(e => e.getAttribute('epub:type') || '').join(' ');
+  if (/\b(imprint|colophon|copyright-page|loi|halftitlepage|titlepage)\b/.test(typed)) return '';
+  // Verse (a poem or song in a <blockquote>): kept line by line.
+  const isVerse = el => el.localName === 'blockquote' && /poem|song|verse|hymn|lyric/.test((el.getAttribute('class') || '') + ' ' + (el.getAttribute('epub:type') || ''));
   const dir = docPath.includes('/') ? docPath.replace(/[^/]*$/, '') : '';
   const resolve = src => {
     const parts = [];
@@ -39,6 +45,7 @@ function toMarkup(doc, docPath) {
         t += (c.textContent.match(/^\s/) ? ' ' : '') + words.map(w => m + w + m).join(' ') + (c.textContent.match(/\s$/) ? ' ' : '');
       } else if (c.nodeType === 1) {
         const tag = c.localName;
+        if (tag === 'br') { t += '\n'; continue; }
         if (['script', 'style', 'sup', 'img', 'svg'].includes(tag)) continue;
         t += walk(c, b || tag === 'b' || tag === 'strong', i || tag === 'i' || tag === 'em' || tag === 'cite');
       }
@@ -74,6 +81,12 @@ function toMarkup(doc, docPath) {
       if (src) out.push('\u0000IMG:' + resolve(src) + '\u0000');
       continue;
     }
+    if (el.parentElement && el.parentElement.closest('blockquote') && isVerse(el.parentElement.closest('blockquote'))) continue;
+    if (isVerse(el)) {
+      const lines = walk(el, false, false).split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      if (lines.length) out.push('{verse}\n' + lines.join('\n') + '\n{/verse}');
+      continue;
+    }
     if (el.closest('p,li,blockquote') && el.closest('p,li,blockquote') !== el) continue;
     const text = walk(el, false, false).replace(/\s+/g, ' ').trim();
     if (!text) continue;
@@ -81,14 +94,20 @@ function toMarkup(doc, docPath) {
     let marker = '';
     if (el.localName === 'li') {
       const list = el.parentElement;
+      // Nested lists: two spaces of indentation per level.
+      let depth = 0;
+      for (let p = list && list.parentElement; p; p = p.parentElement) if (p.localName === 'ul' || p.localName === 'ol') depth++;
+      const pad = '  '.repeat(depth);
       if (list && list.localName === 'ol') {
         const items = [...list.children].filter(c => c.localName === 'li');
-        marker = (parseInt(list.getAttribute('start') || '1', 10) + items.indexOf(el)) + '. ';
-      } else marker = '• ';
+        marker = pad + (parseInt(list.getAttribute('start') || '1', 10) + items.indexOf(el)) + '. ';
+      } else marker = pad + '• ';
     }
     out.push(/^h[1-4]$/.test(el.localName) ? '# ' + text.replace(/\*/g, '') : marker + text);
   }
-  return out.join('\n\n');
+  // An opening bracket or quote before bold/italic markers goes inside them
+  // ("(**check**)" -> "**(check**)"): the reader reads markers at a word's start.
+  return out.join('\n\n').replace(/([(\[“‘"'«‹]+)(\*+)(?=\S)/g, '$2$1');
 }
 // Pictures go after the text: "\n\0FRIMG1", count, then width, height and
 // RGB565 pixels per picture, scaled to fit the reader's stage (300×190).

@@ -554,6 +554,8 @@ pub enum Hit {
     /// The small ▲▼ beside the sentence under the word (while paused);
     /// `room`: whether there is more of the sentence that way.
     ContextScroll { down: bool, room: bool },
+    /// "Continue" on the break reminder: close it and read on.
+    Continue,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -958,9 +960,15 @@ impl App {
         self.last_activity = now;
         self.undim();
         if self.low_warning || self.rest_warning {
-            // Any key closes the battery warning or the break reminder.
+            // Any key closes the battery warning or the break reminder;
+            // ▶ on the break reminder is its "Continue": read on.
+            let go_on = self.rest_warning && action_for(self.screen, key) == Action::TogglePlay;
             self.low_warning = false;
             self.rest_warning = false;
+            if go_on {
+                self.reader.play(now);
+                return Feedback::ok(Msg::Playing);
+            }
             return Feedback::ok(Msg::Shown);
         }
         if self.notice.take().is_some() {
@@ -1137,9 +1145,15 @@ impl App {
         self.last_activity = now;
         self.undim();
         if self.low_warning || self.rest_warning {
-            // A touch closes the battery warning or the break reminder.
+            // A touch closes the battery warning or the break reminder
+            // ("OK…", or anywhere); "Continue" also reads on.
+            let go_on = self.rest_warning && hit == Hit::Continue;
             self.low_warning = false;
             self.rest_warning = false;
+            if go_on {
+                self.reader.play(now);
+                return Feedback::ok(Msg::Playing);
+            }
             return Feedback::ok(Msg::Shown);
         }
         if self.notice.is_some() && !matches!(hit, Hit::Key(_)) {
@@ -2325,8 +2339,15 @@ mod tests {
         assert!(a.rest_warning && !a.reader.is_playing(), "20 minutes of reading: paused, reminded");
         assert!(a.toast().is_none_or(|x| x.feedback.msg != Msg::Finished), "no \"Finished\" for it");
         assert_eq!(a.break_minutes(), 20);
-        a.tap(Hit::Key(Key::Select), t + 1_000);
-        assert!(!a.rest_warning, "a touch closes it");
+        a.tap(Hit::Key(Key::Menu), t + 1_000);
+        assert!(!a.rest_warning && !a.reader.is_playing(), "\"OK…\" (or a touch anywhere) closes it, still paused");
+        a.rest_warning = true;
+        a.tap(Hit::Continue, t + 2_000);
+        assert!(!a.rest_warning && a.reader.is_playing(), "\"Continue\" reads on");
+        a.handle(Select, t + 3_000);
+        a.rest_warning = true;
+        a.handle(Select, t + 4_000);
+        assert!(a.reader.is_playing(), "▶ is \"Continue\" too");
     }
 
     #[test]

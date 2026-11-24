@@ -101,11 +101,15 @@ function size(choice) {
   try { saved = localStorage.getItem(KEY); } catch (e) {}
   put(saved ? Uint8Array.from(atob(saved), c => c.charCodeAt(0)) : new Uint8Array(0));
   wasm.start(s.w, s.h);
-  for (const [name, title] of [['sample.md', 'The Quiet Machine'], ['sonnet-18.md', 'Sonnet 18'], ['tour-lists-and-tables.md', 'Lists and tables']]) {
+  // The demo's own shelf. Books are read as bytes: some carry their
+  // pictures after the text.
+  for (const [name, title] of [['through-the-looking-glass.md', 'Through the Looking-Glass'], ['sample.md', 'The Quiet Machine'], ['sonnet-18.md', 'Sonnet 18'], ['tour-lists-and-tables.md', 'Lists and tables']]) {
     try {
-      let text = await (await fetch('books/' + name)).text();
-      if (!text.startsWith('<!-- title:')) text = `<!-- title: ${title} -->\n` + text;
-      put(new TextEncoder().encode(text));
+      let bytes = new Uint8Array(await (await fetch('books/' + name)).arrayBuffer());
+      if (!new TextDecoder().decode(bytes.subarray(0, 12)).startsWith('<!-- title:')) {
+        bytes = new Uint8Array([...new TextEncoder().encode(`<!-- title: ${title} -->\n`), ...bytes]);
+      }
+      put(bytes);
       wasm.add_book(0);
     } catch (e) {}
   }
