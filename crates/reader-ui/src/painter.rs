@@ -837,9 +837,21 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     let mode = app.settings.mode();
     let shown = app.reader.shown();
     if mode != Mode::Ticker && shown.len() == 1 && book.is_image(book.word(shown.start).unwrap()) {
-        // A picture: it gets the whole stage (word and context areas).
-        let area = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
-        clear(cv, th, l, area);
+        // A picture: it gets the whole stage (word and context areas),
+        // except, inside a list, the margin where the list's markers stay.
+        let stage = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
+        clear(cv, th, l, stage);
+        let in_list = book.list_at(shown.start);
+        let area = match in_list {
+            Some((list, _)) => {
+                let margin = list_margin(l, list) - (stage.x - p.x);
+                Rect::new(stage.x + margin, stage.y, stage.w - margin, stage.h)
+            }
+            None => stage,
+        };
+        if let Some((list, item)) = in_list {
+            draw_list_column(f, cv, c, list, item);
+        }
         match book.image_of(book.word(shown.start).unwrap()) {
             Some(img) => {
                 cv.image(area.inset(l.i(10.0), l.i(4.0)), img.w, img.h, &img.px);
@@ -855,7 +867,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
                 f.draw(cv, th.ui.0, l.px(13.0), &msg, area.cx() - w / 2.0, area.cy(), th.dim);
             }
         }
-        return area;
+        return stage;
     }
     if app.grid_flash(c.now) {
         if let Some((t, cell)) = book.cell_at(shown.start) {
@@ -979,6 +991,12 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     Rect::new((x0 - pad) as i32, top as i32, (total + 2.0 * pad) as i32 + 1, (m.ascent + m.descent + l.px(6.0)) as i32 + 1)
         .intersect(&l.word.intersect(&p))
         .union(&column)
+}
+
+/// How far from the page's left edge a list's column of markers reaches:
+/// guide lines and pictures start after it.
+fn list_margin(l: &Layout, list: &reader_core::book::List) -> i32 {
+    l.i(if list.numbered() { 34.0 } else { 24.0 })
 }
 
 /// The highlight for the current list item and table cell: a clear amber,
@@ -1156,7 +1174,7 @@ fn draw_guides(cv: &mut Canvas, c: &Ctx, base: f32, ascent: f32, descent: f32) {
     let bottom = (base + descent + gap) as i32;
     // In a list, the lines start after its column of markers.
     let x = match app.reader.book.list_at(app.reader.pos()) {
-        Some((list, _)) => p.x + l.i(if list.numbered() { 34.0 } else { 24.0 }),
+        Some((list, _)) => p.x + list_margin(l, list),
         None => p.x + l.i(6.0),
     };
     let w = p.right() - l.i(6.0) - x;

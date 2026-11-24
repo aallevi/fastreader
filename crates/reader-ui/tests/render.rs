@@ -625,6 +625,13 @@ fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
                 }
                 frames += 1;
                 grids += a.grid_flash(t) as u32;
+                if mode == 0 && a.reader.on_picture() {
+                    // The picture in the list: its markers stay in the margin,
+                    // and the picture keeps clear of them.
+                    let l = ui.layout;
+                    let amber = (l.word.y..l.word.bottom()).any(|y| (0..30).any(|x| matches!(cv.pixel(x, y), 0xF5C542 | 0xB8860B)));
+                    assert!(amber, "theme {theme}: the current item's marker shows beside the picture");
+                }
                 fresh.invalidate();
                 fresh.paint(&mut a, t, &mut whole);
                 let diff = (0..240).flat_map(|y| (0..320).map(move |x| (x, y))).find(|&(x, y)| cv.pixel(x, y) != whole.pixel(x, y));
