@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::book::Book;
 use crate::input::Key;
 use crate::reader::Reader;
-use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, FIGURE_NAMES, SLEEP_MIN, SLEEP_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
+use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, FIGURE_NAMES, SLEEP_MIN, SLEEP_NAMES, BREAK_MIN, BREAK_NAMES, BREAK_REST_MIN, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
 /// Dim when idle: after this long with nothing happening.
 pub const DIM_MS: u64 = 60_000;
@@ -67,6 +67,7 @@ pub enum MenuItem {
     Tables,
     Figures,
     SleepAfter,
+    BreakAfter,
     AutoDim,
     Card,
     ProgressBar,
@@ -118,6 +119,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Info,
             MenuItem::Sleep,
             MenuItem::SleepAfter,
+            MenuItem::BreakAfter,
         ],
     ),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
@@ -224,7 +226,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 44;
+pub const MENU_LEN: u8 = 45;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -260,6 +262,7 @@ impl MenuItem {
             MenuItem::Tables => "Tables",
             MenuItem::Figures => "Figure references",
             MenuItem::SleepAfter => "Sleep timer",
+            MenuItem::BreakAfter => "Break reminder",
             MenuItem::AutoDim => "Dim when idle",
             MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
@@ -304,6 +307,7 @@ impl MenuItem {
             MenuItem::Tables => PickKind::Tables,
             MenuItem::Figures => PickKind::Figures,
             MenuItem::SleepAfter => PickKind::SleepAfter,
+            MenuItem::BreakAfter => PickKind::BreakAfter,
             MenuItem::AutoDim => PickKind::AutoDim,
             MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
@@ -338,6 +342,7 @@ pub enum PickKind {
     Tables,
     Figures,
     SleepAfter,
+    BreakAfter,
     AutoDim,
     Card,
     ProgressBar,
@@ -372,6 +377,7 @@ impl PickKind {
             PickKind::Tables => "Tables",
             PickKind::Figures => "Figure references",
             PickKind::SleepAfter => "Sleep timer",
+            PickKind::BreakAfter => "Break reminder",
             PickKind::AutoDim => "Dim when idle",
             PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
@@ -820,6 +826,12 @@ pub struct App {
     pub low_sleep_at: Option<u64>,
     /// Its warning is on screen (a touch or key closes it; the countdown goes on).
     pub low_warning: bool,
+    /// Reading time since the last break (ms), for the break reminder.
+    pub read_ms: u64,
+    /// When reading last stopped (a long enough pause is a break).
+    paused_at: Option<u64>,
+    /// The break reminder is on screen ("Sleepy time": a touch or key closes it).
+    pub rest_warning: bool,
     /// Last key, touch or playing moment: the break is counted from here.
     last_input: u64,
     /// Last key, touch or moment of reading (menus open don't count): the
@@ -889,6 +901,9 @@ impl App {
             low_since: None,
             low_sleep_at: None,
             low_warning: false,
+            read_ms: 0,
+            paused_at: None,
+            rest_warning: false,
             last_input: 0,
             last_activity: 0,
             welcome_minute: None,
@@ -942,8 +957,10 @@ impl App {
         self.last_input = now;
         self.last_activity = now;
         self.undim();
-        if self.low_warning {
-            self.low_warning = false; // any key closes the battery warning
+        if self.low_warning || self.rest_warning {
+            // Any key closes the battery warning or the break reminder.
+            self.low_warning = false;
+            self.rest_warning = false;
             return Feedback::ok(Msg::Shown);
         }
         if self.notice.take().is_some() {
@@ -1039,6 +1056,46 @@ impl App {
     }
 
     /// The sleep timer in ms (None: never).
+    /// The break reminder: reading time adds up (a pause long enough is a
+    /// break and starts again); when it reaches the chosen time, reading
+    /// pauses and "Sleepy time" suggests a break.
+    fn count_reading(&mut self, was_playing: bool, since: u64, now: u64) -> bool {
+        if was_playing {
+            match self.paused_at.take() {
+                // Reading again after a pause: was it a real break? (The
+                // time since the last tick was mostly the pause: not counted.)
+                Some(at) => {
+                    if now.saturating_sub(at) >= BREAK_REST_MIN as u64 * 60_000 {
+                        self.read_ms = 0;
+                    }
+                }
+                None => self.read_ms += since,
+            }
+        } else if self.reader.is_playing() {
+            // Just started: was the pause before a real break?
+            if self.paused_at.take().is_some_and(|at| now.saturating_sub(at) >= BREAK_REST_MIN as u64 * 60_000) {
+                self.read_ms = 0;
+            }
+        } else if self.paused_at.is_none() {
+            self.paused_at = Some(now);
+        }
+        let limit = BREAK_MIN[(self.settings.break_after as usize).min(BREAK_MIN.len() - 1)] as u64 * 60_000;
+        if limit > 0 && self.read_ms >= limit && self.reader.is_playing() {
+            self.reader.pause();
+            self.read_ms = 0;
+            self.paused_at = Some(now);
+            self.rest_warning = true;
+            self.save();
+            return true;
+        }
+        false
+    }
+
+    /// Minutes read before the break reminder came up (for its text).
+    pub fn break_minutes(&self) -> u16 {
+        BREAK_MIN[(self.settings.break_after as usize).min(BREAK_MIN.len() - 1)]
+    }
+
     fn sleep_after(&self) -> Option<u64> {
         let min = SLEEP_MIN[(self.settings.sleep_after as usize).min(SLEEP_MIN.len() - 1)];
         (min > 0).then_some(min as u64 * 60_000)
@@ -1079,8 +1136,10 @@ impl App {
         self.last_input = now;
         self.last_activity = now;
         self.undim();
-        if self.low_warning {
-            self.low_warning = false; // a touch closes the battery warning
+        if self.low_warning || self.rest_warning {
+            // A touch closes the battery warning or the break reminder.
+            self.low_warning = false;
+            self.rest_warning = false;
             return Feedback::ok(Msg::Shown);
         }
         if self.notice.is_some() && !matches!(hit, Hit::Key(_)) {
@@ -1209,9 +1268,11 @@ impl App {
 
     /// Advances playback and expires toasts/flashes. True if anything visible changed.
     pub fn tick(&mut self, now: u64) -> bool {
+        let since = now.saturating_sub(self.last_tick);
         self.last_tick = now;
         let was_playing = self.reader.is_playing();
         let mut changed = self.reader.tick(now);
+        changed |= self.count_reading(was_playing, since, now);
         if was_playing || self.screen.is_overlay() {
             self.last_input = now; // reading, or in a menu, is not a break
         }
@@ -1310,8 +1371,9 @@ impl App {
         if changed {
             self.welcome_minute = self.welcome.map(|w| self.last_tick.saturating_sub(w.since) / 60_000);
         }
-        // Stopped by itself (not by the battery warning): the end, or a picture held.
-        if was_playing && !self.reader.is_playing() && !battery_paused {
+        // Stopped by itself (not by the battery warning or the break
+        // reminder): the end, or a picture held.
+        if was_playing && !self.reader.is_playing() && !battery_paused && !self.rest_warning {
             self.serial = self.serial.wrapping_add(1);
             let msg = if self.reader.held_on_picture() { Msg::PictureHeld } else { Msg::Finished };
             self.toast = Some(Toast { feedback: Feedback::ok(msg), until: now + TOAST_MS * 2, serial: self.serial });
@@ -1362,6 +1424,10 @@ impl App {
     /// Nearly empty: the z's float out of the battery (a step every 0.6 s),
     /// the warning counts down each second, and then the reader sleeps.
     fn battery_due(&self) -> Option<u64> {
+        if self.rest_warning {
+            // The break reminder's hat turning.
+            return Some((self.last_tick / HAT_FRAME_MS + 1) * HAT_FRAME_MS);
+        }
         if !self.battery.is_some_and(|b| b.sleepy()) {
             return None;
         }
@@ -1904,6 +1970,7 @@ impl App {
             PickKind::Skip => self.settings.skip = sel,
             PickKind::Welcome => self.settings.welcome = sel,
             PickKind::SleepAfter => self.settings.sleep_after = sel,
+            PickKind::BreakAfter => self.settings.break_after = sel,
             PickKind::Pictures => {
                 self.settings.pacing.picture = sel;
                 self.reader.set_pacing(self.settings.pacing);
@@ -1954,6 +2021,7 @@ impl App {
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
             PickKind::SleepAfter => SLEEP_NAMES.len() as u8,
+            PickKind::BreakAfter => BREAK_NAMES.len() as u8,
             PickKind::Pace => 2,
             PickKind::Mode => MODE_NAMES.len() as u8,
             PickKind::Spacing => SPACING_NAMES.len() as u8,
@@ -1979,6 +2047,7 @@ impl App {
             PickKind::Pictures => PICTURE_NAMES[i.min(PICTURE_NAMES.len() - 1)].into(),
             PickKind::Welcome => WELCOME_NAMES[i.min(WELCOME_NAMES.len() - 1)].into(),
             PickKind::SleepAfter => SLEEP_NAMES[i.min(SLEEP_NAMES.len() - 1)].into(),
+            PickKind::BreakAfter => BREAK_NAMES[i.min(BREAK_NAMES.len() - 1)].into(),
             PickKind::Position => POSITION_NAMES[i].into(),
             PickKind::Card => ["Keep everything", "Erase and format"][i.min(1)].into(),
             PickKind::ProgressBar | PickKind::BookInfo => ["Shown", "Hidden"][i.min(1)].into(),
@@ -2063,6 +2132,7 @@ impl App {
             PickKind::Pictures => self.settings.pacing.picture.min(PICTURE_NAMES.len() as u8 - 1),
             PickKind::Welcome => self.settings.welcome.min(WELCOME_NAMES.len() as u8 - 1),
             PickKind::SleepAfter => self.settings.sleep_after.min(SLEEP_NAMES.len() as u8 - 1),
+            PickKind::BreakAfter => self.settings.break_after.min(BREAK_NAMES.len() as u8 - 1),
             PickKind::Position => self.settings.position,
             PickKind::Card => 0,
             PickKind::ProgressBar => (!self.settings.progress_bar) as u8,
@@ -2222,6 +2292,44 @@ mod tests {
     }
 
     #[test]
+    fn break_reminder_after_reading_time_and_a_real_pause_resets_it() {
+        let mut a = app();
+        a.settings.sleep_after = 0;
+        a.settings.auto_dim = false;
+        a.settings.break_after = 1; // 20 minutes
+        let play = |a: &mut App, from: u64, ms: u64| {
+            if !a.reader.is_playing() {
+                a.handle(Select, from);
+            }
+            let mut t = from;
+            while t < from + ms && !a.rest_warning {
+                t += 100;
+                if !a.reader.is_playing() && a.reader.pos() + 1 >= a.reader.book.len() {
+                    a.reader.seek(0, t); // a short book: keep reading it
+                    a.handle(Select, t);
+                }
+                a.tick(t);
+            }
+            t
+        };
+        // 15 minutes, a 10-minute pause (a real break), 15 more: no reminder.
+        let t = play(&mut a, 0, 15 * 60_000);
+        a.handle(Select, t);
+        a.tick(t + 1);
+        let t = play(&mut a, t + 10 * 60_000, 15 * 60_000);
+        assert!(!a.rest_warning, "a pause of 5 minutes or more is a break");
+        // A short pause doesn't count: 15 + 1 + 6 minutes reaches 20.
+        a.handle(Select, t);
+        a.tick(t + 1);
+        let t = play(&mut a, t + 60_000, 10 * 60_000);
+        assert!(a.rest_warning && !a.reader.is_playing(), "20 minutes of reading: paused, reminded");
+        assert!(a.toast().is_none_or(|x| x.feedback.msg != Msg::Finished), "no \"Finished\" for it");
+        assert_eq!(a.break_minutes(), 20);
+        a.tap(Hit::Key(Key::Select), t + 1_000);
+        assert!(!a.rest_warning, "a touch closes it");
+    }
+
+    #[test]
     fn menu_len_matches_groups() {
         assert_eq!(menu_items().count(), MENU_LEN as usize);
     }
@@ -2318,7 +2426,7 @@ mod tests {
         let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
         assert_eq!(
             level(&a),
-            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter],
+            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter, MenuItem::BreakAfter],
             "Settings: Theme and Web view first, then its headings"
         );
         a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };

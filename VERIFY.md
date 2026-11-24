@@ -68,6 +68,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Web view on, no phone page open for 10 minutes (and not reading): it switches off by itself (the reader restarts, "Web view off (unused)").
 - [ ] Reading still smooth at 160 MHz (selftest: word frames under ~15 ms).
 
+## Break reminder
+- [ ] Settings > Break reminder: after the chosen reading time, reading pauses and "Sleepy time" says "Time for a pause: 30 min of reading. Rest your eyes; your place is kept." with the hat turning; a touch closes it. A pause of 5 minutes or more counts as a break (the count starts again).
+
 ## Battery (needs the battery)
 - [ ] Title bar: the level in battery brackets "(82%)", green / orange / red.
 - [ ] Plugged in: only a bolt "(⚡)" in the level's colour; at 100% the number again.

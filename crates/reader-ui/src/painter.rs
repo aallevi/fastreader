@@ -63,8 +63,9 @@ struct View {
     welcome: Option<Option<u64>>,
     /// A notice (a new version) over the reading screen.
     notice: bool,
-    /// The battery warning: the seconds it counts down, and its hat's frame.
-    warning: Option<(u64, usize)>,
+    /// "Sleepy time" on screen: which (battery or break), the number in its
+    /// text (seconds left, or minutes read), and its hat's frame.
+    warning: Option<(Sleepy, u64, usize)>,
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
@@ -334,17 +335,17 @@ impl Ui {
         // The battery warning sits on top of everything: drawn again after
         // anything changed, and as it counts down.
         if !app.screen.is_overlay() {
-            if let Some((secs, frame)) = view.warning {
+            if let Some((why, secs, frame)) = view.warning {
                 let ctx = Ctx { th, l: &l, app, now };
                 let spot = warning_rect(&ctx);
                 let was = old.as_ref().and_then(|o| o.warning);
                 if full || damage.iter().any(|d| !d.intersect(&spot).is_empty()) {
                     // New, or something under it was redrawn: the whole window.
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Window));
-                } else if was.map(|w| w.0) != Some(secs) {
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Inside));
-                } else if was.map(|w| w.1) != Some(frame) {
-                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, frame, Redraw::Hat));
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, why, secs, frame, Redraw::Window));
+                } else if was.map(|w| (w.0, w.1)) != Some((why, secs)) {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, why, secs, frame, Redraw::Inside));
+                } else if was.map(|w| w.2) != Some(frame) {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, why, secs, frame, Redraw::Hat));
                 }
             }
         }
@@ -919,8 +920,19 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
 }
 
 /// The battery warning's seconds left, while it shows.
-fn battery_warning(app: &App, now: u64) -> Option<(u64, usize)> {
-    app.low_sleep_at.filter(|_| app.low_warning).map(|at| (at.saturating_sub(now).div_ceil(1000), hat_frame(now)))
+fn battery_warning(app: &App, now: u64) -> Option<(Sleepy, u64, usize)> {
+    if app.rest_warning {
+        return Some((Sleepy::Break, app.break_minutes() as u64, hat_frame(now)));
+    }
+    app.low_sleep_at.filter(|_| app.low_warning).map(|at| (Sleepy::Battery, at.saturating_sub(now).div_ceil(1000), hat_frame(now)))
+}
+
+/// Why "Sleepy time" shows: the battery is nearly empty, or it's time for
+/// a break from reading.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sleepy {
+    Battery,
+    Break,
 }
 
 /// The sleepy nightcap (tools/make_hat.py): frames of colour roles.
@@ -1037,6 +1049,15 @@ fn warning_rect(c: &Ctx) -> Rect {
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
+/// "20 min", "1 h", "1 h 30 min".
+fn minutes(n: u64) -> String {
+    match (n / 60, n % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 /// How much of the warning to draw again.
 #[derive(Clone, Copy, PartialEq)]
 enum Redraw {
@@ -1046,9 +1067,11 @@ enum Redraw {
 }
 
 /// "Sleepy time": a small window over the reading screen, in the theme's
-/// window style (Windows 98: grey, bevelled), a nightcap turning beside
-/// the seconds left. A touch or key closes it; the countdown goes on.
-fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, frame: usize, redraw: Redraw) -> Rect {
+/// window style (Windows 98: grey, bevelled), a nightcap turning beside the
+/// text: the battery's seconds left, or a break after so long reading. A
+/// touch or key closes it (the battery's countdown goes on).
+#[allow(clippy::too_many_arguments)]
+fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, why: Sleepy, n: u64, frame: usize, redraw: Redraw) -> Rect {
     let (th, l) = (c.th, c.l);
     let r = warning_rect(c);
     let r = Rect::new(r.x, r.y, r.w - l.i(5.0), r.h - l.i(5.0));
@@ -1060,7 +1083,10 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     // The text flush right; the hat on a starry night filling the left,
     // dithered into the window's grey just before the text;
     // OK under the text's right end, with some air above it.
-    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
+    let lines = match why {
+        Sleepy::Battery => [String::from("Battery almost empty."), format!("Sleeping in {n} s,"), String::from("your place is kept."), String::from("Plug in to read on.")],
+        Sleepy::Break => [String::from("Time for a pause:"), format!("{} of reading.", minutes(n)), String::from("Rest your eyes;"), String::from("your place is kept.")],
+    };
     let right = r.right() as f32 - l.px(10.0);
     let widths: Vec<f32> = lines.iter().map(|t| f.measure(th.ui.0, l.px(11.5), t)).collect();
     // The text's left edge: after the night and its dithered edge (or, on a

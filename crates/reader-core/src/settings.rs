@@ -69,6 +69,13 @@ pub struct Pacing {
 pub const SLEEP_MIN: [u16; 6] = [0, 2, 5, 10, 20, 30];
 pub const SLEEP_NAMES: [&str; 6] = ["Never", "After 2 minutes", "After 5 minutes", "After 10 minutes", "After 20 minutes", "After 30 minutes"];
 
+/// Break reminder: after this many minutes of reading (0 = never), the
+/// reader pauses and suggests a break ("Sleepy time"). A pause of
+/// BREAK_REST_MIN or more counts as a break and starts the count again.
+pub const BREAK_MIN: [u16; 6] = [0, 20, 30, 45, 60, 90];
+pub const BREAK_NAMES: [&str; 6] = ["Never", "After 20 minutes", "After 30 minutes", "After 45 minutes", "After 1 hour", "After 1½ hours"];
+pub const BREAK_REST_MIN: u16 = 5;
+
 pub const TABLE_NAMES: [&str; 2] = ["Below the word", "Flash before each cell"];
 pub const FIGURE_NAMES: [&str; 2] = ["Word stays, figure below", "Word moves up, bigger figure"];
 
@@ -123,6 +130,8 @@ pub struct Settings {
     pub menu_colours: bool,
     /// The sleep timer: index into SLEEP_MIN.
     pub sleep_after: u8,
+    /// The break reminder: index into BREAK_MIN.
+    pub break_after: u8,
     /// The backlight dims after a minute with nothing happening.
     pub auto_dim: bool,
     /// With the recognition point: split words too long to fit in two
@@ -173,6 +182,7 @@ impl Default for Settings {
             welcome: 4,
             menu_colours: false,
             sleep_after: 3,
+            break_after: 0,
             auto_dim: true,
             captions: false,
             progress_bar: true,
@@ -202,7 +212,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 39] = [
+pub const FIELDS: [(&str, u16, u16); 40] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -237,6 +247,7 @@ pub const FIELDS: [(&str, u16, u16); 39] = [
     ("welcome", 0, 4),
     ("menu_colours", 0, 1),
     ("sleep_after", 0, 5),
+    ("break_after", 0, 5),
     ("auto_dim", 0, 1),
     ("captions", 0, 1),
     ("progress_bar", 0, 1),
@@ -278,6 +289,7 @@ impl Settings {
             "welcome" => self.welcome as u16,
             "menu_colours" => self.menu_colours as u16,
             "sleep_after" => self.sleep_after as u16,
+            "break_after" => self.break_after as u16,
             "auto_dim" => self.auto_dim as u16,
             "captions" => self.captions as u16,
             "progress_bar" => self.progress_bar as u16,
@@ -328,6 +340,7 @@ impl Settings {
             "welcome" => self.welcome = v as u8,
             "menu_colours" => self.menu_colours = v != 0,
             "sleep_after" => self.sleep_after = b,
+            "break_after" => self.break_after = b,
             "auto_dim" => self.auto_dim = v != 0,
             "captions" => self.captions = v != 0,
             "progress_bar" => self.progress_bar = v != 0,
