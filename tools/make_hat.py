@@ -1,5 +1,5 @@
 """Draws the sleepy nightcap for the "Sleepy time" warning: 40x40 pixel art,
-48 frames of it turning twice on its tilted, slowly tumbling axis, z's floating
+25 frames of it turning once in 5 s on its tilted, slowly tumbling axis, z's floating
 off its tip and turning with it, its dark inside showing as it tips
 towards you. Written as colour roles (not colours) so each theme paints it
 in its own palette: assets/sprites/hat.bin = b"FRHAT1", frames, w, h, then
@@ -10,8 +10,11 @@ frames*w*h role bytes (0 = see-through).
 import math, sys
 from pathlib import Path
 
-N, F = 40, 48
-TURN = 24  # frames per turn (the z's take two turns to come and go)
+N, F = 40, 25
+TURN = 25  # frames per turn: one turn = one loop of the z's
+FRAME_MS = 200  # (as HAT_FRAME_MS in reader-core: 25 frames = the 5 s z loop)
+# The z's come in on the same beat as the battery's (Z_STEPS in reader-core).
+Z_STEPS = [0, 1400, 2300, 3200]
 # Roles (the painter maps them to a theme's colours).
 CLEAR, A, A_HI, A_LO, B, B_LO, FUR, FUR_LO, POM, POM_LO, INSIDE, OUT, ZED = range(13)
 
@@ -121,7 +124,7 @@ def frame(k):
                 px[y][x] = OUT
     # z's: they turn with the hat (squeezed as they turn edge-on, mirrored
     # when seen from behind), hidden where the hat is in front of them.
-    shown = (k // 12) % 4
+    shown = sum(1 for s in Z_STEPS if k * FRAME_MS >= s) - 1
     for i in range(shown):
         (p, size) = ZS[i]
         X, Y, Zd = rot(p, spin, tilt, roll)
