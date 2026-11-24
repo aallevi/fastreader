@@ -74,7 +74,7 @@
 </style>
 </head>
 <body>
-<header><h1 id="title">Fast Reader</h1><span class="stat" id="wpm"></span><span class="stat" id="pct"></span><button id="gear" aria-controls="settings">Settings</button></header>
+<header><h1 id="title">Fast Reader</h1><span class="stat" id="wpm"></span><span class="stat" id="pct"></span><button id="speak" aria-pressed="false" title="The phone reads aloud; the reader shows each word as it is spoken">🔊 Read aloud</button><button id="gear" aria-controls="settings">Settings</button></header>
 <aside id="settings" aria-label="Reader settings"><button class="toggle close" id="closeSet">Close</button>
   <h3>Add a book</h3>
   <div class="row"><label for="file">EPUB, PDF, Markdown or text<small>Converted here on the phone: chapters, bold/italic and pictures kept</small></label></div>
@@ -179,6 +179,72 @@ $('book').addEventListener('click', e => {
   const s = e.target.closest('span[id^=w]');
   if (s) fetch('/seek?w=' + s.id.slice(1), {method: 'POST'});
 });
+// ---- read aloud: the phone's own voice reads from the reader's place, one
+// sentence at a time, and the reader shows each word as it is spoken (where
+// the browser doesn't say when a word starts, it steps at the voice's pace).
+let speaking = false;
+$('speak').onclick = () => speaking ? stopSpeaking() : startSpeaking();
+function stopSpeaking() {
+  speaking = false;
+  speechSynthesis.cancel();
+  $('speak').textContent = '🔊 Read aloud';
+  $('speak').setAttribute('aria-pressed', 'false');
+}
+async function startSpeaking() {
+  if (!('speechSynthesis' in window)) { alert('This browser cannot read aloud.'); return; }
+  const s = await (await fetch('/state')).json();
+  if (s.playing) await fetch('/key?k=select', {method: 'POST'}); // the voice sets the pace now
+  speaking = true;
+  $('speak').textContent = '■ Stop reading';
+  $('speak').setAttribute('aria-pressed', 'true');
+  speakFrom(s.pos, s.wpm);
+}
+function guessLang(text) {
+  const t = ' ' + text.toLowerCase() + ' ';
+  const it = (t.match(/ (il|che|di|la|non|per|una|con|sono|della) /g) || []).length;
+  const en = (t.match(/ (the|and|of|to|is|that|with|for|was|you) /g) || []).length;
+  return it > en ? 'it-IT' : en > it ? 'en-US' : (navigator.language || 'en-US');
+}
+async function speakFrom(i, wpm) {
+  if (!speaking) return;
+  if (!word(i)) await loadAround(i);
+  // The sentence from word i (at most 60 words).
+  const ids = [], starts = [];
+  let text = '';
+  for (let k = i; ids.length < 60; k++) {
+    const el = word(k);
+    if (!el) break;
+    starts.push(text.length);
+    ids.push(k);
+    text += el.textContent + ' ';
+    if (ids.length >= 3 && /[.!?…][”"'»)\]]*$/.test(el.textContent)) break;
+  }
+  if (!ids.length) { stopSpeaking(); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = guessLang(text);
+  u.rate = Math.min(2, Math.max(0.6, wpm / 180));
+  let shown = -1, timed = 0, heard = false;
+  const show = n => { if (n !== shown && n < ids.length) { shown = n; fetch('/seek?w=' + ids[n], {method: 'POST'}); } };
+  u.onboundary = e => {
+    if (e.name && e.name !== 'word') return;
+    heard = true;
+    let n = 0;
+    while (n + 1 < starts.length && starts[n + 1] <= e.charIndex) n++;
+    show(n);
+  };
+  u.onstart = () => {
+    show(0);
+    // No word events after a moment: step through at the voice's pace.
+    const per = 60000 / (170 * u.rate);
+    const step = () => { if (!heard && speaking) { show(shown + 1); timed = setTimeout(step, per); } };
+    timed = setTimeout(step, per);
+  };
+  u.onend = () => {
+    clearTimeout(timed);
+    if (speaking) speakFrom(ids[ids.length - 1] + 1, wpm);
+  };
+  speechSynthesis.speak(u);
+}
 document.querySelectorAll('nav button').forEach(b =>
   b.addEventListener('click', () => fetch('/key?k=' + b.dataset.k, {method: 'POST'})));
 

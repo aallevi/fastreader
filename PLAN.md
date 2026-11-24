@@ -21,7 +21,7 @@
 2. **The reader speaks** (audio add-on). The board has an ES8311 codec and an FM8002E amplifier (1.5 W into 8 Ω) wired to a mono speaker connector (JP3); there is **no headphone jack**, and the ESP32-S3 has no Bluetooth Classic, so no Bluetooth earbuds.
    - Speaker: a small 8 Ω speaker on JP3; the amplifier is enabled by pulling its SHUTDOWN pin low.
    - Earbuds, wired: a 3.5 mm jack on the speaker output through a resistor attenuator (mono in both ears; the output is bridged, so neither wire goes to ground), or a small I2S DAC board with its own jack if free pins allow.
-   - Earbuds, wireless: through the phone page (the phone reads aloud, Bluetooth to the earbuds).
+   - Earbuds, wireless: through the phone page. **Done:** 🔊 Read aloud on the phone page: the phone's voice reads sentence by sentence from the reader's place, at the reader's speed, and the reader shows each word as it is spoken.
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
 3. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
 4. **Lists and tables.** Today a bulleted or numbered list is read as running text and a table as a jumble of cells.
