@@ -71,7 +71,7 @@ fn main() {
         .map(|(_, a)| a)
         .collect();
     if positional.first().map(|s| s.as_str()) == Some("record") {
-        // record <book> <dir> [--theme N] [--wpm N] [--blue] [--demo]: frames for a GIF.
+        // record <book> <dir> [--theme N] [--wpm N] [--picture N] [--blue] [--demo]: frames for a GIF.
         let book = PathBuf::from(positional.get(1).expect("record <book> <dir>").as_str());
         let dir = PathBuf::from(positional.get(2).expect("record <book> <dir>").as_str());
         let mut s = Settings::default();
@@ -80,6 +80,9 @@ fn main() {
         }
         if let Some(w) = arg(&args, "--wpm").and_then(|v| v.parse().ok()) {
             s.wpm = w;
+        }
+        if let Some(v) = arg(&args, "--picture").and_then(|v| v.parse().ok()) {
+            s.pacing.picture = v; // index into the picture times
         }
         s.blue_blocks = args.iter().any(|a| a == "--blue");
         walkthrough::record(&book, &dir, size, s, args.iter().any(|a| a == "--demo"));

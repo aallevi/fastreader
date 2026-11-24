@@ -441,8 +441,8 @@ pub fn run(dir: &Path, (w, h): (u32, u32)) {
 /// long it stayed (ms), so a GIF can keep the real rhythm.
 pub fn record(book: &Path, dir: &Path, (w, h): (u32, u32), settings: Settings, demo: bool) {
     std::fs::create_dir_all(dir).unwrap();
-    let text = std::fs::read_to_string(book).expect("book");
-    let mut app = App::new(Book::parse(&text, "book"), CATALOG, settings);
+    let bytes = std::fs::read(book).expect("book");
+    let mut app = App::new(Book::from_bytes(&bytes, "book"), CATALOG, settings);
     app.battery = Some(Battery { percent: 82, charging: false, millivolts: 4010 });
     let mut ui = Ui::new(w, h);
     let mut cv = Canvas::new(w, h);

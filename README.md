@@ -15,6 +15,10 @@ EPUB, PDF, Markdown, text · [Mac app](https://github.com/aallevi/fastreader/rel
 
 *Shakespeare's Sonnet 18 at 350 words a minute in the Windows 98 theme: near the end it pauses, jumps one sentence back, steps two words forward, bookmarks that word (the folded corner), and reads on to the end. Recorded from the simulator (`reader-sim record … --demo`).*
 
+![Every feature in one short book](docs/everything.gif)
+
+*The whole book, not just its words: a picture in the stream, the same figure coming back below the word when the text refers to it, a list with a nested list, a numbered list, a table read cell by cell, and a catalogue with each picture beside its item (`books/showcase.md`, made by `tools/make_showcase.py`).*
+
 ## What it does
 
 ### Reading
