@@ -762,6 +762,20 @@ fn bar_label_colours(th: &Theme) -> (Rgb, Rgb) {
 
 // ------------------------------------------------------------------ header
 
+/// The battery level's colour: green above half, orange down to a fifth,
+/// red below; deeper shades on the light grey 98 bar.
+fn battery_colour(th: &Theme, percent: u8) -> Rgb {
+    let light_bar = th.chrome == Chrome::Win98;
+    match (percent, light_bar) {
+        (51.., false) => 0x5BD46A,
+        (20..=50, false) => 0xFFAE34,
+        (_, false) => 0xFF5C50,
+        (51.., true) => 0x0E7A22,
+        (20..=50, true) => 0xB45A00,
+        (_, true) => 0xC0180C,
+    }
+}
+
 fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let (th, l, app) = (c.th, c.l, c.app);
     let r = l.header;
@@ -805,11 +819,13 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
             cv.rrect_stroke(br, l.px(2.0).min(th.radius.max(0.5)), title_c);
             cv.fill(Rect::new(br.right(), (r.cy() - l.px(2.0)) as i32, l.i(2.0), l.i(4.0)), title_c);
             let inner = ((br.w - 4) as f32 * b.percent.min(100) as f32 / 100.0) as i32;
-            let low = b.percent <= 15 && !b.charging;
-            cv.fill(Rect::new(br.x + 2, br.y + 2, inner, br.h - 4), if low { 0xE0453A } else { title_c });
+            // The level in colour: green, orange, red (bright enough for
+            // every theme's title bar).
+            let level = battery_colour(th, b.percent);
+            cv.fill(Rect::new(br.x + 2, br.y + 2, inner, br.h - 4), level);
             let txt = format!("{}%", b.percent);
-            right = bx - l.px(5.0) - f.measure(th.ui.0, small, &txt);
-            f.draw(cv, th.ui.0, small, &txt, right, base, title_c);
+            right = bx - l.px(5.0) - f.measure(th.ui.1, small, &txt);
+            f.draw(cv, th.ui.1, small, &txt, right, base, level);
         }
         None => {
             let txt = up(th, "USB");
