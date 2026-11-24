@@ -643,6 +643,49 @@ fn draw_icon_button(cv: &mut Canvas, th: &Theme, l: &Layout, b: &Button, hot: bo
     icons::draw(cv, b.icon, b.rect.cx() + off, b.rect.cy() + off, size, c);
 }
 
+/// The four menu buttons' own colours (Menu buttons: Colourful), like a
+/// child's toy: red Settings, blue Book, green Library, yellow Text.
+const MENU_COLOURS: [Rgb; 4] = [0xE0362C, 0x1E7FD8, 0x2FA24A, 0xF2A900];
+
+/// One of the four title-bar menu buttons. `open`: its menu is on screen,
+/// so it stays pressed in (amber, the colour of "current" everywhere, or
+/// its own colour darker when colourful); `hot`: a finger is on it.
+fn draw_menu_button(cv: &mut Canvas, c: &Ctx, b: &Button, k: usize, open: bool, hot: bool) {
+    let (th, l) = (c.th, c.l);
+    let colourful = c.app.settings.menu_colours;
+    if !colourful && !open {
+        draw_icon_button(cv, th, l, b, hot);
+        return;
+    }
+    let pressed = open || hot;
+    let (face, ink) = if colourful {
+        let base = MENU_COLOURS[k];
+        (if pressed { mix(base, BLACK, 70) } else { base }, WHITE)
+    } else {
+        // The same amber as the current list item and table cell.
+        marker_colour(th)
+    };
+    let r = b.rect;
+    if th.chrome == Chrome::Win98 {
+        cv.fill(r, face);
+        bevel(cv, r, pressed);
+    } else {
+        let rad = th.radius.max(3.0);
+        cv.rrect(r, rad, Paint::Solid(face));
+        if pressed {
+            // Pressed in: a shadow along the top inside edge.
+            cv.fill(Rect::new(r.x + 2, r.y + 1, r.w - 4, 1), mix(face, BLACK, 90));
+            cv.fill(Rect::new(r.x + 2, r.y + 2, r.w - 4, 1), mix(face, BLACK, 40));
+        } else {
+            // Raised: light on top.
+            cv.fill(Rect::new(r.x + 3, r.y + 1, r.w - 6, 1), mix(face, WHITE, 90));
+        }
+        cv.rrect_stroke(r, rad, mix(face, BLACK, 110));
+    }
+    let off = if pressed { l.px(1.0) } else { 0.0 };
+    icons::draw(cv, b.icon, r.cx() + off, r.cy() + off, l.px(17.0), ink);
+}
+
 fn bar_bg(cv: &mut Canvas, th: &Theme, r: Rect, top_edge: bool) {
     match th.chrome {
         Chrome::Vista => {
@@ -700,8 +743,8 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     };
     // The four menu buttons, top-left: Settings, Book, Library, Text.
     let hb = header_buttons(l);
-    for b in &hb {
-        draw_icon_button(cv, th, l, b, app.lit(c.now) == Some(b.hit));
+    for (k, b) in hb.iter().enumerate() {
+        draw_menu_button(cv, c, b, k, false, app.lit(c.now) == Some(b.hit));
     }
     let x = hb[3].rect.right() as f32 + l.px(8.0);
     let base = r.cy() + l.px(4.5);
@@ -1901,17 +1944,22 @@ fn draw_list(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         Chrome::Vista | Chrome::Win98 => WHITE,
         _ => th.bar_text,
     };
+    // The reading screen's four menu buttons stay; the open one is pressed.
+    let hb = header_buttons(l);
+    let open = app.active_group();
+    for (k, b) in hb.iter().enumerate() {
+        draw_menu_button(cv, c, b, k, open == Some(k as u8), lit == Some(b.hit));
+    }
     for b in [&g.back, &g.close] {
         draw_icon_button(cv, th, l, b, lit == Some(b.hit));
     }
+    // The list's name between them; a message takes its place for a moment.
+    let gap = Rect::new(hb[3].rect.right() + l.i(6.0), g.header.y, g.back.rect.x - l.i(6.0) - hb[3].rect.right() - l.i(6.0), g.header.h);
     if app.toast().is_some() {
-        // In lists the message takes the title's place, so it never covers a row.
-        let area = Rect::new(g.back.rect.right(), g.header.y, g.close.rect.x - g.back.rect.right(), g.header.h);
-        draw_toast(f, cv, c, area);
+        draw_toast(f, cv, c, gap);
     } else {
         let title = up(th, &g.title);
-        let tw = f.measure(th.ui.1, l.px(13.0), &title);
-        f.draw(cv, th.ui.1, l.px(13.0), &title, g.header.cx() - tw / 2.0, g.header.cy() + l.px(4.5), title_c);
+        f.draw_fit(cv, th.ui.1, l.px(13.0), &title, gap.x as f32, g.header.cy() + l.px(4.5), gap.w as f32, title_c);
     }
 
     let sel = match app.screen {

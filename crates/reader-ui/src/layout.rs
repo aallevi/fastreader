@@ -323,20 +323,24 @@ pub fn book_title_row(app: &App, resume: u8) -> RowKind {
 }
 
 pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
-    let header = Rect::new(0, 0, l.screen.w, l.i(30.0));
-    let hb = l.i(24.0);
-    let back = Button {
-        rect: Rect::new(l.i(4.0), header.cy() as i32 - hb / 2, l.i(36.0), hb),
-        hit_rect: Rect::new(0, 0, l.i(64.0), header.h),
-        hit: Hit::Key(Key::Left),
-        icon: Icon::Back,
-        primary: false,
-    };
+    // The reading screen's title bar stays: the four menu buttons on the
+    // left (the open one pressed), then the list's name, then ‹ and ✕ on
+    // the right, a little apart.
+    let header = l.header;
+    let hb = header.h - l.i(6.0);
+    let bw = l.i(32.0);
     let close = Button {
-        rect: Rect::new(header.right() - l.i(4.0) - l.i(36.0), header.cy() as i32 - hb / 2, l.i(36.0), hb),
-        hit_rect: Rect::new(header.right() - l.i(64.0), 0, l.i(64.0), header.h),
+        rect: Rect::new(header.right() - l.i(4.0) - bw, header.y + l.i(3.0), bw, hb),
+        hit_rect: Rect::new(header.right() - l.i(4.0) - bw - l.i(5.0), header.y, bw + l.i(9.0), header.h + l.i(12.0)),
         hit: Hit::Key(Key::Menu),
         icon: Icon::Close,
+        primary: false,
+    };
+    let back = Button {
+        rect: Rect::new(close.rect.x - l.i(10.0) - bw, close.rect.y, bw, hb),
+        hit_rect: Rect::new(close.rect.x - l.i(10.0) - bw - l.i(5.0), header.y, bw + l.i(10.0), header.h + l.i(12.0)),
+        hit: Hit::Key(Key::Left),
+        icon: Icon::Back,
         primary: false,
     };
     let (title, all, sel) = entries(app);
@@ -408,8 +412,10 @@ pub fn list_geom(app: &App, l: &Layout) -> ListGeom {
 pub fn hit_test(app: &App, l: &Layout, x: i32, y: i32) -> Option<Hit> {
     if app.screen.is_overlay() {
         let g = list_geom(app, l);
-        for b in [&g.back, &g.close] {
-            if b.hit_rect.contains(x, y) {
+        // In a list the title-bar buttons answer only on the bar itself:
+        // just below it is the first row.
+        for b in header_buttons(l).iter().chain([&g.back, &g.close]) {
+            if b.hit_rect.intersect(&g.header).contains(x, y) {
                 return Some(b.hit);
             }
         }

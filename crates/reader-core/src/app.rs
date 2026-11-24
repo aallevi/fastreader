@@ -58,6 +58,7 @@ pub enum MenuItem {
     LongWords,
     Guides,
     Welcome,
+    MenuColours,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -99,6 +100,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::ProgressBar,
             MenuItem::ProgressBlocks,
             MenuItem::BookInfo,
+            MenuItem::MenuColours,
             MenuItem::SubConnections,
             MenuItem::Wifi,
             MenuItem::HomeWifi,
@@ -133,7 +135,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
 /// Submenus: a heading and the items it opens (they follow it in MENU).
 pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
     (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome]),
-    (MenuItem::SubScreen, &[MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo]),
+    (MenuItem::SubScreen, &[MenuItem::Theme, MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours]),
     (MenuItem::SubConnections, &[MenuItem::Wifi, MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
     (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures]),
@@ -209,7 +211,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 39;
+pub const MENU_LEN: u8 = 40;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -241,6 +243,7 @@ impl MenuItem {
             MenuItem::Align => "Text alignment",
             MenuItem::Brackets => "Brackets",
             MenuItem::Pictures => "Picture time",
+            MenuItem::MenuColours => "Menu buttons",
             MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
@@ -280,6 +283,7 @@ impl MenuItem {
             MenuItem::Bookmarks => PickKind::Bookmark,
             MenuItem::Brackets => PickKind::Brackets,
             MenuItem::Pictures => PickKind::Pictures,
+            MenuItem::MenuColours => PickKind::MenuColours,
             MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
@@ -309,6 +313,7 @@ pub enum PickKind {
     LongWords,
     Guides,
     Welcome,
+    MenuColours,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -338,6 +343,7 @@ impl PickKind {
             PickKind::Bookmark => "Bookmarks",
             PickKind::Brackets => "Brackets",
             PickKind::Pictures => "Picture time",
+            PickKind::MenuColours => "Menu buttons",
             PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
@@ -367,7 +373,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours)
     }
 }
 
@@ -845,6 +851,18 @@ impl App {
         }
     }
 
+    /// Which of the four title-bar menus is open (0 Settings, 1 Book,
+    /// 2 Library, 3 Text), if one is.
+    pub fn active_group(&self) -> Option<u8> {
+        match self.screen {
+            Screen::Menu { sel } => Some(menu_group(sel).0 as u8),
+            Screen::Pick { kind: PickKind::Book, .. } => Some(2),
+            Screen::Pick { kind, .. } => Some(menu_group(menu_index(item_for(kind))).0 as u8),
+            Screen::Info => Some(0),
+            _ => None,
+        }
+    }
+
     /// After a break the reader is coming back: show the "welcome back"
     /// card (if that setting is on). `away` is how long it was off or
     /// asleep, when the platform knows. Call at start-up.
@@ -927,8 +945,14 @@ impl App {
                 }
                 self.feedback(fb, now)
             }
-            (Hit::Group(g), Screen::Reading | Screen::Page | Screen::Line { .. }) => {
-                self.resume_after_menu = self.reader.is_playing() || matches!(self.screen, Screen::Line { resume: true });
+            (Hit::Group(g), s) if s.is_overlay() && self.active_group() == Some(g) => {
+                // The open menu's own button: it stays pressed; nothing to do.
+                Feedback::ok(Msg::Shown)
+            }
+            (Hit::Group(g), Screen::Reading | Screen::Page | Screen::Line { .. } | Screen::Menu { .. } | Screen::Pick { .. } | Screen::Info) => {
+                if !self.screen.is_overlay() {
+                    self.resume_after_menu = self.reader.is_playing() || matches!(self.screen, Screen::Line { resume: true });
+                }
                 self.reader.pause();
                 let sel = menu_start(g as usize);
                 let fb = if menu_item(sel) == MenuItem::Library {
@@ -1646,7 +1670,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
@@ -1680,6 +1704,7 @@ impl App {
             PickKind::LongWords => ["Keep whole", "Split in two if too long"][i.min(1)].into(),
             PickKind::ProgressBlocks => ["Grey", "Blue (classic 98)"][i.min(1)].into(),
             PickKind::Guides => ["Off", "On"][i.min(1)].into(),
+            PickKind::MenuColours => ["Theme", "Colourful"][i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
                     Some(Place::Card) => "  · SD card",
@@ -1721,6 +1746,7 @@ impl App {
             MenuItem::Rotate => (if self.settings.flipped { "180°" } else { "0°" }).into(),
             MenuItem::Wifi => (if self.settings.wifi { "On" } else { "Off" }).into(),
             MenuItem::Guides => (if self.settings.guides { "On" } else { "Off" }).into(),
+            MenuItem::MenuColours => (if self.settings.menu_colours { "Colourful" } else { "Theme" }).into(),
             MenuItem::LongWords => (if self.settings.split_long { "Split if too long" } else { "Keep whole" }).into(),
             MenuItem::ProgressBlocks => (if self.settings.blue_blocks { "Blue" } else { "Grey" }).into(),
             MenuItem::ProgressBar => (if self.settings.progress_bar { "Shown" } else { "Hidden" }).into(),
@@ -1755,6 +1781,7 @@ impl App {
             PickKind::LongWords => self.settings.split_long as u8,
             PickKind::ProgressBlocks => self.settings.blue_blocks as u8,
             PickKind::Guides => self.settings.guides as u8,
+            PickKind::MenuColours => self.settings.menu_colours as u8,
             PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
             PickKind::DeleteConfirm => 0,
@@ -1792,6 +1819,7 @@ impl App {
             PickKind::ProgressBar => self.settings.progress_bar = v == 0,
             PickKind::ProgressBlocks => self.settings.blue_blocks = v == 1,
             PickKind::Guides => self.settings.guides = v == 1,
+            PickKind::MenuColours => self.settings.menu_colours = v == 1,
             PickKind::LongWords => {
                 self.settings.split_long = v == 1;
                 self.apply_mode();
@@ -1957,14 +1985,14 @@ mod tests {
         a.handle(Select, 0);
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) }, "a heading opens its submenu");
         assert_eq!(menu_level_title(menu_index(MenuItem::Theme)), "Screen");
-        assert_eq!(level(&a).len(), 6);
+        assert_eq!(level(&a).len(), 7);
         // ▲▼ stay inside the submenu.
         a.handle(Up, 0);
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Theme) });
         for _ in 0..10 {
             a.handle(Down, 0);
         }
-        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::BookInfo) });
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::MenuColours) });
         // A setting chosen from a submenu comes back to it.
         a.screen = Screen::Menu { sel: menu_index(MenuItem::Theme) };
         a.handle(Select, 0);
@@ -1980,6 +2008,25 @@ mod tests {
         for i in 0..MENU_LEN {
             assert!(menu_level(i).contains(&i), "item {i} ({:?}) not on its own level", menu_item(i));
         }
+    }
+
+    #[test]
+    fn menu_buttons_switch_menus_from_inside_a_menu() {
+        let mut a = app();
+        a.tap(Hit::Group(0), 0);
+        assert_eq!(a.active_group(), Some(0));
+        a.tap(Hit::Group(3), 10);
+        assert_eq!(a.active_group(), Some(3), "Aa opens Text straight from Settings");
+        a.tap(Hit::Group(2), 20);
+        assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "and the Library");
+        assert_eq!(a.active_group(), Some(2));
+        a.tap(Hit::Group(2), 30);
+        assert_eq!(a.active_group(), Some(2), "the open menu's own button does nothing");
+        a.screen = Screen::Menu { sel: menu_index(MenuItem::Theme) };
+        a.handle(Select, 40);
+        assert_eq!(a.active_group(), Some(0), "a list opened from Settings belongs to Settings");
+        a.handle(Menu, 50);
+        assert_eq!(a.active_group(), None);
     }
 
     #[test]

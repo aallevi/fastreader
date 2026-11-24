@@ -105,6 +105,8 @@ pub struct Settings {
     pub guides: bool,
     /// The "welcome back" card after a break: index into WELCOME_MIN.
     pub welcome: u8,
+    /// The four menu buttons each in their own colour (white icons).
+    pub menu_colours: bool,
     /// With the recognition point: split words too long to fit in two
     /// flashes ("determi-" "nazione"), or keep them whole (shifted to fit).
     pub split_long: bool,
@@ -151,6 +153,7 @@ impl Default for Settings {
             split_long: false,
             guides: true,
             welcome: 4,
+            menu_colours: false,
             captions: false,
             progress_bar: true,
             blue_blocks: false,
@@ -179,7 +182,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 34] = [
+pub const FIELDS: [(&str, u16, u16); 35] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -210,6 +213,7 @@ pub const FIELDS: [(&str, u16, u16); 34] = [
     ("split_long", 0, 1),
     ("guides", 0, 1),
     ("welcome", 0, 4),
+    ("menu_colours", 0, 1),
     ("captions", 0, 1),
     ("progress_bar", 0, 1),
     ("blue_blocks", 0, 1),
@@ -248,6 +252,7 @@ impl Settings {
             "split_long" => self.split_long as u16,
             "guides" => self.guides as u16,
             "welcome" => self.welcome as u16,
+            "menu_colours" => self.menu_colours as u16,
             "captions" => self.captions as u16,
             "progress_bar" => self.progress_bar as u16,
             "blue_blocks" => self.blue_blocks as u16,
@@ -293,6 +298,7 @@ impl Settings {
             "split_long" => self.split_long = v != 0,
             "guides" => self.guides = v != 0,
             "welcome" => self.welcome = v as u8,
+            "menu_colours" => self.menu_colours = v != 0,
             "captions" => self.captions = v != 0,
             "progress_bar" => self.progress_bar = v != 0,
             "blue_blocks" => self.blue_blocks = v != 0,

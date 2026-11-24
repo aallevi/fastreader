@@ -56,6 +56,10 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] ⚙ Settings → Progress bar / Book info when paused: each can be hidden; the space goes back to the page.
 - [ ] Windows 98 progress bar: whole blocks appear one at a time as you read (no block growing); ⚙ Settings → Progress blocks → Blue gives the classic navy.
 
+## Menu buttons
+- [ ] In any menu the four title-bar buttons stay; the open one is pressed in (amber); tapping another switches menu; ‹ and ✕ sit on the right, a little apart.
+- [ ] Settings > Screen > Menu buttons > Colourful: red ⚙, blue 📖, green 📚, yellow Aa with white icons; the open one darker, pressed in.
+
 ## Lists and tables
 - [ ] A book with a bulleted list: bullets down the left margin, the current one amber; a numbered list shows its numbers.
 - [ ] A table: before each cell a quick grid with the cell in amber, then its words; header row shaded.
