@@ -635,11 +635,18 @@ fn button(cv: &mut Canvas, th: &Theme, l: &Layout, r: Rect, kind: Kind, hot: boo
     style.text
 }
 
+/// An icon's size on its button: never so big that, nudged a pixel when
+/// pressed, it touches the edge (the title bar's buttons are short).
+fn icon_size(l: &Layout, b: &Button) -> f32 {
+    let want = if b.primary { l.px(20.0) } else { l.px(17.0) };
+    want.min(b.rect.h as f32 - l.px(4.0))
+}
+
 fn draw_icon_button(cv: &mut Canvas, th: &Theme, l: &Layout, b: &Button, hot: bool) {
     let kind = if b.primary { Kind::Primary } else { Kind::Bar };
     let c = button(cv, th, l, b.rect, kind, hot);
     let off = if th.chrome == Chrome::Win98 && hot { 1.0 } else { 0.0 };
-    let size = if b.primary { l.px(20.0) } else { l.px(17.0) };
+    let size = icon_size(l, b);
     icons::draw(cv, b.icon, b.rect.cx() + off, b.rect.cy() + off, size, c);
 }
 
@@ -684,7 +691,7 @@ fn draw_menu_button(cv: &mut Canvas, c: &Ctx, b: &Button, k: usize, open: bool, 
         cv.rrect_stroke(r, rad, mix(face, BLACK, 110));
     }
     let off = if pressed { l.px(1.0) } else { 0.0 };
-    icons::draw(cv, b.icon, r.cx() + off, r.cy() + off, l.px(17.0), ink);
+    icons::draw(cv, b.icon, r.cx() + off, r.cy() + off, icon_size(l, b), ink);
 }
 
 fn bar_bg(cv: &mut Canvas, th: &Theme, r: Rect, top_edge: bool) {

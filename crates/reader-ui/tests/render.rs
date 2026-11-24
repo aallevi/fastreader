@@ -637,3 +637,25 @@ fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
         }
     }
 }
+
+#[test]
+fn menu_icons_stay_inside_their_buttons_even_pressed() {
+    // The cog (and the others) on the short title-bar buttons, pressed in
+    // (its menu open) and nudged a pixel: no white icon pixel may reach the
+    // button's last two rows or columns.
+    for (w, h) in [(320, 240), (480, 320)] {
+        for g in 0..4u8 {
+            let mut a = App::new(Book::new("t", "# A\nOne two."), CATALOG, Settings { theme: 0, menu_colours: true, ..Settings::default() });
+            let mut cv = Canvas::new(w, h);
+            let mut ui = Ui::new(w, h);
+            a.tap(Hit::Group(g), 0);
+            a.tick(5_000);
+            ui.paint(&mut a, 5_000, &mut cv);
+            let r = reader_ui::layout::header_buttons(&ui.layout)[g as usize].rect;
+            let bottom = (r.x..r.right()).flat_map(|x| (r.bottom() - 2..r.bottom()).map(move |y| (x, y)));
+            let right = (r.y..r.bottom()).flat_map(|y| (r.right() - 2..r.right()).map(move |x| (x, y)));
+            let touch = bottom.chain(right).find(|&(x, y)| cv.pixel(x, y) == 0xFFFFFF);
+            assert!(touch.is_none(), "{w}x{h}, menu {g}: icon reaches the edge at {touch:?}");
+        }
+    }
+}
