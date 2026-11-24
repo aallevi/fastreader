@@ -10,6 +10,7 @@
 //! M or Esc for the menu. The web view runs at http://localhost:8080.
 //! `--headless`: only the web view, no window.
 
+mod update;
 mod walkthrough;
 mod web;
 
@@ -31,13 +32,13 @@ fn arg(args: &[String], name: &str) -> Option<String> {
 /// Run as FastReader.app (the Mac installer): books, places and settings
 /// live in ~/Library/Application Support/FastReader, and the sample books
 /// inside the app are put there the first time.
-fn use_app_folder() {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let Some(contents) = exe.ancestors().find(|p| p.file_name().is_some_and(|n| n == "Contents")) else { return };
+fn use_app_folder() -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let Some(contents) = exe.ancestors().find(|p| p.file_name().is_some_and(|n| n == "Contents")) else { return false };
     if contents.parent().is_none_or(|a| a.extension().is_none_or(|e| e != "app")) {
-        return;
+        return false;
     }
-    let Some(home) = std::env::var_os("HOME") else { return };
+    let Some(home) = std::env::var_os("HOME") else { return false };
     let dir = PathBuf::from(home).join("Library/Application Support/FastReader");
     for sub in ["books", "books/uploaded", "target"] {
         let _ = std::fs::create_dir_all(dir.join(sub));
@@ -51,10 +52,14 @@ fn use_app_folder() {
         }
     }
     let _ = std::env::set_current_dir(&dir);
+    true
 }
 
+/// Running as the installed Mac app (it checks for updates).
+static AS_APP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
-    use_app_folder();
+    AS_APP.store(use_app_folder(), std::sync::atomic::Ordering::Relaxed);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let size = arg(&args, "--size")
         .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))
@@ -203,6 +208,9 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
                 let _ = std::fs::write(settings_path(), a.settings.to_bytes());
             }
             Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+            Effect::Download => {
+                let _ = std::process::Command::new("open").arg(update::RELEASES).spawn();
+            }
             Effect::SaveBookmarks => {
                 let list: Vec<String> = a.bookmarks.iter().map(|(b, w)| format!("{b}:{w}")).collect();
                 let _ = std::fs::write(bookmarks_path(), list.join(" "));
@@ -278,6 +286,9 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
     let _ = std::fs::create_dir_all(format!("{SIM_CARD}/BOOKS"));
     app.card = Some(sim_card());
     let app = Arc::new(Mutex::new(app));
+    if AS_APP.load(std::sync::atomic::Ordering::Relaxed) || std::env::var_os("FASTREADER_CHECK_UPDATES").is_some() {
+        update::check(app.clone());
+    }
     let start = Instant::now();
     // --lan: phones and other computers on the same network can open it too.
     web::serve(app.clone(), books.clone(), if lan { "0.0.0.0:8080" } else { "127.0.0.1:8080" }, start);

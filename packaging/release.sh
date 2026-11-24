@@ -2,8 +2,9 @@
 # One release, everything together: tests, the Mac app (DMG) and the ESP32
 # firmware (one image, written at 0x0), a git tag and the GitHub release.
 #   packaging/release.sh 0.2.0 notes.md
-# notes.md: what changed, for people (the release page). Run it when a set
-# of changes has been checked, not after every commit.
+# notes.md: what changed, for people (the release page). Its "- " lines are
+# what the Mac app's update notice lists, so put the changes as bullets.
+# Run it when a set of changes has been checked, not after every commit.
 set -e
 cd "$(dirname "$0")/.."
 VERSION="$1"; NOTES="$2"

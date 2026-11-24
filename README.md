@@ -84,7 +84,8 @@ Download `FastReader-<version>.dmg`, open it and drag **Fast Reader** onto
 Applications. It is the same reader as the device, in a window you can
 resize (or fill the screen); add books from its page at
 http://localhost:8080 (Settings > Add a book) and they stay, with your
-place, in ~/Library/Application Support/FastReader. The app isn't signed
+place, in ~/Library/Application Support/FastReader. When a new version is
+out, the app says so at start, with its changes; ▶ opens the download. The app isn't signed
 with an Apple Developer ID yet: the first time, right-click it > Open (or
 System Settings > Privacy & Security > Open Anyway).
 

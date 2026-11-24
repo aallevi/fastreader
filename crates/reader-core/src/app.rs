@@ -633,6 +633,16 @@ pub enum Effect {
     /// Delete library book N from storage; then call `book_removed`
     /// (or `cant_delete`).
     DeleteBook(u8),
+    /// The update notice's ▶: open the download page (the desktop app).
+    Download,
+}
+
+/// A notice over the reading screen (the desktop app's "a new version is
+/// out", with its changes): ▶ downloads it, any other touch closes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub title: String,
+    pub lines: Vec<String>,
 }
 
 /// The "welcome back" card shown after a break: which book, where, and
@@ -740,6 +750,8 @@ pub struct App {
     pub delete_pending: Option<u8>,
     /// The "welcome back" card, while it shows.
     pub welcome: Option<Welcome>,
+    /// A notice (a new version), while it shows; before the welcome card.
+    pub notice: Option<Notice>,
     /// Last key, touch or playing moment: the break is counted from here.
     last_input: u64,
     /// Last key, touch or moment of reading (menus open don't count): the
@@ -797,6 +809,7 @@ impl App {
             context_scroll: 0,
             delete_pending: None,
             welcome: None,
+            notice: None,
             last_input: 0,
             last_activity: 0,
             welcome_minute: None,
@@ -843,6 +856,13 @@ impl App {
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
         self.last_input = now;
         self.last_activity = now;
+        if self.notice.take().is_some() {
+            // ▶ on a notice: download; any other key just closes it.
+            if action_for(self.screen, key) == Action::TogglePlay {
+                self.effect(Effect::Download);
+            }
+            return Feedback::ok(Msg::Shown);
+        }
         self.keyed = matches!(key, Key::Up | Key::Down) || (self.keyed && key == Key::Select);
         if self.welcome.take().is_some() && action_for(self.screen, key) == Action::TogglePlay {
             // ▶ continues from a sentence early; other keys close the card
@@ -955,6 +975,10 @@ impl App {
         self.pressed = None;
         self.last_input = now;
         self.last_activity = now;
+        if self.notice.is_some() && !matches!(hit, Hit::Key(_)) {
+            self.notice = None; // a touch anywhere but ▶ closes it
+            return Feedback::ok(Msg::Shown);
+        }
         if !matches!(hit, Hit::Key(Key::Up | Key::Down)) {
             self.keyed = false;
         }
@@ -2608,6 +2632,19 @@ mod tests {
         a.card_removed(30);
         assert!(matches!(a.screen, Screen::Pick { kind: PickKind::Book, .. }), "the card book: the Library opens");
         assert!(!a.reader.is_playing());
+    }
+
+    #[test]
+    fn a_notice_closes_on_a_touch_and_downloads_on_play() {
+        let mut a = app();
+        a.notice = Some(Notice { title: "Fast Reader 0.2.0 is out".into(), lines: alloc::vec!["Figure references".into()] });
+        a.tap(Hit::Bookmark, 10);
+        assert!(a.notice.is_none() && a.bookmarks.is_empty(), "a touch only closes it");
+        a.notice = Some(Notice { title: "x".into(), lines: Vec::new() });
+        a.handle(Select, 20);
+        assert!(a.notice.is_none());
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Download), "▶ downloads");
+        assert!(!a.reader.is_playing(), "and doesn't start reading");
     }
 
     #[test]

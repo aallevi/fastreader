@@ -61,6 +61,8 @@ struct View {
     corner: bool,
     /// The "welcome back" card, and the minutes away it shows.
     welcome: Option<Option<u64>>,
+    /// A notice (a new version) over the reading screen.
+    notice: bool,
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
@@ -176,6 +178,7 @@ impl Ui {
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
             corner: place_bookmarked(app),
             welcome: app.welcome.map(|w| w.away(now).map(|ms| ms / 60_000)),
+            notice: app.notice.is_some(),
             list: {
                 let b = &app.reader.book;
                 let at = app.reader.shown().start as u32;
@@ -185,7 +188,7 @@ impl Ui {
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.list != view.list || o.table != view.table);
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.notice != view.notice || o.list != view.list || o.table != view.table);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -210,7 +213,9 @@ impl Ui {
             }
             draw_status(f, cv, &ctx);
             draw_toolbar(f, cv, &ctx);
-            if app.welcome.is_some() {
+            if app.notice.is_some() {
+                draw_notice(f, cv, &ctx);
+            } else if app.welcome.is_some() {
                 draw_welcome(f, cv, &ctx);
             }
             draw_corner(cv, &ctx, view.corner);
@@ -220,7 +225,7 @@ impl Ui {
                 draw_header(f, cv, &ctx);
                 damage.push(l.header);
             }
-            if app.welcome.is_some() {
+            if app.welcome.is_some() || app.notice.is_some() {
                 // The card stays as drawn; only the numbers below may change.
                 if o.status != view.status {
                     draw_status(f, cv, &ctx);
@@ -478,6 +483,29 @@ fn draw_welcome(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
         f.draw_fit(cv, face, px, &t, area.cx() - w / 2.0, y - px * 0.2, max, if dim { th.dim } else { th.text });
         y += gap;
     }
+}
+
+/// A notice over the word and sentence area: its title, its lines as a
+/// short list, and what ▶ does.
+fn draw_notice(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
+    let (th, l, app) = (c.th, c.l, c.app);
+    let Some(n) = &app.notice else { return };
+    let area = l.word.union(&l.context).intersect(&paper(th, l));
+    clear(cv, th, l, area);
+    let x = area.x as f32 + l.px(16.0);
+    let max = area.w as f32 - l.px(32.0);
+    let mut y = area.y as f32 + l.px(26.0);
+    f.draw_fit(cv, th.ui.1, l.px(15.0), &n.title, x, y, max, th.text);
+    y += l.px(8.0);
+    let line = l.px(16.0);
+    let room = ((area.bottom() as f32 - l.px(24.0) - y) / line).max(0.0) as usize;
+    for t in n.lines.iter().take(room) {
+        y += line;
+        f.draw(cv, th.ui.0, l.px(12.0), "•", x, y, th.dim);
+        f.draw_fit(cv, th.ui.0, l.px(12.0), t, x + l.px(12.0), y, max - l.px(12.0), th.text);
+    }
+    let foot = up(th, "Press play to download · touch to close");
+    f.draw_fit(cv, th.ui.0, l.px(11.0), &foot, x, area.bottom() as f32 - l.px(10.0), max, th.dim);
 }
 
 /// "25 min", "3 h 10 min", "2 days".
