@@ -97,7 +97,7 @@ In order, shipped as 0.2.x updates (details in [PLAN.md](PLAN.md)):
 3. **The Mac app as reader and readers manager**: pair your physical readers, see each one's space and books, sync your own library, articles and Zotero to each, places followed across readers; RSS subscriptions imported and exported as OPML; flashing readers over USB or Wi-Fi from the app.
 4. **Try it without the device** (next): the browser demo on GitHub Pages, EPUB and PDF in the demo, a one-click web flasher.
 5. **The reader speaks**: a small speaker or wired earbuds; MP3 audiobooks or speech made on the Mac, with the words following the voice.
-6. **Library, new look**: author, progress, last opened, audio or a second language.
+6. **Library, new look**: author, progress, last opened, audio or a second language; articles from the web and RSS feed items in their own shelves next to the books.
 7. **Lists and tables, the rest**: page view indents and table grids; tables in the phone's PDF converter.
 8. **Read state**: unread, reading, finished.
 9. **Zotero and server library** over Tailscale.

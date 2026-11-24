@@ -54,6 +54,7 @@
    - Earbuds, wireless: through the phone page. **Done:** 🔊 Read aloud on the phone page: the phone's voice reads sentence by sentence from the reader's place, at the reader's speed, and the reader shows each word as it is spoken.
    - Sound: MP3 audiobooks from the card, or speech generated on the Mac, with word timings so the screen follows the voice.
 6. **Library, new look** (after the audio add-on): a clearer list showing each book's author, progress, last opened, and whether it has audio or a second language.
+   - Not only books: articles saved from the web and RSS feed items live in the library too, in their own shelves (Books, Articles, each feed), with source, date and read state; unread first, "Clear old articles" at hand.
 7. **Lists and tables**: done in word and phrase mode (tables below the word or flashed), navigation (a table is a sentence, a cell a word), the converters (EPUB lists and tables, PDF tables on the Mac) and the phone page's book view. Still to do: page view indents list items and lays tables out as a grid; PDF tables in the phone page's converter.
 8. **Read state for books**: unread / reading / finished. Reaching the end offers "Mark as finished"; it can also be toggled from the Book menu and from the Library (and the phone page); finished books are marked in the list and their progress kept.
 9. **Zotero / server library**: browse and download books from the Asus server over Tailscale, convert on the server, send to the reader.
