@@ -14,6 +14,11 @@ use crate::input::Key;
 use crate::reader::Reader;
 use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, SLEEP_MIN, SLEEP_NAMES, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
 
+/// Dim when idle: after this long with nothing happening.
+pub const DIM_MS: u64 = 60_000;
+/// Web view switches itself off after this long without the phone page.
+pub const WEB_IDLE_MS: u64 = 10 * 60_000;
+
 /// How long a toast stays visible.
 /// How long a message (Paused, speed, Bookmarked…) stays in the title bar.
 pub const TOAST_MS: u64 = 2_500;
@@ -61,6 +66,7 @@ pub enum MenuItem {
     MenuColours,
     Tables,
     SleepAfter,
+    AutoDim,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -104,6 +110,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::ProgressBlocks,
             MenuItem::BookInfo,
             MenuItem::MenuColours,
+            MenuItem::AutoDim,
             MenuItem::SubConnections,
             MenuItem::HomeWifi,
             MenuItem::Card,
@@ -139,7 +146,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
 /// Submenus: a heading and the items it opens (they follow it in MENU).
 pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
     (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome]),
-    (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours]),
+    (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours, MenuItem::AutoDim]),
     (MenuItem::SubConnections, &[MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
     (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables]),
@@ -215,7 +222,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 42;
+pub const MENU_LEN: u8 = 43;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -250,6 +257,7 @@ impl MenuItem {
             MenuItem::MenuColours => "Menu buttons",
             MenuItem::Tables => "Tables",
             MenuItem::SleepAfter => "Sleep timer",
+            MenuItem::AutoDim => "Dim when idle",
             MenuItem::Welcome => "Welcome back",
             MenuItem::Position => "Word position",
             MenuItem::LongWords => "Long words",
@@ -292,6 +300,7 @@ impl MenuItem {
             MenuItem::MenuColours => PickKind::MenuColours,
             MenuItem::Tables => PickKind::Tables,
             MenuItem::SleepAfter => PickKind::SleepAfter,
+            MenuItem::AutoDim => PickKind::AutoDim,
             MenuItem::Welcome => PickKind::Welcome,
             MenuItem::Position => PickKind::Position,
             MenuItem::LongWords => PickKind::LongWords,
@@ -324,6 +333,7 @@ pub enum PickKind {
     MenuColours,
     Tables,
     SleepAfter,
+    AutoDim,
     Card,
     ProgressBar,
     ProgressBlocks,
@@ -356,6 +366,7 @@ impl PickKind {
             PickKind::MenuColours => "Menu buttons",
             PickKind::Tables => "Tables",
             PickKind::SleepAfter => "Sleep timer",
+            PickKind::AutoDim => "Dim when idle",
             PickKind::Welcome => "Welcome back",
             PickKind::Position => "Word position",
             PickKind::LongWords => "Long words",
@@ -385,7 +396,7 @@ impl PickKind {
 
     /// Settings that apply while you scroll, so you see before you choose.
     pub const fn live_preview(self) -> bool {
-        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables)
+        matches!(self, PickKind::Size | PickKind::Font | PickKind::Theme | PickKind::Brightness | PickKind::Spacing | PickKind::Paragraphs | PickKind::Align | PickKind::Brackets | PickKind::Position | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::AutoDim)
     }
 }
 
@@ -587,6 +598,8 @@ pub enum Msg {
     /// The SD card was taken out / put back.
     CardRemoved,
     CardInserted,
+    /// Web view switched itself off, unused.
+    WebIdleOff,
     CaptionHidden,
     Formatting,
     CardReady,
@@ -635,6 +648,8 @@ pub enum Effect {
     DeleteBook(u8),
     /// The update notice's ▶: open the download page (the desktop app).
     Download,
+    /// The backlight down (true: idle) or back to its brightness (false).
+    Dim(bool),
 }
 
 /// A notice over the reading screen (the desktop app's "a new version is
@@ -762,6 +777,14 @@ pub struct App {
     /// The last move in a list was by the ▲▼ keys: the selection is shown
     /// (by touch, only the current choice is lit).
     pub keyed: bool,
+    /// The backlight is down (dimmed while idle).
+    pub dimmed: bool,
+    /// The last time the phone page asked the reader for anything; Web view
+    /// switches itself off after WEB_IDLE_MS without (when allowed).
+    last_web: u64,
+    /// Web view may switch itself off when unused (not in the debug build
+    /// that keeps Wi-Fi on).
+    pub web_auto_off: bool,
     /// A table's grid flashes until then, before a cell's words.
     grid_until: u64,
     /// The word the grid flash last looked at.
@@ -814,6 +837,9 @@ impl App {
             last_activity: 0,
             welcome_minute: None,
             keyed: false,
+            dimmed: false,
+            last_web: 0,
+            web_auto_off: true,
             grid_until: 0,
             grid_seen: usize::MAX,
             toast: None,
@@ -843,6 +869,9 @@ impl App {
     }
 
     fn effect(&mut self, e: Effect) {
+        if e == Effect::Wifi(true) {
+            self.last_web = self.last_tick; // its 10 minutes start now
+        }
         if !self.effects.contains(&e) {
             self.effects.push(e);
         }
@@ -856,6 +885,7 @@ impl App {
     pub fn handle(&mut self, key: Key, now: u64) -> Feedback {
         self.last_input = now;
         self.last_activity = now;
+        self.undim();
         if self.notice.take().is_some() {
             // ▶ on a notice: download; any other key just closes it.
             if action_for(self.screen, key) == Action::TogglePlay {
@@ -936,6 +966,18 @@ impl App {
         }
     }
 
+    /// The phone page asked for something (any web request): Web view is in use.
+    pub fn web_seen(&mut self, now: u64) {
+        self.last_web = now;
+    }
+
+    fn undim(&mut self) {
+        if self.dimmed {
+            self.dimmed = false;
+            self.effect(Effect::Dim(false));
+        }
+    }
+
     /// The sleep timer in ms (None: never).
     fn sleep_after(&self) -> Option<u64> {
         let min = SLEEP_MIN[(self.settings.sleep_after as usize).min(SLEEP_MIN.len() - 1)];
@@ -962,6 +1004,7 @@ impl App {
 
     /// A finger came down on a target: light it, act on release.
     pub fn touch_down(&mut self, hit: Option<Hit>) {
+        self.undim();
         self.pressed = hit;
     }
 
@@ -975,6 +1018,7 @@ impl App {
         self.pressed = None;
         self.last_input = now;
         self.last_activity = now;
+        self.undim();
         if self.notice.is_some() && !matches!(hit, Hit::Key(_)) {
             self.notice = None; // a touch anywhere but ▶ closes it
             return Feedback::ok(Msg::Shown);
@@ -1109,6 +1153,21 @@ impl App {
         }
         if was_playing {
             self.last_activity = now;
+        }
+        // Dim when idle: a minute with nothing happening, the backlight goes
+        // down (any touch or key brings it back).
+        if self.settings.auto_dim && !self.dimmed && !self.reader.is_playing() && now.saturating_sub(self.last_activity) >= DIM_MS {
+            self.dimmed = true;
+            self.effect(Effect::Dim(true));
+        }
+        // Web view unused (no phone page asking) for a while, not reading:
+        // it switches off (the radio is the biggest drain).
+        if self.settings.wifi && self.web_auto_off && !self.reader.is_playing() && now.saturating_sub(self.last_web) >= WEB_IDLE_MS {
+            self.settings.wifi = false;
+            self.save();
+            self.effect(Effect::Wifi(false));
+            self.feedback(Feedback::ok(Msg::WebIdleOff), now);
+            changed = true;
         }
         // The sleep timer: nothing happening for that long, the reader sleeps.
         if let Some(after) = self.sleep_after() {
@@ -1774,7 +1833,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::AutoDim => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
@@ -1812,6 +1871,7 @@ impl App {
             PickKind::Guides => ["Off", "On"][i.min(1)].into(),
             PickKind::MenuColours => ["Theme", "Colourful"][i.min(1)].into(),
             PickKind::Tables => TABLE_NAMES[i.min(1)].into(),
+            PickKind::AutoDim => ["Never", "After a minute"][i.min(1)].into(),
             PickKind::DeleteWhich => {
                 let place = match self.library_info.get(i).map(|b| b.place) {
                     Some(Place::Card) => "  · SD card",
@@ -1855,6 +1915,7 @@ impl App {
             MenuItem::Guides => (if self.settings.guides { "On" } else { "Off" }).into(),
             MenuItem::MenuColours => (if self.settings.menu_colours { "Colourful" } else { "Theme" }).into(),
             MenuItem::Tables => (if self.settings.pacing.table_flash { "Flash" } else { "Below" }).into(),
+            MenuItem::AutoDim => (if self.settings.auto_dim { "After a minute" } else { "Never" }).into(),
             MenuItem::LongWords => (if self.settings.split_long { "Split if too long" } else { "Keep whole" }).into(),
             MenuItem::ProgressBlocks => (if self.settings.blue_blocks { "Blue" } else { "Grey" }).into(),
             MenuItem::ProgressBar => (if self.settings.progress_bar { "Shown" } else { "Hidden" }).into(),
@@ -1892,6 +1953,7 @@ impl App {
             PickKind::Guides => self.settings.guides as u8,
             PickKind::MenuColours => self.settings.menu_colours as u8,
             PickKind::Tables => self.settings.pacing.table_flash as u8,
+            PickKind::AutoDim => self.settings.auto_dim as u8,
             PickKind::BookInfo => (!self.settings.book_info) as u8,
             PickKind::DeleteWhich => self.settings.book,
             PickKind::DeleteConfirm => 0,
@@ -1930,6 +1992,7 @@ impl App {
             PickKind::ProgressBlocks => self.settings.blue_blocks = v == 1,
             PickKind::Guides => self.settings.guides = v == 1,
             PickKind::MenuColours => self.settings.menu_colours = v == 1,
+            PickKind::AutoDim => self.settings.auto_dim = v == 1,
             PickKind::Tables => {
                 self.settings.pacing.table_flash = v == 1;
                 self.reader.set_pacing(self.settings.pacing);
@@ -2103,14 +2166,14 @@ mod tests {
         a.handle(Select, 0);
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Brightness) }, "a heading opens its submenu");
         assert_eq!(menu_level_title(menu_index(MenuItem::Brightness)), "Screen");
-        assert_eq!(level(&a).len(), 6);
+        assert_eq!(level(&a).len(), 7);
         // ▲▼ stay inside the submenu.
         a.handle(Up, 0);
         assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::Brightness) });
         for _ in 0..10 {
             a.handle(Down, 0);
         }
-        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::MenuColours) });
+        assert_eq!(a.screen, Screen::Menu { sel: menu_index(MenuItem::AutoDim) });
         // A setting chosen from a submenu comes back to it.
         a.screen = Screen::Menu { sel: menu_index(MenuItem::ProgressBar) };
         a.handle(Select, 0);
@@ -2635,6 +2698,41 @@ mod tests {
     }
 
     #[test]
+    fn dims_when_idle_and_lights_up_on_a_touch() {
+        let mut a = app();
+        a.settings.sleep_after = 0;
+        a.tick(DIM_MS - 1);
+        assert!(!a.dimmed);
+        a.tick(DIM_MS);
+        assert!(a.dimmed && core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Dim(true)), "a minute idle: down");
+        a.touch_down(None);
+        assert!(!a.dimmed && core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Dim(false)), "a touch: back up");
+        a.settings.auto_dim = false;
+        a.tick(DIM_MS * 5);
+        assert!(!a.dimmed, "Never: never");
+    }
+
+    #[test]
+    fn web_view_switches_itself_off_when_unused() {
+        let mut a = app();
+        a.settings.sleep_after = 0;
+        a.settings.wifi = true;
+        a.web_seen(1_000);
+        a.tick(1_000 + WEB_IDLE_MS - 1);
+        assert!(a.settings.wifi, "still in use");
+        a.web_seen(2_000 + WEB_IDLE_MS / 2); // the page asked again
+        a.tick(1_000 + WEB_IDLE_MS + 5);
+        assert!(a.settings.wifi);
+        a.tick(2_000 + WEB_IDLE_MS / 2 + WEB_IDLE_MS);
+        assert!(!a.settings.wifi && core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Wifi(false)), "10 minutes unused: off");
+        let mut b = app();
+        b.settings.wifi = true;
+        b.web_auto_off = false; // the debug build keeps it on
+        b.tick(WEB_IDLE_MS * 3);
+        assert!(b.settings.wifi);
+    }
+
+    #[test]
     fn a_notice_closes_on_a_touch_and_downloads_on_play() {
         let mut a = app();
         a.notice = Some(Notice { title: "Fast Reader 0.2.0 is out".into(), lines: alloc::vec!["Figure references".into()] });
@@ -2651,6 +2749,7 @@ mod tests {
     fn the_sleep_timer_puts_the_reader_to_sleep() {
         let mut a = app();
         a.settings.sleep_after = 2; // 5 minutes
+        a.settings.auto_dim = false; // (only the timer's requests here)
         a.handle(Select, 0); // read for a while: no sleep
         let mut t = 0;
         while t < 8 * 60_000 && a.reader.is_playing() {

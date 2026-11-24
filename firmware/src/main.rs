@@ -78,7 +78,8 @@ macro_rules! mk_static {
 
 #[esp_hal::main]
 async fn main(spawner: Spawner) -> ! {
-    let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    // 160 MHz: plenty for a word at a time, and a third less than 240.
+    let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::_160MHz));
     // PSRAM is registered first, so ordinary allocations (books, canvas,
     // glyphs) land there and the internal RAM stays free for the Wi-Fi
     // driver, which asks for internal memory explicitly.
@@ -252,6 +253,8 @@ async fn main(spawner: Spawner) -> ! {
         web: alloc::string::String::new(),
         ..Default::default()
     };
+    // The debug build that keeps Wi-Fi on mustn't switch it off by itself.
+    app.web_auto_off = !cfg!(feature = "wifi-boot");
     // Just switched on (or woken): say which book and where.
     app.welcome_back(None, 0);
     let mut cv = Canvas::new(WIDTH, HEIGHT);
@@ -623,6 +626,11 @@ async fn main(spawner: Spawner) -> ! {
                 // The same path as a delete confirmed on the web page (next turn of the loop).
                 Effect::DeleteBook(i) => inbox.borrow_mut().delete = Some(i as usize),
                 Effect::Download => {} // the desktop app's update notice only
+                Effect::Dim(down) => {
+                    // Idle: the backlight to its lowest; back to the setting on a touch.
+                    let pct = [8u8, 20, 40, 70, 100][(app.settings.brightness.clamp(1, 5) - 1) as usize];
+                    let _ = backlight.set_duty(if down { pct.min(4) } else { pct });
+                }
                 Effect::FormatCard => {
                     // Show "Formatting the card…" first: clearing the FATs takes a while.
                     let damage = ui.paint(app, now, &mut cv);

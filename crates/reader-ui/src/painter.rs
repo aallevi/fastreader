@@ -1839,6 +1839,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::PictureHeld => "Picture: press play to go on".into(),
         Msg::CaptionShown => "Description shown".into(),
         Msg::CardRemoved => "SD card removed".into(),
+        Msg::WebIdleOff => "Web view off (unused)".into(),
         Msg::CardInserted => "SD card inserted".into(),
         Msg::CaptionHidden => "Description hidden".into(),
         Msg::Formatting => "Formatting the card…".into(),

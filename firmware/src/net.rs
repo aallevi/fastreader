@@ -523,6 +523,7 @@ async fn http(stack: Stack<'static>, app: &'static RefCell<App>, inbox: &'static
             continue;
         }
 
+        app.borrow_mut().web_seen(now);
         let r = respond(&mut app.borrow_mut(), method, target, now);
 
         let mut header = String::new();

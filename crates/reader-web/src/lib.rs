@@ -267,7 +267,7 @@ fn apply(d: &mut Demo, e: Effect, now: u64) {
             d.redraw = true;
         }
         // No sleep, radio or card in a web page.
-        Effect::Sleep | Effect::Wifi(_) | Effect::FormatCard | Effect::Download => {}
+        Effect::Sleep | Effect::Wifi(_) | Effect::FormatCard | Effect::Download | Effect::Dim(_) => {}
     }
 }
 

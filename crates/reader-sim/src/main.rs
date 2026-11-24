@@ -181,9 +181,9 @@ fn settings_path() -> PathBuf {
 
 /// Converts the canvas to what the panel shows: dithered RGB565, dimmed by
 /// the brightness setting, turned 180° if flipped.
-fn present(cv: &Canvas, out: &mut [u32], s: &Settings) {
+fn present(cv: &Canvas, out: &mut [u32], s: &Settings, dimmed: bool) {
     let (w, h) = (cv.w, cv.h);
-    let dim = [90u32, 140, 185, 225, 255][(s.brightness.clamp(1, 5) - 1) as usize];
+    let dim = [90u32, 140, 185, 225, 255][(s.brightness.clamp(1, 5) - 1) as usize] / if dimmed { 3 } else { 1 };
     for (i, p) in cv.rgb565(cv.bounds()).enumerate() {
         let c = from565(p);
         let scale = |v: u32| v * dim / 255;
@@ -208,6 +208,7 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
                 let _ = std::fs::write(settings_path(), a.settings.to_bytes());
             }
             Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+            Effect::Dim(_) => redraw = true, // `present` shows it
             Effect::Download => {
                 let _ = std::process::Command::new("open").arg(update::RELEASES).spawn();
             }
@@ -392,7 +393,7 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
                 dirty = true;
             }
             if !ui.paint(&mut a, now, &mut cv).is_empty() || dirty {
-                present(&cv, &mut out, &a.settings);
+                present(&cv, &mut out, &a.settings, a.dimmed);
                 a.frame_shown(start.elapsed().as_millis() as u64);
                 dirty = false;
             }

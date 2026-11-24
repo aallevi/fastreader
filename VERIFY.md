@@ -63,6 +63,11 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Sleep timer
 - [ ] Settings > Sleep timer (default 10 minutes): leave the reader paused that long and it goes to sleep by itself (saving its place); while reading it never does. BOOT or a touch wakes it, with the welcome card.
 
+## Battery savers
+- [ ] A minute paused: the backlight goes down; any touch brings it back (Settings > Screen > Dim when idle).
+- [ ] Web view on, no phone page open for 10 minutes (and not reading): it switches off by itself (the reader restarts, "Web view off (unused)").
+- [ ] Reading still smooth at 160 MHz (selftest: word frames under ~15 ms).
+
 ## Figure references
 - [ ] In the fungi book (Agrodok 41), "see figure 11": the number on top, the figure's drawing below it, a little longer than a word; read on and the screen joins again.
 - [ ] Inside a table, ‹ › step cell by cell; ⏮ ⏭ jump over the whole table.
