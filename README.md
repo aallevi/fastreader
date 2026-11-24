@@ -13,8 +13,11 @@ phone page to read along, change settings and add books over Wi-Fi.
 - **Four ways to read:** word by word, phrases (up to 3 words, ending at sentences), a typewriter ticker, and normal pages.
 - **Placed by the book, not the screen:** words centred or on a fixed recognition point (Spritz rule, long words split at a syllable); bold, italic and chapter titles kept; brackets read as asides.
 - **Real books:** EPUB, PDF (scanned ones too), Markdown; pictures with their captions, shown for a set time; bookmarks as a folded page corner.
+- **Lists, tables and figures:** list markers down the side with the current one lit; tables read cell by cell with the whole table below the word; "see figure 11" shows figure 11 below the word.
+- **Looks after you:** a welcome back card after a break, a sleep timer, and a warning when the SD card is taken out.
 - **A phone page:** join the reader's Wi-Fi, the book opens in the browser, follows your place, changes every setting, converts and sends new books.
-- **Four themes:** Windows 98, Vista, Scrivener, Night.
+- **Four themes:** Windows 98, Vista, Scrivener, Night; optional colourful menu buttons.
+- **On a Mac or in a browser:** the same reader as an app ([download](https://github.com/aallevi/fastreader/releases/latest)) or compiled to WebAssembly (`docs/demo`).
 
 ## The code, by size
 
@@ -37,7 +40,7 @@ phone page to read along, change settings and add books over Wi-Fi.
 ```
 
 Everything that decides what you see is in the two `no_std` crates, tested on
-the desktop (155 tests, including randomized stress runs); the firmware only
+the desktop (187 tests, including randomized stress runs and a book with lists, tables, pictures and figure references played through every theme and mode); the firmware only
 moves pixels, touches and bytes.
 
 ## Controls
