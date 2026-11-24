@@ -61,7 +61,10 @@ place, in ~/Library/Application Support/FastReader. The app isn't signed
 with an Apple Developer ID yet: the first time, right-click it > Open (or
 System Settings > Privacy & Security > Open Anyway).
 
-`packaging/make_dmg.sh` builds the disk image (Apple silicon + Intel).
+`packaging/make_dmg.sh` builds the disk image (Apple silicon + Intel);
+`packaging/release.sh <version> <notes.md>` makes a whole release: tests,
+the Mac app and the reader's firmware image (`fastreader-es3c28p-<version>.bin`,
+written at 0x0: `espflash write-bin 0 fastreader-es3c28p-<version>.bin`).
 
 ## Run it
 
