@@ -1045,18 +1045,21 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let title_h = l.i(18.0);
     let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
     let k = (l.px(1.0).round() as i32).max(1);
-    // The hat at the left, the text close beside it (flush left), and OK
-    // under the text with some air above it.
-    let hat_w = HAT[7] as i32 * k;
-    let text_x = r.x + l.i(12.0) + hat_w + l.i(4.0);
+    // The text flush right; the hat close to its left, on the night (one
+    // of the looks being tried) that fades into grey just before the text;
+    // OK under the text's right end, with some air above it.
+    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
+    let right = r.right() as f32 - l.px(10.0);
+    let widths: Vec<f32> = lines.iter().map(|t| f.measure(th.ui.0, l.px(11.5), t)).collect();
+    let text_left = (right - widths.iter().copied().fold(0.0, f32::max)) as i32;
     let line = l.px(14.5);
     let lines_top = bar.bottom() as f32 + l.px(10.0);
-    let ok = Rect::new(text_x, r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
-    let hat = (r.x + l.i(8.0), ((lines_top + 2.0 * line + l.px(3.0)) as i32 - HAT[8] as i32 * k / 2));
-    // The night behind the hat (one of the looks being tried): black with
-    // stars, dithered into the grey just before the text.
-    let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_x - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
-    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, text_x - l.i(26.0), l.i(22.0)));
+    let ok = Rect::new(right as i32 - l.i(54.0), r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
+    let fade = l.i(22.0);
+    let hat_w = HAT[7] as i32 * k;
+    let hat = ((text_left - fade - l.i(2.0) - hat_w).max(r.x + l.i(6.0)), ((lines_top + 2.0 * line + l.px(3.0)) as i32 - HAT[8] as i32 * k / 2));
+    let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_left - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
+    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, text_left - l.i(3.0) - fade, fade));
     if redraw == Redraw::Hat {
         return draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
     }
@@ -1086,10 +1089,8 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
         draw_space(cv, sky, k, black_to, fade, panel);
     }
     draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
-    let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
-    let room = r.right() as f32 - l.px(8.0) - text_x as f32;
     for (n, t) in lines.iter().enumerate() {
-        f.draw_fit(cv, th.ui.0, l.px(11.5), t, text_x as f32, lines_top + l.px(11.0) + n as f32 * line, room, ink);
+        f.draw(cv, th.ui.0, l.px(11.5), t, right - widths[n], lines_top + l.px(11.0) + n as f32 * line, ink);
     }
     // OK (any touch closes the warning).
     if win98 {
