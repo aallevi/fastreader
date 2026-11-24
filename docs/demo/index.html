@@ -33,10 +33,16 @@
 <canvas id="screen" aria-label="The reader's screen"></canvas>
 <div class="bar">
   <span>Tap ▶ to read · ⚙ 📖 📚 Aa for the menus · keys <kbd>space</kbd> <kbd>←</kbd><kbd>→</kbd> <kbd>↑</kbd><kbd>↓</kbd> <kbd>M</kbd></span>
-  <label>Open a book (.md, .txt)<input type="file" id="file" accept=".md,.txt,text/plain"></label>
+  <label>Add a book (EPUB, PDF, .md, .txt, or drop it here)<input type="file" id="file" accept=".epub,.pdf,.md,.txt,text/plain,application/pdf"></label>
   <span id="msg" role="status"></span>
   <a href="https://github.com/aallevi/fastreader">Build one · source on GitHub</a>
 </div>
+<script>
+// The phone page's converters (copied from web/index.html by build_demo.sh).
+var S = null;
+globalThis.PDFJS_BASE = new URL('pdfjs/', location.href).href;
+</script>
+<script src="convert.js"></script>
 <script>
 'use strict';
 const canvas = document.getElementById('screen');
@@ -74,8 +80,28 @@ function size() {
   try { saved = localStorage.getItem(KEY); } catch (e) {}
   put(saved ? Uint8Array.from(atob(saved), c => c.charCodeAt(0)) : new Uint8Array(0));
   wasm.start(s.w, s.h);
-  for (const name of ['sample.md', 'sonnet-18.md']) {
-    try { put(new Uint8Array(await (await fetch('books/' + name)).arrayBuffer())); wasm.add_book(); } catch (e) {}
+  for (const [name, title] of [['sample.md', 'The Quiet Machine'], ['sonnet-18.md', 'Sonnet 18']]) {
+    try {
+      let text = await (await fetch('books/' + name)).text();
+      if (!text.startsWith('<!-- title:')) text = `<!-- title: ${title} -->\n` + text;
+      put(new TextEncoder().encode(text));
+      wasm.add_book(0);
+    } catch (e) {}
+  }
+  // Books added here stay in this browser (IndexedDB), in the order added.
+  const db = await new Promise(ok => {
+    const r = indexedDB.open('fastreader-demo', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('books', {autoIncrement: true});
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => ok(null);
+  });
+  const store = mode => db.transaction('books', mode).objectStore('books');
+  const done = r => new Promise(ok => { r.onsuccess = () => ok(r.result); r.onerror = () => ok(null); });
+  let stored = [];
+  if (db) {
+    stored = (await done(store('readonly').getAllKeys())) || [];
+    const all = (await done(store('readonly').getAll())) || [];
+    for (const b of all) { put(new Uint8Array(b)); wasm.add_book(1); }
   }
 
   const ctx = canvas.getContext('2d');
@@ -92,6 +118,8 @@ function size() {
       image.data.set(new Uint8Array(wasm.memory.buffer, wasm.pixels(), s.w * s.h * 4));
       ctx.putImageData(image, 0, 0);
     }
+    const gone = wasm.take_deleted();
+    if (gone >= 0 && db) { store('readwrite').delete(stored[gone]); stored.splice(gone, 1); }
     const n = wasm.settings_len();
     if (n) {
       const b = new Uint8Array(wasm.memory.buffer, wasm.settings_ptr(), n);
@@ -112,15 +140,34 @@ function size() {
   addEventListener('keydown', e => { if (e.key in keys && !e.repeat) { wasm.key(keys[e.key], 1, now()); e.preventDefault(); } });
   addEventListener('keyup', e => { if (e.key in keys) wasm.key(keys[e.key], 0, now()); });
 
-  document.getElementById('file').onchange = async e => {
-    const f = e.target.files[0];
+  // Converted like on the reader's phone page, then kept and added.
+  async function addFile(f) {
     if (!f) return;
-    let text = await f.text();
-    if (!text.startsWith('<!-- title:')) text = `<!-- title: ${f.name.replace(/\.[^.]*$/, '')} -->\n` + text;
-    put(new TextEncoder().encode(text));
-    wasm.add_book();
-    msg(`${f.name}: in the library (📚)`);
-  };
+    msg(`Reading ${f.name}…`);
+    try {
+      const name = f.name.toLowerCase();
+      const book = name.endsWith('.epub') ? await epubToMarkup(f)
+        : name.endsWith('.pdf') ? await pdfToMarkup(f, m => msg(m))
+        : plain(f.name, await f.text());
+      const head = `<!-- title: ${book.title} -->\n` + (book.author ? `<!-- author: ${book.author} -->\n` : '');
+      const bytes = new Uint8Array(await new Blob([head + book.text, ...(book.images ? [book.images] : [])]).arrayBuffer());
+      if (db) stored.push(await done(store('readwrite').add(bytes.buffer)));
+      put(bytes);
+      wasm.add_book(1);
+      msg(`${book.title}: added (📚 Library), kept in this browser`);
+    } catch (e) { console.error(e); msg('Could not read this file: ' + (e.message || e)); }
+  }
+  function plain(name, text) {
+    const book = {title: name.replace(/\.[^.]*$/, ''), author: '', text};
+    const t = text.match(/^<!-- title:(.*?)-->\r?\n?/);
+    if (t) { book.title = t[1].trim(); book.text = text.slice(t[0].length); }
+    const a = book.text.match(/^<!-- author:(.*?)-->\r?\n?/);
+    if (a) { book.author = a[1].trim(); book.text = book.text.slice(a[0].length); }
+    return book;
+  }
+  document.getElementById('file').onchange = e => addFile(e.target.files[0]);
+  addEventListener('dragover', e => e.preventDefault());
+  addEventListener('drop', e => { e.preventDefault(); addFile(e.dataTransfer.files[0]); });
   // A new size needs a new start: reload keeps the settings.
   let was = innerWidth > innerHeight;
   addEventListener('resize', () => { if ((innerWidth > innerHeight) !== was) location.reload(); });

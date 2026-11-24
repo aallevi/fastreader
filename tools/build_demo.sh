@@ -10,4 +10,9 @@ rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 cargo build --release -p reader-web --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/reader_web.wasm docs/demo/fastreader.wasm
 cp books/sample.md books/sonnet-18.md docs/demo/books/
+# The phone page's EPUB/PDF converters, and pdf.js for PDFs.
+sed -n '/---- converters begin/,/---- converters end/p' web/index.html > docs/demo/convert.js
+mkdir -p docs/demo/pdfjs
+for f in pdf.min.mjs pdf.worker.min.mjs; do gunzip -c "assets/web/$f.gz" > "docs/demo/pdfjs/$f"; done
+cp assets/web/LICENSE-pdfjs.txt docs/demo/pdfjs/
 ls -l docs/demo/fastreader.wasm

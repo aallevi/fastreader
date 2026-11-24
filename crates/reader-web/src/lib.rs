@@ -18,6 +18,11 @@ struct Demo {
     /// RGBA for the canvas, brightness applied.
     rgba: Vec<u8>,
     books: Vec<Vec<u8>>,
+    /// How many of `books` came with the page (the rest were added).
+    builtin: usize,
+    /// An added book deleted on the reader: its index among the added ones,
+    /// for the page to drop from its storage.
+    deleted: Option<usize>,
     touch: Touch,
     finger: Option<(i32, i32)>,
     held: Option<(Key, u64, u64)>,
@@ -77,6 +82,8 @@ pub extern "C" fn start(w: u32, h: u32) {
             cv: Canvas::new(w, h),
             rgba: vec![255; (w * h * 4) as usize],
             books: Vec::new(),
+            builtin: 0,
+            deleted: None,
             touch: Touch::default(),
             finger: None,
             held: None,
@@ -88,17 +95,23 @@ pub extern "C" fn start(w: u32, h: u32) {
 }
 
 /// Adds the book in the inbox (converter output: markup and pictures) to
-/// the library; the first one added is opened. Returns its index.
+/// the library; the first one added is opened. `added` = 1 for a book the
+/// visitor added (it can be deleted), 0 for one that came with the page
+/// (those come first). Returns its index.
 #[no_mangle]
-pub extern "C" fn add_book() -> u32 {
+pub extern "C" fn add_book(added: u32) -> u32 {
     let bytes = take_inbox();
     with(|d| {
         let book = Book::from_bytes(&bytes, "Book");
         let i = d.books.len();
         let size = bytes.len() as u32;
         d.books.push(bytes);
+        if added == 0 {
+            d.builtin = d.books.len();
+        }
         d.app.library.push(book.title.clone());
-        d.app.library_info.push(BookInfo { place: Place::Flash, bytes: size });
+        let place = if added == 0 { Place::Builtin } else { Place::Flash };
+        d.app.library_info.push(BookInfo { place, bytes: size });
         d.app.positions.resize(d.app.library.len(), 0);
         let wanted = d.app.settings.book as usize;
         if i == wanted || (i == 0 && wanted >= d.books.len()) || d.app.reader.book.len() < 3 {
@@ -178,22 +191,7 @@ pub extern "C" fn frame(now: f64) -> u32 {
         }
         d.app.tick(now);
         while let Some(e) = d.app.take_effect() {
-            match e {
-                Effect::SaveSettings | Effect::Display | Effect::SaveBookmarks => {
-                    d.settings_dirty = true;
-                    d.redraw = true;
-                }
-                Effect::OpenBook(i) => {
-                    if let Some(bytes) = d.books.get(i as usize) {
-                        let book = Book::from_bytes(bytes, "Book");
-                        d.app.open_book(book, i);
-                        d.settings_dirty = true;
-                    }
-                    d.redraw = true;
-                }
-                // No sleep, radio, card or deleting in a web page.
-                Effect::Sleep | Effect::Wifi(_) | Effect::FormatCard | Effect::DeleteBook(_) => {}
-            }
+            apply(d, e, now);
         }
         if d.redraw {
             d.ui.invalidate();
@@ -219,6 +217,51 @@ pub extern "C" fn frame(now: f64) -> u32 {
         changed as u32
     })
     .unwrap_or(0)
+}
+
+/// Carries out what the app asked for.
+fn apply(d: &mut Demo, e: Effect, now: u64) {
+    match e {
+        Effect::SaveSettings | Effect::Display | Effect::SaveBookmarks => {
+            d.settings_dirty = true;
+            d.redraw = true;
+        }
+        Effect::OpenBook(i) => {
+            if let Some(bytes) = d.books.get(i as usize) {
+                let book = Book::from_bytes(bytes, "Book");
+                d.app.open_book(book, i);
+                d.settings_dirty = true;
+            }
+            d.redraw = true;
+        }
+        Effect::DeleteBook(i) => {
+            let i = i as usize;
+            if i >= d.builtin && i < d.books.len() {
+                d.books.remove(i);
+                d.app.book_removed(i, now);
+                d.deleted = Some(i - d.builtin);
+                d.settings_dirty = true;
+                // The open book may have moved or gone: reopen.
+                let open = (d.app.settings.book as usize).min(d.books.len().saturating_sub(1));
+                if let Some(bytes) = d.books.get(open) {
+                    let book = Book::from_bytes(bytes, "Book");
+                    d.app.open_book(book, open as u8);
+                }
+            } else {
+                d.app.cant_delete(now);
+            }
+            d.redraw = true;
+        }
+        // No sleep, radio or card in a web page.
+        Effect::Sleep | Effect::Wifi(_) | Effect::FormatCard => {}
+    }
+}
+
+/// An added book deleted on the reader since the last call: its index among
+/// the added books, or -1.
+#[no_mangle]
+pub extern "C" fn take_deleted() -> i32 {
+    with(|d| d.deleted.take().map_or(-1, |i| i as i32)).unwrap_or(-1)
 }
 
 /// The RGBA pixels of the last frame (width × height × 4 bytes).
@@ -255,7 +298,7 @@ mod tests {
     fn load(text: &str) {
         let p = inbox(text.len());
         unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), p, text.len()) };
-        add_book();
+        add_book(0);
     }
 
     #[test]
@@ -275,5 +318,15 @@ mod tests {
         assert!(changed > 3, "words went by");
         let px = unsafe { std::slice::from_raw_parts(pixels(), 320 * 240 * 4) };
         assert!(px.chunks(4).any(|c| c[0] < 100), "something dark was drawn");
+        // An added book can be deleted (the page hears which); built-in ones can't.
+        let mine = "<!-- title: Mine -->\nMy own book.";
+        let p = inbox(mine.len());
+        unsafe { std::ptr::copy_nonoverlapping(mine.as_ptr(), p, mine.len()) };
+        assert_eq!(add_book(1), 2);
+        with(|d| apply(d, Effect::DeleteBook(0), 5_000));
+        assert_eq!(take_deleted(), -1, "a built-in book stays");
+        with(|d| apply(d, Effect::DeleteBook(2), 5_100));
+        assert_eq!(take_deleted(), 0, "the first added book went");
+        with(|d| assert_eq!(d.app.library.len(), 2));
     }
 }

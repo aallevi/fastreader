@@ -274,6 +274,7 @@ $('hwSave').onclick = () => {
 };
 $('hwForget').onclick = () => { if (confirm('Forget the home network? The reader restarts.')) sendHome('/wifi/forget', '', 'Forgotten. The reader restarts.'); };
 
+// ---- converters begin (tools/build_demo.sh copies this part to the browser demo)
 // ---- add a book: EPUBs are converted here in the browser (unzip + XHTML →
 // the reader's markup), so a phone on the reader's Wi-Fi needs nothing else.
 async function unzip(buf) {
@@ -429,8 +430,9 @@ function joinBroken(paras) {
 
 // ---- PDFs, with pdf.js served by the reader itself (no internet needed).
 async function pdfToMarkup(file, progress) {
-  const pdfjs = await import('/pdfjs/pdf.min.mjs');
-  pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs';
+  const base = globalThis.PDFJS_BASE || '/pdfjs/';
+  const pdfjs = await import(base + 'pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.mjs';
   // Keep the loading task: closing a document goes through it.
   let task = null;
   const open = async () => {
@@ -696,6 +698,7 @@ async function epubToMarkup(file) {
     throw new Error('this EPUB has only pictures of the pages, no text: use a PDF with a text layer (OCR) instead');
   return {title, author, text, images: pics.blob(), pictures: pics.list.length};
 }
+// ---- converters end
 let pending = null;
 $('file').onchange = () => loadBook($('file').files[0]);
 // Drag and drop: a book dropped anywhere on the page.
