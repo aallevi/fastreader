@@ -113,11 +113,13 @@ class XhtmlText(HTMLParser):
             self.lists.append([tag == "ol", int(start) if start.isdigit() else 1])
         if tag == "li":
             self.flush()
+            # Nested lists: two spaces of indentation per level.
+            pad = "  " * max(0, len(self.lists) - 1)
             if self.lists and self.lists[-1][0]:
-                self.marker = f"{self.lists[-1][1]}."
+                self.marker = f"{pad}{self.lists[-1][1]}."
                 self.lists[-1][1] += 1
             else:
-                self.marker = "•"
+                self.marker = pad + "•"
         if tag == "table":
             self.flush()
             self.table = ([], False)
@@ -545,7 +547,8 @@ def main():
             if words and len(p) < 60 and all(re.fullmatch(r"\*\*[^*]+\*\*", w) for w in words):
                 return "# " + p.replace("**", "")
             return p
-        text = "\n\n".join(promote(p.strip()) for p in text.split("\n\n"))
+        # (Leading spaces kept: they are a nested list item's level.)
+        text = "\n\n".join(promote(p.strip("\n").rstrip()) for p in text.split("\n\n"))
         # Collapse 3+ blank lines; first line carries the title for the library.
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         if a.sd:

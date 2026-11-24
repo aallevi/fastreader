@@ -681,8 +681,13 @@ impl Book {
                 if !fresh {
                     out.write_str("<br>\n")?;
                 }
-                let m = if l.numbered() { l.items[k].1.as_str() } else { "•" };
-                write!(out, "<span class=\"mk\">{m} </span>")?;
+                let m = if l.numbered() { l.items[k].1.as_str() } else { ["•", "◦", "▪", "▪"][l.levels.get(k).copied().unwrap_or(0).min(3) as usize] };
+                let lv = l.levels.get(k).copied().unwrap_or(0);
+                if lv > 0 {
+                    write!(out, "<span class=\"mk\" style=\"margin-left:{}em\">{m} </span>", lv as f32 * 1.4)?;
+                } else {
+                    write!(out, "<span class=\"mk\">{m} </span>")?;
+                }
             } else if let Some((t, c)) = self.cell_at(i).filter(|(t, c)| t.cells[*c].0 as usize == i) {
                 if t.cells[c].2 == 0 {
                     if !fresh {
@@ -737,10 +742,17 @@ type Captions = Vec<(u32, String)>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct List {
     pub items: Vec<(u32, String)>,
+    /// Each item's nesting level (0 = top), from its indentation.
+    pub levels: Vec<u8>,
     pub end: u32,
 }
 
 impl List {
+    /// The deepest nesting level in the list.
+    pub fn depth(&self) -> u8 {
+        self.levels.iter().copied().max().unwrap_or(0)
+    }
+
     /// Numbered ("1.", "a)", "iv.") rather than bulleted.
     pub fn numbered(&self) -> bool {
         self.items.first().is_some_and(|(_, m)| m.chars().any(|c| c.is_alphanumeric()))
@@ -801,6 +813,9 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
     let mut tables: Vec<Table> = Vec::new();
     // A list or table still open (blank lines don't close a list).
     let mut in_list = false;
+    // The indentations seen in the open list: an item's level is how many
+    // smaller ones there are (2 or 4 spaces per level both work).
+    let mut indents: Vec<usize> = Vec::new();
     // This list puts each item's picture before its caption (a catalogue:
     // picture, "1. title…"): a picture just before an item is that item's.
     let mut pics_first = false;
@@ -871,11 +886,12 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 let is_pic = |words: &Chunked<Word>, i: usize| words.get(i).is_some_and(|w| text.get(w.start, w.len as usize).starts_with(IMAGE_MARK));
                 if !in_list {
                     in_list = true;
+                    indents.clear();
                     pics_first = !words.is_empty() && is_pic(&words, words.len() - 1);
                     if let Some(last) = words.last_mut() {
                         last.pause = Pause::Paragraph;
                     }
-                    lists.push(List { items: Vec::new(), end: 0 });
+                    lists.push(List { items: Vec::new(), levels: Vec::new(), end: 0 });
                 } else if let Some(last) = words.last_mut() {
                     // Between items: at least a sentence's breath.
                     last.pause = last.pause.max(Pause::Sentence);
@@ -887,7 +903,14 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 while pics_first && first > floor && is_pic(&words, first - 1) {
                     first -= 1;
                 }
-                lists.last_mut().unwrap().items.push((first as u32, String::from(m)));
+                let indent: usize = raw.chars().take_while(|c| c.is_whitespace()).map(|c| if c == '\t' { 4 } else { 1 }).sum();
+                if !indents.contains(&indent) {
+                    indents.push(indent);
+                }
+                let level = indents.iter().filter(|&&x| x < indent).count().min(3) as u8;
+                let l = lists.last_mut().unwrap();
+                l.items.push((first as u32, String::from(m)));
+                l.levels.push(level);
             }
             // A picture (or its description) inside a list doesn't end it.
             None if in_list && !(first.starts_with("{image:") || first == "{caption}") => {
@@ -1591,6 +1614,11 @@ mod tests {
         assert!(n.numbered());
         assert_eq!(n.items.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>(), ["1.", "2)", "iv."]);
         assert!(b.list_at(b.len() - 1).is_none(), "dashes start dialogue, not lists");
+        let nested = Book::new("t", "• fruit\n  • apples\n  • pears\n    • conference\n• bread\n\nSteps:\n1. first\n    a) inside\n2. second");
+        assert_eq!(nested.lists.len(), 2);
+        assert_eq!(nested.lists[0].levels, [0, 1, 1, 2, 0], "two spaces a level");
+        assert_eq!(nested.lists[1].levels, [0, 1, 0], "four spaces work too");
+        assert_eq!(nested.lists[0].depth(), 2);
         let lone = Book::new("t", "Index:\n\n1.\n\n2.\n\nThe end.");
         assert_eq!(words(&lone), ["Index:", "The", "end."], "lone numbers are labels, not words");
         // A catalogue: each picture comes before its numbered caption.
@@ -1624,7 +1652,8 @@ mod tests {
     fn the_lists_and_tables_tour_has_them_all() {
         let b = Book::parse(include_str!("../../../books/tour-lists-and-tables.md"), "f");
         assert_eq!(b.title, "Lists and tables");
-        assert_eq!(b.lists.iter().map(|l| l.items.len()).collect::<Vec<_>>(), [5, 5, 3, 12, 15], "short and long, bulleted, numbered, lettered");
+        assert_eq!(b.lists.iter().map(|l| l.items.len()).collect::<Vec<_>>(), [5, 5, 3, 12, 8, 15], "short and long, bulleted, numbered, lettered, nested");
+        assert_eq!(b.lists[4].depth(), 2, "the nested one goes two levels deep");
         assert_eq!(b.tables.iter().map(|t| (t.rows, t.cols, t.header)).collect::<Vec<_>>(), [(4, 3, 1), (9, 4, 1), (13, 3, 1)]);
     }
 

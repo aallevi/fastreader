@@ -1128,7 +1128,12 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         let bpx = word_px(c) * 1.15;
         let inset = l.px(5.0);
         let (open, close) = reader_core::book::bracket_pair(book, app.reader.pos());
-        f.draw(cv, face, bpx, open, p.x as f32 + inset, base, th.dim);
+        // In a list the opening mark sits after the column of markers.
+        let left = match book.list_at(app.reader.pos()) {
+            Some((list, _)) => p.x as f32 + list_margin(l, list) as f32,
+            None => p.x as f32 + inset,
+        };
+        f.draw(cv, face, bpx, open, left, base, th.dim);
         let rw = f.measure(face, bpx, close);
         f.draw(cv, face, bpx, close, p.right() as f32 - inset - rw, base, th.dim);
     }
@@ -1173,7 +1178,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
 /// How far from the page's left edge a list's column of markers reaches:
 /// guide lines and pictures start after it.
 fn list_margin(l: &Layout, list: &reader_core::book::List) -> i32 {
-    l.i(if list.numbered() { 34.0 } else { 24.0 })
+    l.i(if list.numbered() { 34.0 } else { 24.0 } + list.depth() as f32 * LIST_STEP)
 }
 
 /// The highlight for the current list item and table cell: a clear amber,
@@ -1201,32 +1206,53 @@ fn draw_list_column(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, list: &reader_core:
     let shown = n.min(fit);
     let row = (room / shown as f32).min(l.px(20.0));
     let first = item.saturating_sub(shown / 2).min(n - shown);
-    let label = |m: &str| if list.numbered() { String::from(m) } else { String::from("•") };
-    // Bullets drawn larger than text (a dot at text size is hard to see),
-    // both shrinking as the markers pack tighter.
-    let px = if list.numbered() { l.px(11.0).min(row * 0.9) } else { l.px(17.0).min(row * 1.6) };
+    // Numbers as text; bullets as shapes by level (dot, ring, square), so
+    // nested items read at a glance. Nested items step to the right.
+    let numbered = list.numbered();
+    let px = l.px(11.0).min(row * 0.9);
     let (hi, hi_text) = marker_colour(th);
-    let widest = (first..first + shown).map(|k| f.measure(th.ui.1, px, &label(&list.items[k].1))).fold(0.0f32, f32::max).max(l.px(8.0));
+    let widest = if numbered {
+        (first..first + shown).map(|k| f.measure(th.ui.1, px, &list.items[k].1)).fold(0.0f32, f32::max).max(l.px(8.0))
+    } else {
+        l.px(6.0)
+    };
     let w = widest + l.px(10.0);
+    let step = l.px(LIST_STEP);
     let x = p.x as f32 + l.px(5.0);
     let y0 = area.cy() - shown as f32 * row / 2.0;
     for (k, idx) in (first..first + shown).enumerate() {
-        let s = label(&list.items[idx].1);
-        let tw = f.measure(th.ui.1, px, &s);
+        let lv = list.levels.get(idx).copied().unwrap_or(0);
+        let xi = x + lv as f32 * step;
         let cy = y0 + (k as f32 + 0.5) * row;
-        if idx == item {
-            let r = Rect::new(x as i32, (cy - row * 0.42) as i32, w as i32, (row * 0.84) as i32);
+        let current = idx == item;
+        if current {
+            let r = Rect::new(xi as i32, (cy - row * 0.42) as i32, w as i32, (row * 0.84) as i32);
             cv.fill(r, hi);
             if th.chrome == Chrome::Win98 {
                 bevel(cv, r, true);
             }
-            f.draw(cv, th.ui.1, px, &s, x + (w - tw) / 2.0, cy + px * 0.36, hi_text);
+        }
+        let ink = if current { hi_text } else { th.dim };
+        if numbered {
+            let s = &list.items[idx].1;
+            let face = if current { th.ui.1 } else { th.ui.0 };
+            let tw = f.measure(face, px, s);
+            f.draw(cv, face, px, s, xi + (w - tw) / 2.0, cy + px * 0.36, ink);
         } else {
-            f.draw(cv, th.ui.0, px, &s, x + (w - tw) / 2.0, cy + px * 0.36, th.dim);
+            let (cx, r) = (xi + w / 2.0, (row * 0.2).clamp(l.px(1.6), l.px(3.2)));
+            match lv {
+                0 => cv.circle(cx, cy, r, Paint::Solid(ink)),
+                1 => cv.ring(cx, cy, r, l.px(1.2), ink),
+                _ => cv.fill(Rect::new((cx - r * 0.85) as i32, (cy - r * 0.85) as i32, (r * 1.7) as i32, (r * 1.7) as i32), ink),
+            }
         }
     }
-    Rect::new(x as i32 - 1, (y0 - 2.0) as i32, w as i32 + 3, (shown as f32 * row + 4.0) as i32).intersect(&area)
+    let width = w + list.depth() as f32 * step;
+    Rect::new(x as i32 - 1, (y0 - 2.0) as i32, width as i32 + 3, (shown as f32 * row + 4.0) as i32).intersect(&area)
 }
+
+/// How far each nesting level steps to the right in a list's column.
+const LIST_STEP: f32 = 7.0;
 
 /// A table's shape, flashed before each cell: its grid of boxes, header
 /// rows shaded, the cell about to be read filled in the message colour.

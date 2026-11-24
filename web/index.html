@@ -454,10 +454,14 @@ function toMarkup(doc, docPath) {
     let marker = '';
     if (el.localName === 'li') {
       const list = el.parentElement;
+      // Nested lists: two spaces of indentation per level.
+      let depth = 0;
+      for (let p = list && list.parentElement; p; p = p.parentElement) if (p.localName === 'ul' || p.localName === 'ol') depth++;
+      const pad = '  '.repeat(depth);
       if (list && list.localName === 'ol') {
         const items = [...list.children].filter(c => c.localName === 'li');
-        marker = (parseInt(list.getAttribute('start') || '1', 10) + items.indexOf(el)) + '. ';
-      } else marker = '• ';
+        marker = pad + (parseInt(list.getAttribute('start') || '1', 10) + items.indexOf(el)) + '. ';
+      } else marker = pad + '• ';
     }
     out.push(/^h[1-4]$/.test(el.localName) ? '# ' + text.replace(/\*/g, '') : marker + text);
   }
