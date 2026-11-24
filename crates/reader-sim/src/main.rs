@@ -28,7 +28,33 @@ fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// Run as FastReader.app (the Mac installer): books, places and settings
+/// live in ~/Library/Application Support/FastReader, and the sample books
+/// inside the app are put there the first time.
+fn use_app_folder() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(contents) = exe.ancestors().find(|p| p.file_name().is_some_and(|n| n == "Contents")) else { return };
+    if !contents.parent().is_some_and(|a| a.extension().is_some_and(|e| e == "app")) {
+        return;
+    }
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let dir = PathBuf::from(home).join("Library/Application Support/FastReader");
+    for sub in ["books", "books/uploaded", "target"] {
+        let _ = std::fs::create_dir_all(dir.join(sub));
+    }
+    if let Ok(found) = std::fs::read_dir(contents.join("Resources/books")) {
+        for e in found.flatten() {
+            let to = dir.join("books").join(e.file_name());
+            if !to.exists() {
+                let _ = std::fs::copy(e.path(), to);
+            }
+        }
+    }
+    let _ = std::env::set_current_dir(&dir);
+}
+
 fn main() {
+    use_app_folder();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let size = arg(&args, "--size")
         .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))))

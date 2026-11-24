@@ -9,3 +9,4 @@ reference/
 books/uploaded/
 __pycache__/
 *.pyc
+dist/

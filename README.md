@@ -51,6 +51,18 @@ moves pixels, touches and bytes.
 | ▶ | BOOT short | play / pause | same |
 | page corner | – | bookmark | same |
 
+## Try it on a Mac
+
+Download `FastReader-<version>.dmg`, open it and drag **Fast Reader** onto
+Applications. It is the same reader as the device, in a window you can
+resize (or fill the screen); add books from its page at
+http://localhost:8080 (Settings > Add a book) and they stay, with your
+place, in ~/Library/Application Support/FastReader. The app isn't signed
+with an Apple Developer ID yet: the first time, right-click it > Open (or
+System Settings > Privacy & Security > Open Anyway).
+
+`packaging/make_dmg.sh` builds the disk image (Apple silicon + Intel).
+
 ## Run it
 
 ```sh
