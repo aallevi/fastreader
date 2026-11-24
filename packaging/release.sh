@@ -14,9 +14,14 @@ VERSION="$1"; NOTES="$2"
 export PATH="$HOME/.cargo/bin:$PATH"
 [ -z "$(git status --porcelain)" ] || { echo "commit your changes first"; exit 1; }
 
-# The version, in the workspace and the firmware.
+# The version, in the workspace and the firmware, committed and tagged
+# first: the builds then name themselves plainly "<version>" (an untagged or
+# changed tree adds " +<commit>").
 sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml firmware/Cargo.toml
 cargo test --release --workspace -q
+git add Cargo.toml Cargo.lock firmware/Cargo.toml firmware/Cargo.lock
+git commit -q -m "Release $VERSION"
+git tag "v$VERSION"
 
 # The Mac app.
 packaging/make_dmg.sh
@@ -31,9 +36,6 @@ espflash save-image --chip esp32s3 --flash-size 16mb "$ELF" "dist/fastreader-es3
 espflash save-image --chip esp32s3 --merge --skip-padding --flash-size 16mb --partition-table firmware/partitions.csv \
   "$ELF" "dist/fastreader-es3c28p-$VERSION-full.bin"
 
-git add Cargo.toml Cargo.lock firmware/Cargo.toml firmware/Cargo.lock
-git commit -q -m "Release $VERSION"
-git tag "v$VERSION"
 git push -q && git push -q --tags
 gh release create "v$VERSION" "dist/FastReader-$VERSION.dmg" \
   "dist/fastreader-es3c28p-$VERSION-update.bin" "dist/fastreader-es3c28p-$VERSION-full.bin" \
