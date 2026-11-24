@@ -1,6 +1,6 @@
 [package]
 name = "fastreader-firmware"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 description = "Fast reader firmware for the LCDWIKI ES3C28P (ESP32-S3, 2.8\" ILI9341V, FT6336G)"
