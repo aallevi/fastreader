@@ -738,3 +738,38 @@ fn battery_states_draw_cleanly_and_stay_put() {
         assert!(a.low_warning || a.low_sleep_at.is_some(), "theme {theme}: 2% warned");
     }
 }
+
+#[test]
+fn every_message_fits_the_title_bar() {
+    // Each message shown in the title bar fits whole (at worst a little
+    // smaller), in every theme, on the device's 320×240.
+    use reader_core::app::{Feedback, Msg, Tone};
+    use reader_core::settings::Skip;
+    let msgs = [
+        Msg::Playing, Msg::Paused, Msg::Speed(1000), Msg::Skipped { net: -12, skip: Skip::Sentence }, Msg::Turned { net: 12 }, Msg::Stepped { net: -12 },
+        Msg::PageBack, Msg::PageForward, Msg::AtStart, Msg::AtEnd, Msg::Top, Msg::Bottom, Msg::Kept, Msg::Restarted, Msg::Finished, Msg::Sleeping,
+        Msg::PagesView, Msg::SpeedView, Msg::Highlight(true), Msg::Highlight(false), Msg::Wifi(true), Msg::Wifi(false), Msg::BookAdded, Msg::BooksRemoved,
+        Msg::BookRemoved, Msg::Bookmarked, Msg::BookmarkRemoved, Msg::NoBookmarks, Msg::NoCard, Msg::NoBooks, Msg::Deleting, Msg::CantDelete,
+        Msg::PictureHeld, Msg::CaptionShown, Msg::CardRemoved, Msg::CardInserted, Msg::WebIdleOff, Msg::CaptionHidden, Msg::Formatting, Msg::CardReady,
+        Msg::CardFailed, Msg::Rotated, Msg::NoChapters,
+    ];
+    let mut bad = Vec::new();
+    for theme in 0..THEMES.len() as u8 {
+        let th = reader_ui::themes::theme(theme);
+        let a = App::new(Book::new("t", "One two."), CATALOG, Settings { theme, ..Settings::default() });
+        let mut ui = Ui::new(320, 240);
+        let l = ui.layout;
+        let room = (l.header.w as f32 - l.px(8.0)) - (reader_ui::layout::header_buttons(&l)[3].rect.right() as f32 + l.px(8.0));
+        for m in msgs {
+            let mut text = reader_ui::painter::toast_text(&a, Feedback { tone: Tone::Ok, msg: m });
+            if th.upper {
+                text = text.to_uppercase();
+            }
+            let w = ui.fonts.measure(th.ui.1, l.px(10.0), &text);
+            if w > room - l.px(12.0) {
+                bad.push(format!("{}: \"{text}\" is {w:.0} px, the title bar has {:.0}", th.name, room - l.px(12.0)));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "cut short:\n{}", bad.join("\n"));
+}

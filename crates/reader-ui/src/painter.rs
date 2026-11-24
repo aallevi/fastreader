@@ -2066,7 +2066,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Set(kind, i) => format!("{}: {}", kind.title(), app.pick_label(kind, i)),
         Msg::Kept => "Kept as before".into(),
         Msg::Restarted => "From the start".into(),
-        Msg::Finished => "Finished. Play starts over".into(),
+        Msg::Finished => "The end. Play starts over".into(),
         Msg::Sleeping => "Going to sleep".into(),
         Msg::PagesView => "Page view".into(),
         Msg::SpeedView => "Speed view".into(),
@@ -2074,7 +2074,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::NoChapters => "This book has no chapters".into(),
         Msg::Highlight(true) => "Highlight on".into(),
         Msg::Highlight(false) => "Highlight off".into(),
-        Msg::Wifi(true) => "Web view on: join Wi-Fi FastReader".into(),
+        Msg::Wifi(true) => "Web view: Wi-Fi FastReader".into(),
         Msg::Wifi(false) => "Web view off".into(),
         Msg::BookAdded => "Book added to the library".into(),
         Msg::BookRemoved => "Book deleted".into(),
@@ -2093,7 +2093,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::CardReady => "SD card ready".into(),
         Msg::CardFailed => "Could not format the card".into(),
         Msg::BookmarkRemoved => "Bookmark removed".into(),
-        Msg::NoBookmarks => "No bookmarks yet: tap the page corner".into(),
+        Msg::NoBookmarks => "No bookmarks: tap the corner".into(),
         Msg::BooksRemoved => "Uploaded books removed".into(),
         Msg::Shown => String::new(),
     }
@@ -2104,8 +2104,15 @@ fn draw_toast(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, area: Rect) {
     let (th, l, app) = (c.th, c.l, c.app);
     let Some(t) = app.toast() else { return };
     let text = up(th, &toast_text(app, t.feedback));
-    let px = l.px(12.0);
-    let pad = l.px(12.0);
+    // A long message gets a little smaller and tighter before it would be
+    // cut short.
+    let (mut px, mut pad) = (l.px(12.0), l.px(12.0));
+    for (size, p) in [(12.0, 12.0), (11.0, 8.0), (10.0, 6.0)] {
+        (px, pad) = (l.px(size), l.px(p));
+        if f.measure(th.ui.1, px, &text) <= area.w as f32 - 2.0 * pad {
+            break;
+        }
+    }
     let tw = f.measure(th.ui.1, px, &text).min(area.w as f32 - 2.0 * pad);
     let w = tw + 2.0 * pad;
     let h = (area.h as f32 - l.px(5.0)).min(l.px(22.0));
