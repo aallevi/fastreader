@@ -935,7 +935,7 @@ pub static HAT_GREY: core::sync::atomic::AtomicBool = core::sync::atomic::Atomic
 
 /// The hat's colours in each theme, by role (see tools/make_hat.py): cap,
 /// lit, shaded; stripe, shaded; fur, shaded; pom-pom, shaded; inside;
-/// outline; z's.
+/// outline; z's (bright red, like the battery's).
 fn hat_palette(th: &Theme) -> [Rgb; 12] {
     let mut p = hat_colours(th);
     if HAT_GREY.load(core::sync::atomic::Ordering::Relaxed) {
@@ -952,10 +952,10 @@ fn hat_palette(th: &Theme) -> [Rgb; 12] {
 
 fn hat_colours(th: &Theme) -> [Rgb; 12] {
     match th.name {
-        "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0x000080],
-        "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0x1F4E8C],
-        "Night" => [0xE61E28, 0xFF6464, 0x6E0A14, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0x000000, 0x000000, 0xE61E28],
-        _ => [0xE87870, 0xF8A496, 0xB0545C, 0xFFFAF0, 0xDCC8BE, 0xFFFAF0, 0xD6BEB4, 0x8CB4D2, 0x6084AA, 0x2E2640, 0x5A3C46, 0x6084AA],
+        "Windows 98" => [0x000080, 0x0000FF, 0x000040, 0xFFFFFF, 0xC0C0C0, 0xFFFFFF, 0xA0A0A0, 0xFFFF00, 0xA0A000, 0x000000, 0x000000, 0xFF0000],
+        "Vista" => [0x1F4E8C, 0x3A7BD5, 0x12305A, 0xF4F8FD, 0xC6D4E6, 0xFFFFFF, 0xB8C6D8, 0xFFD24A, 0xC09020, 0x0B1B28, 0x0B1B28, 0xFF2A2A],
+        "Night" => [0xE61E28, 0xFF6464, 0x6E0A14, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0xFFFFFF, 0x969696, 0x000000, 0x000000, 0xFF2A2A],
+        _ => [0xE87870, 0xF8A496, 0xB0545C, 0xFFFAF0, 0xDCC8BE, 0xFFFAF0, 0xD6BEB4, 0x8CB4D2, 0x6084AA, 0x2E2640, 0x5A3C46, 0xFF2A2A],
     }
 }
 
@@ -1020,7 +1020,8 @@ fn draw_hat(cv: &mut Canvas, th: &Theme, x: i32, y: i32, k: i32, frame: usize, p
 fn warning_rect(c: &Ctx) -> Rect {
     let (th, l) = (c.th, c.l);
     let stage = l.word.union(&l.context).intersect(&paper(th, l));
-    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(112.0));
+    // Tall, but clear of the progress line and bar below the stage.
+    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(136.0).min(stage.h - l.i(10.0)));
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
@@ -1044,11 +1045,18 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let title_h = l.i(18.0);
     let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
     let k = (l.px(1.0).round() as i32).max(1);
-    let hat = (r.x + l.i(10.0), bar.bottom() + l.i(8.0));
-    // The night behind the hat (one of the looks being tried): the left of
-    // the window's body, black with stars, dithered into grey.
-    let body = Rect::new(r.x + l.i(3.0), bar.bottom(), l.i(96.0), r.bottom() - l.i(3.0) - bar.bottom());
-    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, r.x + l.i(52.0), l.i(40.0)));
+    // The hat at the left, the text close beside it (flush left), and OK
+    // under the text with some air above it.
+    let hat_w = HAT[7] as i32 * k;
+    let text_x = r.x + l.i(12.0) + hat_w + l.i(4.0);
+    let line = l.px(14.5);
+    let lines_top = bar.bottom() as f32 + l.px(10.0);
+    let ok = Rect::new(text_x, r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
+    let hat = (r.x + l.i(8.0), ((lines_top + 2.0 * line + l.px(3.0)) as i32 - HAT[8] as i32 * k / 2));
+    // The night behind the hat (one of the looks being tried): black with
+    // stars, dithered into the grey just before the text.
+    let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_x - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
+    let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, text_x - l.i(26.0), l.i(22.0)));
     if redraw == Redraw::Hat {
         return draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
     }
@@ -1077,19 +1085,13 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     if let Some((sky, black_to, fade)) = night {
         draw_space(cv, sky, k, black_to, fade, panel);
     }
-    let hat_box = draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
-    // The text flush right (ragged left), the OK centred under it all.
-    let right = r.right() as f32 - l.px(10.0);
+    draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
     let lines = [String::from("Battery almost empty."), format!("Sleeping in {secs} s,"), String::from("your place is kept."), String::from("Plug in to read on.")];
-    let mut y = bar.bottom() as f32 + l.px(16.0);
-    let room = right - hat_box.right() as f32 - l.px(8.0);
-    for t in &lines {
-        let w = f.measure(th.ui.0, l.px(11.5), t).min(room);
-        f.draw_fit(cv, th.ui.0, l.px(11.5), t, right - w, y, room, ink);
-        y += l.px(14.5);
+    let room = r.right() as f32 - l.px(8.0) - text_x as f32;
+    for (n, t) in lines.iter().enumerate() {
+        f.draw_fit(cv, th.ui.0, l.px(11.5), t, text_x as f32, lines_top + l.px(11.0) + n as f32 * line, room, ink);
     }
-    // OK, centred at the bottom (any touch closes the warning).
-    let ok = Rect::new(r.cx() as i32 - l.i(27.0), r.bottom() - l.i(22.0), l.i(54.0), l.i(17.0));
+    // OK (any touch closes the warning).
     if win98 {
         cv.fill(ok, panel);
         bevel(cv, ok, false);
