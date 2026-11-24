@@ -1003,13 +1003,15 @@ impl App {
         if was_playing || self.screen.is_overlay() {
             self.last_input = now; // reading, or in a menu, is not a break
         }
-        // Reading reaches a table cell: its grid flashes for half the
-        // first word's time (that word has a beat more for it).
+        // Reading reaches a table cell: its grid shows first, for the time
+        // of a plain word.
         let pos = self.reader.pos();
         if pos != self.grid_seen {
             self.grid_seen = pos;
             if self.reader.is_playing() && self.reader.book.starts_cell(pos) {
-                self.grid_until = now + (self.reader.current_delay() / 2).clamp(120, 400);
+                // As long as a plain word (the first word has a beat more,
+                // so it still gets its own full time after).
+                self.grid_until = now + 60_000 / self.reader.wpm().max(1) as u64;
                 changed = true;
             }
         } else if self.grid_until != 0 && now >= self.grid_until {

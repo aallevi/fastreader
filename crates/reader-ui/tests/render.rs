@@ -590,3 +590,50 @@ fn guide_lines_stay_put_from_word_to_word() {
         }
     }
 }
+
+#[test]
+fn lists_tables_and_pictures_together_draw_like_a_full_redraw() {
+    // A list, a picture inside it, a table, a long list: played through in
+    // every theme and reading mode. After every frame that changed, the
+    // screen must equal the same moment drawn whole: nothing left behind,
+    // nothing drawn over.
+    let mut file = "Intro words before the list.\n\n\u{2022} first item\n\u{2022} second item\n\n{image:0}\n\n\u{2022} third item\n\nThen a table.\n\n| Year | Work |\n|---|---|\n| 1503 | Mona Lisa |\n| 1498 | Last Supper |\n\n".as_bytes().to_vec();
+    for k in 1..=30 {
+        file.extend_from_slice(format!("{k}. step number {k}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\nThe end.");
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&[0x40, 1, 0x82, 0]); // 320 x 130
+    file.extend((0..320 * 130).flat_map(|i: u32| ((i % 320 / 16) as u16 * 0x0841).to_le_bytes()));
+    let book = Book::from_bytes(&file, "t");
+    assert_eq!((book.lists.len(), book.tables.len()), (2, 1), "the list goes on after its picture");
+    for theme in 0..4u8 {
+        for mode in [0u8, 1, 3] {
+            let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { theme, mode, guides: true, ..Settings::default() });
+            let mut cv = Canvas::new(320, 240);
+            let mut whole = Canvas::new(320, 240);
+            let mut ui = Ui::new(320, 240);
+            let mut fresh = Ui::new(320, 240);
+            a.handle(reader_core::Key::Select, 0);
+            let (mut t, mut frames, mut grids) = (0u64, 0, 0);
+            while a.reader.is_playing() && t < 120_000 {
+                t += 20;
+                a.tick(t);
+                if ui.paint(&mut a, t, &mut cv).is_empty() {
+                    continue;
+                }
+                frames += 1;
+                grids += a.grid_flash(t) as u32;
+                fresh.invalidate();
+                fresh.paint(&mut a, t, &mut whole);
+                let diff = (0..240).flat_map(|y| (0..320).map(move |x| (x, y))).find(|&(x, y)| cv.pixel(x, y) != whole.pixel(x, y));
+                assert!(diff.is_none(), "theme {theme}, mode {mode}, word {}: differs from a full redraw at {diff:?}", a.reader.pos());
+            }
+            assert!(frames > 20, "theme {theme}, mode {mode}: played");
+            if mode == 0 {
+                assert!(grids > 0, "theme {theme}: the table's grid flashed");
+            }
+        }
+    }
+}

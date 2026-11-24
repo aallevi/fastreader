@@ -749,7 +749,8 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 }
                 lists.last_mut().unwrap().items.push((words.len() as u32, String::from(m)));
             }
-            None if in_list => {
+            // A picture (or its description) inside a list doesn't end it.
+            None if in_list && !(first.starts_with("{image:") || first == "{caption}") => {
                 in_list = false;
                 lists.last_mut().unwrap().end = words.len() as u32;
                 if let Some(last) = words.last_mut() {
@@ -1456,6 +1457,9 @@ mod tests {
         assert!(n.numbered());
         assert_eq!(n.items.iter().map(|(_, m)| m.as_str()).collect::<Vec<_>>(), ["1.", "2)", "iv."]);
         assert!(b.list_at(b.len() - 1).is_none(), "dashes start dialogue, not lists");
+        let p = Book::new("t", "• one\n\n{image:0}\n{caption} A cat. {/caption}\n\n• two\nEnd.");
+        assert_eq!(p.lists.len(), 1, "a picture inside a list keeps it one list");
+        assert_eq!(p.lists[0].items.len(), 2);
         // A breath between items.
         assert!(b.word(5).unwrap().pause >= Pause::Sentence);
     }

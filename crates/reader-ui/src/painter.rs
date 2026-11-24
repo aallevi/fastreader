@@ -61,6 +61,9 @@ struct View {
     corner: bool,
     /// The "welcome back" card, and the minutes away it shows.
     welcome: Option<Option<u64>>,
+    /// Which list the word is in: going in or out changes the margin and
+    /// the guide lines, so the screen is drawn whole then (rare).
+    list: Option<usize>,
 }
 
 /// Everything that changes where pages break.
@@ -170,10 +173,15 @@ impl Ui {
             toolbar: (app.reader.is_playing(), lit, app.reader.wpm(), app.page_index().map(|i| (i, app.pages_done.then_some(app.pages.len())))),
             corner: place_bookmarked(app),
             welcome: app.welcome.map(|w| w.away(now).map(|ms| ms / 60_000)),
+            list: {
+                let b = &app.reader.book;
+                let at = app.reader.shown().start as u32;
+                b.lists.iter().position(|l| l.items[0].0 <= at && at < l.end)
+            },
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome);
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.list != view.list);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -219,10 +227,28 @@ impl Ui {
                 if self.page_drawn.as_ref() != Some(&now_drawn) {
                     // Same page, highlight moved: redraw only the lines it left and entered.
                     let partial = self.page_drawn.as_ref().filter(|d| d.0 == now_drawn.0).map(|d| d.1.clone());
-                    damage.extend(draw_page(f, cv, &ctx, partial));
-                    // A redrawn first line may have run under the corner.
-                    draw_corner(cv, &ctx, view.corner);
-                    damage.push(bookmark_corner(app, &l).rect);
+                    let rects = draw_page(f, cv, &ctx, partial);
+                    let corner = bookmark_corner(app, &l).rect;
+                    let touches = |r: &Rect| rects.iter().any(|d| !d.intersect(r).is_empty());
+                    if view.corner {
+                        // A folded corner's soft shadow can't be drawn twice:
+                        // lines redrawn next to it bring the page back whole.
+                        let near = Rect::new(corner.x - l.i(12.0), corner.y, corner.w + l.i(12.0), corner.h + l.i(12.0));
+                        if touches(&near) {
+                            damage.extend(draw_page(f, cv, &ctx, None));
+                            draw_corner(cv, &ctx, true);
+                            damage.push(corner);
+                        } else {
+                            damage.extend(rects);
+                        }
+                    } else {
+                        // The fold's hint is solid pixels: redrawn where lines ran under it.
+                        if touches(&corner) {
+                            draw_corner(cv, &ctx, false);
+                            damage.push(corner);
+                        }
+                        damage.extend(rects);
+                    }
                     self.page_drawn = Some(now_drawn);
                 }
                 if o.status != view.status {
@@ -236,7 +262,7 @@ impl Ui {
                     // A picture reaches the page corner: clear it too, so the
                     // corner is redrawn once on top (its shadow doesn't build up).
                     let corner = bookmark_corner(app, &l).rect;
-                    let at_corner = app.reader.on_picture() || !word_box.intersect(&corner).is_empty();
+                    let at_corner = app.reader.on_picture() || app.grid_flash(now) || !word_box.intersect(&corner).is_empty();
                     if at_corner {
                         clear(cv, th, &l, corner.intersect(&paper(th, &l)));
                     }
@@ -466,7 +492,16 @@ fn draw_corner(cv: &mut Canvas, c: &Ctx, marked: bool) {
     let r = bookmark_corner(app, l).rect;
     let (x0, y0, s) = (r.x as f32, r.y as f32, r.w as f32);
     if !marked {
-        cv.line((x0 + s * 0.35, y0 + 1.0), (x0 + s - 1.0, y0 + s * 0.65), l.px(1.0), mix(th.page, th.text, 45));
+        // The hint of a fold: solid pixels, not blended, so drawing it again
+        // (after nearby lines are redrawn) leaves it exactly the same.
+        let colour = mix(th.page, th.text, 45);
+        let (ax, ay, bx, by) = (x0 + s * 0.35, y0 + 1.0, x0 + s - 1.0, y0 + s * 0.65);
+        let steps = (bx - ax).abs().max((by - ay).abs()).ceil().max(1.0) as i32;
+        let w = l.i(1.0).max(1);
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            cv.fill(Rect::new((ax + (bx - ax) * t).round() as i32, (ay + (by - ay) * t).round() as i32, w, w), colour);
+        }
         return;
     }
     if th.chrome == Chrome::Win98 {
@@ -908,17 +943,20 @@ fn draw_list_column(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, list: &reader_core:
     let (th, l) = (c.th, c.l);
     let p = paper(th, l);
     let area = l.word.intersect(&p);
-    let px = l.px(11.0);
-    let row = l.px(15.0);
-    // Between the guide lines (when shown), with a little air.
-    let room = area.h as f32 - if c.app.settings.guides { l.px(34.0) } else { l.px(8.0) };
-    let fit = ((room / row) as usize).max(1);
+    // The whole height of the left border, the markers spread evenly over
+    // it (at most a comfortable step apart); a list too long even packed
+    // tight shows a window of markers around the current one.
+    let room = area.h as f32 - l.px(8.0);
     let n = list.items.len();
+    let tight = if list.numbered() { l.px(12.0) } else { l.px(8.0) };
+    let fit = ((room / tight) as usize).max(1);
     let shown = n.min(fit);
+    let row = (room / shown as f32).min(l.px(20.0));
     let first = item.saturating_sub(shown / 2).min(n - shown);
     let label = |m: &str| if list.numbered() { String::from(m) } else { String::from("•") };
-    // Bullets drawn larger: a dot at text size is too small to see.
-    let px = if list.numbered() { px } else { l.px(17.0) };
+    // Bullets drawn larger than text (a dot at text size is hard to see),
+    // both shrinking as the markers pack tighter.
+    let px = if list.numbered() { l.px(11.0).min(row * 0.9) } else { l.px(17.0).min(row * 1.6) };
     let (hi, hi_text) = marker_colour(th);
     let widest = (first..first + shown).map(|k| f.measure(th.ui.1, px, &label(&list.items[k].1))).fold(0.0f32, f32::max).max(l.px(8.0));
     let w = widest + l.px(10.0);
@@ -1065,8 +1103,12 @@ fn draw_guides(cv: &mut Canvas, c: &Ctx, base: f32, ascent: f32, descent: f32) {
     let tick = l.px(7.0);
     let top = (base - ascent - gap) as i32;
     let bottom = (base + descent + gap) as i32;
-    let x = p.x + l.i(6.0);
-    let w = p.w - l.i(12.0);
+    // In a list, the lines start after its column of markers.
+    let x = match app.reader.book.list_at(app.reader.pos()) {
+        Some((list, _)) => p.x + l.i(if list.numbered() { 34.0 } else { 24.0 }),
+        None => p.x + l.i(6.0),
+    };
+    let w = p.right() - l.i(6.0) - x;
     let tx = cx.round() as i32;
     if th.chrome == Chrome::Win98 {
         for (y, down) in [(top, true), (bottom, false)] {
