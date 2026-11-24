@@ -54,14 +54,11 @@ moves pixels, touches and bytes.
 | ▶ | BOOT short | play / pause | same |
 | page corner | – | bookmark | same |
 
-## Pictures, lists and tables, while you read
+## The whole book, not just its words
 
-RSVP readers are built around the words. The ones we could check (App Store
-speed readers, browser and Obsidian plugins, November 2026) drop pictures,
-lists and tables or turn them into plain words; the closest, an Obsidian
-plugin, reads a table cell by cell with a pause at the end of each row. None
-we found shows a figure when the text points to it. Here they stay part of
-the reading:
+RSVP readers turn a book into a stream of words and leave everything else
+behind. Fast Reader keeps it in the reading: pictures, figures, lists and
+tables, each shown the way it works best one word at a time.
 
 - **Pictures** come in the word stream, shown for a set time (or until ▶);
   their description shows when paused.
