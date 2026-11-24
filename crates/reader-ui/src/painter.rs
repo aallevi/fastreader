@@ -1057,9 +1057,11 @@ fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, fram
     let ok = Rect::new(right as i32 - l.i(54.0), r.bottom() - l.i(26.0), l.i(54.0), l.i(17.0));
     let fade = l.i(44.0);
     let body = Rect::new(r.x + l.i(3.0), bar.bottom(), text_left - l.i(3.0) - (r.x + l.i(3.0)), r.bottom() - l.i(3.0) - bar.bottom());
-    // The hat in the middle of its space (the night, dithered edge included).
-    let (hat_w, hat_h) = (HAT[7] as i32 * k, HAT[8] as i32 * k);
-    let hat = (body.x + (body.w - hat_w) / 2, body.y + (body.h - hat_h) / 2);
+    // The hat in the middle of the night's solid black (left of the
+    // dithered edge), by the hat itself: in its frame it sits at (15, 26.5),
+    // room left above and right for the z's.
+    let solid = text_left - l.i(3.0) - fade - body.x;
+    let hat = (body.x + solid / 2 - 15 * k, body.y + body.h / 2 - (26.5 * k as f32) as i32);
     let night = HAT_SPACE.load(core::sync::atomic::Ordering::Relaxed).then_some((body, text_left - l.i(3.0) - fade, fade));
     if redraw == Redraw::Hat {
         return draw_hat(cv, th, hat.0, hat.1, k, frame, panel, night);
