@@ -729,6 +729,20 @@ pub struct Battery {
     pub millivolts: u16,
 }
 
+/// At or below this the battery shows "(!)": very low, reading goes on.
+pub const BATTERY_LOW: u8 = 5;
+/// At or below this the reader warns once and sleeps soon after.
+pub const BATTERY_SLEEP: u8 = 2;
+/// How long the warning gives before sleeping (plugging in cancels it).
+pub const BATTERY_SLEEP_MS: u64 = 30_000;
+
+impl Battery {
+    /// About to go to sleep (not charging, nearly empty).
+    pub fn sleepy(&self) -> bool {
+        !self.charging && self.percent <= BATTERY_SLEEP
+    }
+}
+
 /// Facts for the Device info screen, filled in by the platform.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DeviceInfo {
@@ -773,6 +787,11 @@ pub struct App {
     pub welcome: Option<Welcome>,
     /// A notice (a new version), while it shows; before the welcome card.
     pub notice: Option<Notice>,
+    /// The battery is nearly empty: the reader sleeps at this moment
+    /// (plugging in cancels it).
+    pub low_sleep_at: Option<u64>,
+    /// Its warning is on screen (a touch or key closes it; the countdown goes on).
+    pub low_warning: bool,
     /// Last key, touch or playing moment: the break is counted from here.
     last_input: u64,
     /// Last key, touch or moment of reading (menus open don't count): the
@@ -839,6 +858,8 @@ impl App {
             delete_pending: None,
             welcome: None,
             notice: None,
+            low_sleep_at: None,
+            low_warning: false,
             last_input: 0,
             last_activity: 0,
             welcome_minute: None,
@@ -892,6 +913,10 @@ impl App {
         self.last_input = now;
         self.last_activity = now;
         self.undim();
+        if self.low_warning {
+            self.low_warning = false; // any key closes the battery warning
+            return Feedback::ok(Msg::Shown);
+        }
         if self.notice.take().is_some() {
             // ▶ on a notice: download; any other key just closes it.
             if action_for(self.screen, key) == Action::TogglePlay {
@@ -1025,6 +1050,10 @@ impl App {
         self.last_input = now;
         self.last_activity = now;
         self.undim();
+        if self.low_warning {
+            self.low_warning = false; // a touch closes the battery warning
+            return Feedback::ok(Msg::Shown);
+        }
         if self.notice.is_some() && !matches!(hit, Hit::Key(_)) {
             self.notice = None; // a touch anywhere but ▶ closes it
             return Feedback::ok(Msg::Shown);
@@ -1185,6 +1214,33 @@ impl App {
                 changed = true;
             }
         }
+        // Battery nearly empty: pause, warn once, sleep a little later with
+        // the place saved. Charging (or the level coming back) cancels it.
+        let mut battery_paused = false;
+        match (self.battery.is_some_and(|b| b.sleepy()), self.low_sleep_at) {
+            (true, None) => {
+                battery_paused = self.reader.is_playing();
+                self.reader.pause();
+                self.low_sleep_at = Some(now + BATTERY_SLEEP_MS);
+                self.low_warning = true;
+                self.undim();
+                self.save();
+                changed = true;
+            }
+            (true, Some(at)) if now >= at && !self.effects.contains(&Effect::Sleep) => {
+                self.save();
+                self.effect(Effect::Sleep);
+                self.low_sleep_at = Some(u64::MAX); // once
+                self.low_warning = false;
+                changed = true;
+            }
+            (false, Some(_)) => {
+                self.low_sleep_at = None;
+                self.low_warning = false;
+                changed = true;
+            }
+            _ => {}
+        }
         // Reading reaches a table cell: its grid shows first, for the time
         // of a plain word.
         let pos = self.reader.pos();
@@ -1215,7 +1271,8 @@ impl App {
         if changed {
             self.welcome_minute = self.welcome.map(|w| self.last_tick.saturating_sub(w.since) / 60_000);
         }
-        if was_playing && !self.reader.is_playing() {
+        // Stopped by itself (not by the battery warning): the end, or a picture held.
+        if was_playing && !self.reader.is_playing() && !battery_paused {
             self.serial = self.serial.wrapping_add(1);
             let msg = if self.reader.held_on_picture() { Msg::PictureHeld } else { Msg::Finished };
             self.toast = Some(Toast { feedback: Feedback::ok(msg), until: now + TOAST_MS * 2, serial: self.serial });
@@ -1260,7 +1317,19 @@ impl App {
         // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
         let grid = (self.grid_until != 0).then_some(self.grid_until);
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid, self.sleep_due()].into_iter().flatten().min()
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid, self.sleep_due(), self.battery_due()].into_iter().flatten().min()
+    }
+
+    /// Nearly empty: the z's float out of the battery (a step every 0.6 s),
+    /// the warning counts down each second, and then the reader sleeps.
+    fn battery_due(&self) -> Option<u64> {
+        if !self.battery.is_some_and(|b| b.sleepy()) {
+            return None;
+        }
+        let t = self.last_tick;
+        let z = (t / 600 + 1) * 600;
+        let second = self.low_warning.then_some((t / 1000 + 1) * 1000);
+        [Some(z), second, self.low_sleep_at.filter(|&at| at != u64::MAX)].into_iter().flatten().min()
     }
 
     /// True while something moves between words, so the screen must be
@@ -2070,6 +2139,38 @@ mod tests {
             v.push(Screen::Pick { kind, sel: 1, original: 0 });
         }
         v
+    }
+
+    #[test]
+    fn battery_nearly_empty_warns_then_sleeps_unless_plugged_in() {
+        let low = |pct, charging| Some(Battery { percent: pct, charging, millivolts: 3400 });
+        let mut a = app();
+        a.handle(Select, 0); // reading
+        a.battery = low(BATTERY_LOW, false);
+        a.tick(1_000);
+        assert!(a.reader.is_playing() && !a.low_warning, "very low: \"(!)\" only, reading goes on");
+        a.battery = low(BATTERY_SLEEP, false);
+        a.tick(2_000);
+        assert!(!a.reader.is_playing() && a.low_warning, "about to sleep: paused, warned");
+        assert!(a.toast().is_none_or(|t| t.feedback.msg != Msg::Finished), "no \"Finished\" message for that pause");
+        assert_eq!(a.low_sleep_at, Some(2_000 + BATTERY_SLEEP_MS));
+        assert!(a.next_wake().is_some_and(|w| w <= 2_600), "wakes for the z's and the countdown");
+        a.tap(Hit::Key(Key::Select), 3_000);
+        assert!(!a.low_warning && !a.reader.is_playing(), "a touch closes the warning, nothing else");
+        while a.take_effect().is_some() {}
+        a.tick(2_000 + BATTERY_SLEEP_MS);
+        assert!(core::iter::from_fn(|| a.take_effect()).any(|e| e == Effect::Sleep), "30 s later: asleep");
+        // Plugged in during the countdown: no sleep.
+        let mut b = app();
+        b.battery = low(1, false);
+        b.tick(1_000);
+        assert!(b.low_warning);
+        b.battery = low(1, true);
+        b.tick(2_000);
+        assert!(b.low_sleep_at.is_none() && !b.low_warning, "charging cancels it");
+        while b.take_effect().is_some() {}
+        b.tick(60_000);
+        assert!(!core::iter::from_fn(|| b.take_effect()).any(|e| e == Effect::Sleep), "and it stays awake");
     }
 
     #[test]

@@ -701,3 +701,40 @@ fn menu_icons_stay_inside_their_buttons_even_pressed() {
         }
     }
 }
+
+#[test]
+fn battery_states_draw_cleanly_and_stay_put() {
+    // The battery through its states in every theme: level, charging, full,
+    // very low, about to sleep (z's and the warning counting down). Each
+    // frame must equal a full redraw, the z's must stay inside the title
+    // bar, and the battery's tip must not move between states.
+    let states = [(82, false), (35, false), (8, false), (40, true), (100, true), (5, false), (2, false)];
+    for theme in 0..THEMES.len() as u8 {
+        let mut a = App::new(Book::new("t", "# A\nOne two three four five six seven."), CATALOG, Settings { theme, ..Settings::default() });
+        let mut cv = Canvas::new(320, 240);
+        let mut whole = Canvas::new(320, 240);
+        let mut ui = Ui::new(320, 240);
+        let mut fresh = Ui::new(320, 240);
+        let mut tips = Vec::new();
+        let mut t = 0u64;
+        for (pct, charging) in states {
+            a.battery = Some(Battery { percent: pct, charging, millivolts: 3700 });
+            for _ in 0..12 {
+                t += 300;
+                a.tick(t);
+                ui.paint(&mut a, t, &mut cv);
+                fresh.invalidate();
+                fresh.paint(&mut a, t, &mut whole);
+                let diff = (0..240).flat_map(|y| (0..320).map(move |x| (x, y))).find(|&(x, y)| cv.pixel(x, y) != whole.pixel(x, y));
+                assert!(diff.is_none(), "theme {theme}, {pct}% charging {charging}, t {t}: differs from a full redraw at {diff:?}");
+            }
+            // The tip: the rightmost battery-coloured column left of the z room.
+            let h = ui.layout.header;
+            let bar = cv.pixel(h.right() - 3, h.cy() as i32);
+            let tip = (h.w / 2..h.right() - 18).rev().find(|&x| (h.y + 2..h.bottom() - 2).filter(|&y| cv.pixel(x, y) != bar).count() >= 3);
+            tips.push(tip);
+        }
+        assert!(tips.windows(2).all(|w| w[0] == w[1]), "theme {theme}: the battery's tip moved between states: {tips:?}");
+        assert!(a.low_warning || a.low_sleep_at.is_some(), "theme {theme}: 2% warned");
+    }
+}

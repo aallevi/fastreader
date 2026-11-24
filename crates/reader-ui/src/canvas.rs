@@ -224,6 +224,32 @@ impl Canvas {
         });
     }
 
+    /// Any simple polygon (concave too: a bracket, a bolt), anti-aliased:
+    /// distance to the nearest edge, inside by the crossing rule.
+    pub fn shape(&mut self, pts: &[(f32, f32)], c: Rgb) {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for &(x, y) in pts {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        let r = Rect::new(x0.floor() as i32 - 1, y0.floor() as i32 - 1, (x1 - x0).ceil() as i32 + 3, (y1 - y0).ceil() as i32 + 3);
+        self.sdf_fill(r, Paint::Solid(c), 255, |x, y| {
+            let (mut near, mut inside) = (f32::MAX, false);
+            for i in 0..pts.len() {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+                let t = (((x - a.0) * ex + (y - a.1) * ey) / (ex * ex + ey * ey).max(1e-9)).clamp(0.0, 1.0);
+                near = near.min(libm::hypotf(x - a.0 - ex * t, y - a.1 - ey * t));
+                if (a.1 > y) != (b.1 > y) && x < a.0 + (y - a.1) / ey * ex {
+                    inside = !inside;
+                }
+            }
+            if inside { -near } else { near }
+        });
+    }
+
     /// A thick line segment with round-ish ends (as a rotated rectangle).
     pub fn line(&mut self, a: (f32, f32), b: (f32, f32), width: f32, c: Rgb) {
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);

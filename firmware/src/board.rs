@@ -53,3 +53,30 @@ pub fn battery_percent(mv: u16) -> u8 {
 // microSD slot, driven in SPI mode on its SDIO pins (LCDWIKI ES3C28P manual:
 // SD_CLK 38, SD_CMD 40, SD_D0 39, SD_D3 47; D1 41 and D2 48 unused). Set up
 // in main.rs on SPI3; see card.rs.
+
+/// Charging, guessed from the battery voltage (the TP4054's status pin
+/// isn't wired to the ESP32): plugging in lifts the voltage at once by the
+/// charge current through the cell's resistance, unplugging drops it again.
+/// To be checked with the battery: the jump size and how full looks.
+#[derive(Default)]
+pub struct Charger {
+    last: Option<u16>,
+    charging: bool,
+}
+
+impl Charger {
+    /// A sudden rise from one reading to the next.
+    const JUMP_MV: u16 = 40;
+
+    pub fn update(&mut self, mv: u16) -> bool {
+        if let Some(last) = self.last {
+            if mv >= last + Self::JUMP_MV {
+                self.charging = true;
+            } else if mv + Self::JUMP_MV <= last {
+                self.charging = false;
+            }
+        }
+        self.last = Some(mv);
+        self.charging
+    }
+}

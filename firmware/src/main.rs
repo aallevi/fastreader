@@ -264,6 +264,7 @@ async fn main(spawner: Spawner) -> ! {
     let start = Instant::now();
     let mut asleep = false;
     let mut last_battery = 0u64;
+    let mut charger = board::Charger::default();
     let mut next_card_check = 3_000u64;
     let mut px_buf: alloc::vec::Vec<Rgb565> = alloc::vec::Vec::with_capacity((WIDTH * HEIGHT) as usize);
     apply_display(&mut lcd, &mut delay, &mut backlight, &app.settings);
@@ -436,11 +437,16 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        // Battery every 10 s (and at start).
+        // Battery every 10 s (and at start); every 2 s while nearly empty,
+        // so plugging in is seen quickly.
         if now >= last_battery {
-            last_battery = now + 10_000;
+            let nearly = app.battery.is_some_and(|b| b.percent <= reader_core::app::BATTERY_LOW);
+            last_battery = now + if nearly { 2_000 } else { 10_000 };
             let raw: u16 = nb::block!(adc.read_oneshot(&mut bat_pin)).unwrap_or(0);
-            app.battery = board::battery_mv(raw).map(|mv| Battery { percent: board::battery_percent(mv), charging: false, millivolts: mv });
+            app.battery = board::battery_mv(raw).map(|mv| {
+                let charging = charger.update(mv);
+                Battery { percent: board::battery_percent(mv), charging, millivolts: mv }
+            });
             app.device.free_memory_kb = (esp_alloc::HEAP.free() / 1024) as u32;
         }
 

@@ -68,6 +68,13 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] Web view on, no phone page open for 10 minutes (and not reading): it switches off by itself (the reader restarts, "Web view off (unused)").
 - [ ] Reading still smooth at 160 MHz (selftest: word frames under ~15 ms).
 
+## Battery (needs the battery)
+- [ ] Title bar: the level in battery brackets "(82%)", green / orange / red.
+- [ ] Plugged in: only a bolt "(⚡)" in the level's colour; at 100% the number again.
+- [ ] 5% and below: "(!)", reading goes on.
+- [ ] 2%: reading pauses, "Battery almost empty" counts down from 30, z's float out of the battery; OK closes the window; then sleep with the place kept. Plugging in during the countdown cancels it.
+- [ ] Charging is guessed from a voltage jump (no status pin): check plug/unplug are seen within a few seconds.
+
 ## Figure references
 - [ ] In the fungi book (Agrodok 41), "see figure 11": the number on top, the figure's drawing below it, a little longer than a word; read on and the screen joins again.
 - [ ] Inside a table, ‹ › step cell by cell; ⏮ ⏭ jump over the whole table.

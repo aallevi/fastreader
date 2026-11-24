@@ -52,7 +52,7 @@ type PageInfo = Option<(usize, Option<usize>)>;
 struct View {
     look: Settings,
     frame: Frame,
-    header: (String, Option<Battery>, Option<u32>, Option<Hit>),
+    header: (String, Option<BatteryLook>, Option<u32>, Option<Hit>),
     word: (usize, u8, bool, u16, bool, Option<bool>, bool, bool),
     context: Option<(usize, i16)>,
     status: (i32, u64, Option<usize>, Option<usize>, bool),
@@ -63,6 +63,8 @@ struct View {
     welcome: Option<Option<u64>>,
     /// A notice (a new version) over the reading screen.
     notice: bool,
+    /// The battery warning, and the seconds it counts down.
+    warning: Option<u64>,
     /// Which list the word is in: going in or out changes the margin and
     /// the guide lines, so the screen is drawn whole then (rare).
     list: Option<usize>,
@@ -157,7 +159,7 @@ impl Ui {
             look,
             frame,
             // The title bar's buttons show their press (menu key or a tap).
-            header: (header_title(app), app.battery, app.toast().map(|t| t.serial), lit.filter(|h| matches!(h, Hit::Group(_) | Hit::Key(reader_core::Key::Menu) | Hit::Highlight))),
+            header: (header_title(app), app.battery.map(|b| battery_look(&b, now)), app.toast().map(|t| t.serial), lit.filter(|h| matches!(h, Hit::Group(_) | Hit::Key(reader_core::Key::Menu) | Hit::Highlight))),
             word: (
                 app.reader.pos(),
                 app.reader.chunk(),
@@ -179,6 +181,7 @@ impl Ui {
             corner: place_bookmarked(app),
             welcome: app.welcome.map(|w| w.away(now).map(|ms| ms / 60_000)),
             notice: app.notice.is_some(),
+            warning: battery_warning(app, now),
             list: {
                 let b = &app.reader.book;
                 let at = app.reader.shown().start as u32;
@@ -188,7 +191,7 @@ impl Ui {
         };
         let old = self.last.take();
         // A bookmark appearing or going is rare: repaint all, simply.
-        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.notice != view.notice || o.list != view.list || o.table != view.table);
+        let full = old.as_ref().is_none_or(|o| o.look != view.look || o.frame != view.frame || o.corner != view.corner || o.welcome != view.welcome || o.notice != view.notice || o.warning.is_some() != view.warning.is_some() || o.list != view.list || o.table != view.table);
         let f = &mut self.fonts;
         let word_box = &mut self.word_box;
         let mut damage = Vec::new();
@@ -327,6 +330,22 @@ impl Ui {
             let p = paper(th, &l);
             let area = Rect::new(l.word.x, l.word.y, l.word.w, l.context.bottom() - l.word.y).intersect(&p);
             self.caption_button = Some(caption_button_rect(&l, area, &mut self.fonts, th));
+        }
+        // The battery warning sits on top of everything: drawn again after
+        // anything changed, and as it counts down.
+        if !app.screen.is_overlay() {
+            if let Some(secs) = view.warning {
+                let ctx = Ctx { th, l: &l, app, now };
+                let spot = warning_rect(&ctx);
+                if full {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, true));
+                } else if damage.iter().any(|d| !d.intersect(&spot).is_empty()) {
+                    // Something under it was redrawn: the whole window again.
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, true));
+                } else if old.as_ref().is_some_and(|o| o.warning != view.warning) {
+                    damage.push(draw_battery_warning(&mut self.fonts, cv, &ctx, secs, false));
+                }
+            }
         }
         self.last = Some(view);
         damage
@@ -776,6 +795,193 @@ fn battery_colour(th: &Theme, percent: u8) -> Rgb {
     }
 }
 
+/// What the battery shows, and the frame of its little animation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BatteryLook {
+    /// "(82%)": the level in battery brackets.
+    Level(u8),
+    /// "(⚡)": charging, no number (the colour tells the level).
+    Charging(u8),
+    /// "(!)": very low, reading goes on.
+    Low,
+    /// "( )" with z's floating out of the tip (how many, 0–3): about to sleep.
+    Sleepy(u8),
+}
+
+/// The battery's look right now. Full shows the number again (charging
+/// has stopped).
+fn battery_look(b: &Battery, now: u64) -> BatteryLook {
+    use reader_core::app::BATTERY_LOW;
+    if b.percent >= 100 {
+        BatteryLook::Level(100)
+    } else if b.charging {
+        BatteryLook::Charging(b.percent)
+    } else if b.sleepy() {
+        BatteryLook::Sleepy(((now / 600) % 4) as u8)
+    } else if b.percent <= BATTERY_LOW {
+        BatteryLook::Low
+    } else {
+        BatteryLook::Level(b.percent)
+    }
+}
+
+/// One battery bracket, "(" (dir 1, `edge` its left side) or ")" (dir -1,
+/// `edge` its right side): a rounded stroke with short arms, drawn as one
+/// shape so it is smoothed once.
+fn bracket(cv: &mut Canvas, edge: f32, dir: f32, top: f32, bot: f32, arm: f32, r: f32, lw: f32, c: Rgb) {
+    let mut pts: Vec<(f32, f32)> = Vec::new();
+    let arc = |pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, rad: f32, from: f32, to: f32| {
+        for k in 0..=4 {
+            let a = from + (to - from) * k as f32 / 4.0;
+            pts.push((edge + dir * (cx + rad * libm::cosf(a)), cy + rad * libm::sinf(a)));
+        }
+    };
+    let pi = core::f32::consts::PI;
+    // Outer edge: top arm, round corner, side, round corner, bottom arm.
+    pts.push((edge + dir * arm, top));
+    arc(&mut pts, r, top + r, r, -pi / 2.0, -pi);
+    arc(&mut pts, r, bot - r, r, pi, pi / 2.0);
+    pts.push((edge + dir * arm, bot));
+    // Inner edge, back up.
+    let ri = (r - lw).max(0.3);
+    pts.push((edge + dir * arm, bot - lw));
+    arc(&mut pts, r, bot - r, ri, pi / 2.0, pi);
+    arc(&mut pts, r, top + r, ri, pi, 3.0 * pi / 2.0);
+    pts.push((edge + dir * arm, top + lw));
+    cv.shape(&pts, c);
+}
+
+/// The battery, top-right: the level in battery brackets "(82%)", the
+/// brackets being the battery's two ends and the tip after them. Charging:
+/// a bolt instead of the number; very low: "(!)"; about to sleep: empty
+/// with z's floating out. The tip never moves (room for the z's is kept to
+/// its right). Returns where the title must end.
+fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32, base: f32) -> f32 {
+    let (th, l) = (c.th, c.l);
+    let look = battery_look(&b, c.now);
+    let small = l.px(11.0);
+    let face = th.ui.1;
+    let colour = match look {
+        BatteryLook::Low | BatteryLook::Sleepy(_) => battery_colour(th, 0),
+        BatteryLook::Level(p) | BatteryLook::Charging(p) => battery_colour(th, p),
+    };
+    // The brackets are exactly the font's "(": its height and stroke.
+    let (top, bot) = (base - small * 0.668, base + small * 0.161);
+    let lw = (small * 0.106).max(1.0);
+    let (arm, rad, gap) = (l.px(2.6), l.px(2.4), l.px(1.4));
+    let text = match look {
+        BatteryLook::Level(p) => Some(format!("{p}%")),
+        BatteryLook::Low => Some(String::from("!")),
+        _ => None,
+    };
+    let inner = match look {
+        BatteryLook::Level(_) => f.measure(face, small, text.as_deref().unwrap_or("")),
+        BatteryLook::Charging(_) => l.px(8.0),
+        BatteryLook::Low | BatteryLook::Sleepy(_) => f.measure(face, small, "!"),
+    };
+    let tip_w = l.px(1.6);
+    let tip_x = right - l.px(17.0) - tip_w; // the z's float up in the 17 px after it
+    let x1 = tip_x - l.px(1.0);
+    let x0 = x1 - inner - 2.0 * (gap + lw);
+    bracket(cv, x0, 1.0, top, bot, arm, rad, lw, colour);
+    bracket(cv, x1, -1.0, top, bot, arm, rad, lw, colour);
+    let mid = (top + bot) / 2.0;
+    cv.fill(Rect::new(tip_x as i32, (mid - l.px(2.0)) as i32, tip_w.ceil() as i32, l.i(4.0)), colour);
+    let cx = x0 + lw + gap;
+    match look {
+        BatteryLook::Charging(_) => {
+            let (m, t, bb) = (cx + inner / 2.0, top + l.px(1.2), bot - l.px(1.2));
+            let h = bb - t;
+            let s = l.px(1.0);
+            cv.shape(&[(m + 2.6 * s, t), (m - 3.4 * s, t + h * 0.58), (m - 0.3 * s, t + h * 0.58), (m - 2.6 * s, bb), (m + 3.4 * s, t + h * 0.42), (m + 0.3 * s, t + h * 0.42)], colour);
+        }
+        BatteryLook::Sleepy(n) => {
+            // z's float up and away from the tip, each smaller.
+            let zs = [(l.px(9.0), l.px(3.5), l.px(0.0)), (l.px(7.0), l.px(9.0), l.px(-5.0)), (l.px(5.0), l.px(13.5), l.px(-9.0))];
+            for &(px, dx, dy) in zs.iter().take(n as usize) {
+                f.draw(cv, face, px, "z", tip_x + tip_w + dx, mid + px * 0.35 + dy, colour);
+            }
+        }
+        _ => {
+            if let Some(t) = &text {
+                f.draw(cv, face, small, t, cx, base, colour);
+            }
+        }
+    }
+    x0 - l.px(4.0)
+}
+
+/// The battery warning's seconds left, while it shows.
+fn battery_warning(app: &App, now: u64) -> Option<u64> {
+    app.low_sleep_at.filter(|_| app.low_warning).map(|at| at.saturating_sub(now).div_ceil(1000))
+}
+
+/// The battery warning's place, its shadow included.
+fn warning_rect(c: &Ctx) -> Rect {
+    let (th, l) = (c.th, c.l);
+    let stage = l.word.union(&l.context).intersect(&paper(th, l));
+    let (w, h) = (l.i(236.0).min(stage.w - l.i(12.0)), l.i(104.0));
+    Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
+}
+
+/// "Battery almost empty": a small dialog over the reading screen, in the
+/// theme's window style (Windows 98: grey, bevelled), with the seconds
+/// left. A touch or key closes it; the countdown goes on.
+fn draw_battery_warning(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, secs: u64, window: bool) -> Rect {
+    let (th, l) = (c.th, c.l);
+    let r = warning_rect(c);
+    let r = Rect::new(r.x, r.y, r.w - l.i(5.0), r.h - l.i(5.0));
+    let win98 = th.chrome == Chrome::Win98;
+    let (panel, ink) = if win98 { (0xC0C0C0, BLACK) } else { (th.page, th.text) };
+    let title_h = l.i(18.0);
+    let bar = Rect::new(r.x + l.i(3.0), r.y + l.i(3.0), r.w - l.i(6.0), title_h);
+    if window {
+        // A shadow, then the window (drawn once: its smoothed edges can't
+        // be drawn over themselves).
+        cv.rrect(Rect::new(r.x + l.i(4.0), r.y + l.i(4.0), r.w, r.h), th.radius, Paint::Solid(mix(th.page, BLACK, 70)));
+        if win98 {
+            cv.fill(r, panel);
+            bevel(cv, r, false);
+        } else {
+            cv.rrect(r, th.radius, Paint::Solid(panel));
+            cv.rrect_stroke(r, th.radius, th.dim);
+        }
+    } else {
+        // Again (the seconds): only the inside, which is all square.
+        cv.fill(Rect::new(bar.x, bar.y, bar.w, r.h - l.i(6.0)), panel);
+    }
+    if win98 {
+        cv.fill(bar, 0x808080); // grey, like an inactive 98 title (no blue)
+    } else {
+        cv.paint_rect(bar, Paint::Vertical(th.bar));
+    }
+    let title_ink = if win98 { WHITE } else { th.bar_text };
+    let x = bar.x as f32 + l.px(6.0);
+    f.draw_fit(cv, th.ui.1, l.px(12.0), &up(th, "Battery almost empty"), x, bar.cy() as f32 + l.px(4.3), bar.w as f32 - l.px(12.0), title_ink);
+    let lines = [
+        String::from("The reader will go to sleep in"),
+        format!("{secs} seconds, keeping your place."),
+        String::from("Plug in to keep reading."),
+    ];
+    let mut y = bar.bottom() as f32 + l.px(17.0);
+    for t in &lines {
+        f.draw_fit(cv, th.ui.0, l.px(11.5), t, x + l.px(4.0), y, r.w as f32 - l.px(24.0), ink);
+        y += l.px(15.0);
+    }
+    // OK, bottom right (any touch closes the warning).
+    let ok = Rect::new(r.right() - l.i(76.0), r.bottom() - l.i(23.0), l.i(66.0), l.i(17.0));
+    if win98 {
+        cv.fill(ok, panel);
+        bevel(cv, ok, false);
+    } else {
+        cv.rrect(ok, th.radius.min(l.px(6.0)), Paint::Solid(th.mark));
+    }
+    let ok_ink = if win98 { BLACK } else { th.mark_text };
+    let tw = f.measure(th.ui.0, l.px(11.5), "OK");
+    f.draw(cv, th.ui.0, l.px(11.5), "OK", ok.cx() as f32 - tw / 2.0, ok.cy() as f32 + l.px(4.0), ok_ink);
+    Rect::new(r.x, r.y, r.w + l.i(5.0), r.h + l.i(5.0))
+}
+
 fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let (th, l, app) = (c.th, c.l, c.app);
     let r = l.header;
@@ -811,22 +1017,7 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let small = l.px(11.0);
     match app.battery {
         _ if app.toast().is_some() => {}
-        Some(b) => {
-            let bw = l.px(20.0);
-            let bh = l.px(10.0);
-            let bx = right - bw;
-            let br = Rect::new(bx as i32, (r.cy() - bh / 2.0) as i32, (bw - l.px(2.0)) as i32, bh as i32);
-            cv.rrect_stroke(br, l.px(2.0).min(th.radius.max(0.5)), title_c);
-            cv.fill(Rect::new(br.right(), (r.cy() - l.px(2.0)) as i32, l.i(2.0), l.i(4.0)), title_c);
-            let inner = ((br.w - 4) as f32 * b.percent.min(100) as f32 / 100.0) as i32;
-            // The level in colour: green, orange, red (bright enough for
-            // every theme's title bar).
-            let level = battery_colour(th, b.percent);
-            cv.fill(Rect::new(br.x + 2, br.y + 2, inner, br.h - 4), level);
-            let txt = format!("{}%", b.percent);
-            right = bx - l.px(5.0) - f.measure(th.ui.1, small, &txt);
-            f.draw(cv, th.ui.1, small, &txt, right, base, level);
-        }
+        Some(b) => right = draw_battery(f, cv, c, b, right, base),
         None => {
             let txt = up(th, "USB");
             right -= f.measure(th.ui.0, small, &txt);
