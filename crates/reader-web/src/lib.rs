@@ -136,6 +136,10 @@ pub extern "C" fn add_book(added: u32) -> u32 {
         if i == 0 && added == 0 && d.app.settings.pos == 0 {
             if let Some(c) = book.chapters().iter().find(|c| c.1 == "I") {
                 d.app.positions[0] = c.0;
+                // ...with a bookmark there (the folded corner), to come back to.
+                if !d.app.bookmarks.contains(&(0, c.0)) {
+                    d.app.bookmarks.push((0, c.0));
+                }
             }
         }
         let wanted = d.app.settings.book as usize;
