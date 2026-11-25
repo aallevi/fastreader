@@ -216,6 +216,7 @@ pub extern "C" fn frame(now: f64) -> u32 {
             Some(Event::Press(k)) => {
                 d.app.handle(k, now);
             }
+            Some(Event::Boot(_)) => {} // the device's BOOT button only
             None => {}
         }
         d.app.tick(now);

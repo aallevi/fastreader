@@ -44,7 +44,7 @@ use mipidsi::interface::SpiInterface;
 use mipidsi::models::ILI9341Rgb565;
 use mipidsi::options::{ColorInversion, ColorOrder, Orientation, Rotation};
 use reader_core::app::{Battery, DeviceInfo};
-use reader_core::gestures::{Button, Event, Touch};
+use reader_core::gestures::{BootAction, Button, Event, Touch};
 use reader_core::settings::SETTINGS_LEN;
 use reader_core::{App, Book, Effect, Settings};
 use reader_ui::{Canvas, Ui, CATALOG};
@@ -269,6 +269,9 @@ async fn main(spawner: Spawner) -> ! {
     let mut button = Button::default();
     let start = Instant::now();
     let mut asleep = false;
+    // BOOT pressed once: the screen dark and touch ignored (reading goes on,
+    // to listen); pressed once more: back.
+    let mut blank = false;
     let mut last_battery = 0u64;
     let mut charger = board::Charger::default();
     let mut next_card_check = 3_000u64;
@@ -482,9 +485,12 @@ async fn main(spawner: Spawner) -> ! {
             keys[3].update(levels[3], now),
         ];
         for ev in events.into_iter().flatten() {
+            if blank && !matches!(ev, Event::Boot(_)) {
+                continue; // screen off: touch does nothing until BOOT brings it back
+            }
             if asleep {
                 // The first touch or press only wakes the screen.
-                if matches!(ev, Event::Tap(_) | Event::Press(_)) {
+                if matches!(ev, Event::Tap(_) | Event::Press(_) | Event::Boot(_)) {
                     asleep = false;
                     let _ = lcd.wake(&mut delay);
                     ui.invalidate();
@@ -505,6 +511,21 @@ async fn main(spawner: Spawner) -> ! {
                 Event::Press(k) => {
                     app.handle(k, now);
                 }
+                Event::Boot(action) => match action {
+                    BootAction::Sleep => app.sleep_now(now),
+                    BootAction::PlayPause => {
+                        app.handle(reader_core::Key::Select, now);
+                    }
+                    BootAction::Blank => {
+                        blank = !blank;
+                        if blank {
+                            let _ = backlight.set_duty(0);
+                        } else {
+                            apply_display(&mut lcd, &mut delay, &mut backlight, &app.settings);
+                            ui.invalidate();
+                        }
+                    }
+                },
             }
         }
 
@@ -647,6 +668,7 @@ async fn main(spawner: Spawner) -> ! {
                 // The same path as a delete confirmed on the web page (next turn of the loop).
                 Effect::DeleteBook(i) => inbox.borrow_mut().delete = Some(i as usize),
                 Effect::Download => {} // the desktop app's update notice only
+                Effect::Dim(_) if blank => {} // dark on purpose: stays dark
                 Effect::Dim(down) => {
                     // Idle: the backlight to its lowest; back to the setting on a touch.
                     let pct = [8u8, 20, 40, 70, 100][(app.settings.brightness.clamp(1, 5) - 1) as usize];

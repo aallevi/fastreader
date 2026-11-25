@@ -1337,6 +1337,13 @@ impl App {
         self.toast.filter(|t| now < t.until).and_then(|t| f(t.feedback.msg)).unwrap_or(0)
     }
 
+    /// Sleep now (the BOOT button held): the place saved first.
+    pub fn sleep_now(&mut self, now: u64) {
+        self.save();
+        self.effect(Effect::Sleep);
+        self.feedback(Feedback::ok(Msg::Sleeping), now);
+    }
+
     /// "Opening <title>…" in the title bar, for the platform to show before
     /// a slow load.
     pub fn show_opening(&mut self, i: u8, now: u64) {

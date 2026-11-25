@@ -388,6 +388,7 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
                 Some(Event::Press(k)) => {
                     a.handle(k, now);
                 }
+                Some(Event::Boot(_)) => {} // the device's BOOT button only
                 None => {}
             }
             a.tick(now);

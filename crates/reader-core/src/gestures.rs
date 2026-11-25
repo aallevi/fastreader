@@ -26,7 +26,25 @@ pub enum Event {
     Cancel,
     /// A physical key press.
     Press(Key),
+    /// The BOOT button's own gestures (see [`Button`]).
+    Boot(BootAction),
 }
+
+/// What the BOOT button does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootAction {
+    /// One short press: the screen and touch off (or back on).
+    Blank,
+    /// Two quick presses: play / pause.
+    PlayPause,
+    /// Held for two seconds: sleep.
+    Sleep,
+}
+
+/// Two presses closer than this make a double press.
+pub const DOUBLE_MS: u64 = 400;
+/// Held this long: sleep.
+pub const SLEEP_HOLD_MS: u64 = 2_000;
 
 #[derive(Default)]
 pub struct Touch {
@@ -119,9 +137,15 @@ impl HeldKey {
 pub struct Button {
     down_at: Option<u64>,
     fired_long: bool,
+    /// A short press waiting to see whether a second one follows.
+    pending: Option<u64>,
 }
 
 impl Button {
+    /// The BOOT button: one short press blanks the screen and touch (or
+    /// brings them back), two quick presses play or pause, holding it two
+    /// seconds puts the reader to sleep. Call it every turn of the loop:
+    /// a single press is only known once the double-press time is over.
     pub fn update(&mut self, pressed: bool, now: u64) -> Option<Event> {
         match (pressed, self.down_at) {
             (true, None) => {
@@ -129,14 +153,29 @@ impl Button {
                 self.fired_long = false;
                 None
             }
-            (true, Some(t0)) if !self.fired_long && now - t0 >= LONG_MS => {
+            (true, Some(t0)) if !self.fired_long && now - t0 >= SLEEP_HOLD_MS => {
                 self.fired_long = true;
-                Some(Event::Press(Key::Menu))
+                self.pending = None;
+                Some(Event::Boot(BootAction::Sleep))
             }
             (false, Some(_)) => {
                 self.down_at = None;
-                (!self.fired_long).then_some(Event::Press(Key::Select))
+                if self.fired_long {
+                    return None;
+                }
+                if self.pending.take().is_some() {
+                    return Some(Event::Boot(BootAction::PlayPause));
+                }
+                self.pending = Some(now);
+                None
             }
+            (false, None) => match self.pending {
+                Some(t) if now - t >= DOUBLE_MS => {
+                    self.pending = None;
+                    Some(Event::Boot(BootAction::Blank))
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -149,6 +188,17 @@ mod tests {
 
     const PLAY: Option<Hit> = Some(Hit::Key(Key::Select));
     const BACK: Option<Hit> = Some(Hit::Key(Key::Left));
+
+    #[test]
+    fn boot_button_single_double_and_held() {
+        let run = |seq: &[(bool, u64)]| {
+            let mut b = Button::default();
+            seq.iter().filter_map(|&(p, t)| b.update(p, t)).collect::<Vec<_>>()
+        };
+        assert_eq!(run(&[(true, 0), (false, 80), (false, 300), (false, 500)]), [Event::Boot(BootAction::Blank)], "one press: blank, once the double time is over");
+        assert_eq!(run(&[(true, 0), (false, 80), (true, 200), (false, 280), (false, 900)]), [Event::Boot(BootAction::PlayPause)], "two quick presses: play/pause");
+        assert_eq!(run(&[(true, 0), (true, 1_000), (true, 2_000), (false, 2_100), (false, 3_000)]), [Event::Boot(BootAction::Sleep)], "held two seconds: sleep, nothing else");
+    }
 
     fn feed(t: &mut Touch, seq: &[(Option<Option<Hit>>, u64)]) -> Vec<Event> {
         seq.iter().filter_map(|(f, now)| t.update(*f, *now)).collect()
@@ -192,13 +242,5 @@ mod tests {
         assert_eq!(k.update(false, 500), Some(Event::Release));
     }
 
-    #[test]
-    fn boot_button_short_and_long() {
-        let mut b = Button::default();
-        assert!(b.update(true, 0).is_none());
-        assert_eq!(b.update(false, 100), Some(Event::Press(Key::Select)));
-        assert!(b.update(true, 200).is_none());
-        assert_eq!(b.update(true, 1000), Some(Event::Press(Key::Menu)));
-        assert!(b.update(false, 1100).is_none(), "long press fires once, release is silent");
-    }
+
 }

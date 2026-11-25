@@ -67,7 +67,7 @@ One ready-made board, no soldering needed for reading.
 | **Wireless** | 2.4 GHz Wi-Fi: its own network "FastReader" and the home network; Bluetooth LE only (no Bluetooth audio) |
 | **Power** | USB-C 5 V; TP4054 charger, charges the battery while reading; battery sense on GPIO 9 (to calibrate) |
 | **Battery** | 3.7 V LiPo with protection, 1.25 mm 2-pin plug (check polarity), 2000–3000 mAh |
-| **Buttons** | BOOT (play, hold for menu); optional buttons on GPIO 2, 3, 14, 21 to ground |
+| **Buttons** | BOOT (twice: play/pause; once: screen and touch off; hold 2 s: sleep); optional buttons on GPIO 2, 3, 14, 21 to ground |
 | **Audio (unused yet)** | ES8311 codec, FM8002E amplifier (1.5 W into 8 Ω) on a mono speaker connector, MEMS microphone; no headphone jack |
 
 Speed on the device (selftest, steady reading): a word frame takes 13.7 ms
@@ -131,11 +131,13 @@ moves pixels, touches and bytes.
 
 | On screen | Key | Reading | Page view |
 |---|---|---|---|
-| ⚙ 📖 📚 Aa | BOOT long | Settings · Book · Library · Text | same |
+| ⚙ 📖 📚 Aa | | Settings · Book · Library · Text | same |
 | − / + | ▼ / ▲ | speed ∓25 wpm | same |
 | ⏮ / ⏭ | ◀ / ▶ | back / forward a sentence · hold: scroll | previous / next page |
 | ‹ / › | – | one word, and pause | same |
-| ▶ | BOOT short | play / pause | same |
+| ▶ | BOOT twice | play / pause | same |
+| | BOOT once | screen and touch off (reading goes on, to listen); once more: back | |
+| | BOOT held 2 s | sleep (place saved) | |
 | page corner | – | bookmark | same |
 
 ## Try it
