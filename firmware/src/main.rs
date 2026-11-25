@@ -203,7 +203,13 @@ async fn main(spawner: Spawner) -> ! {
         }
         let Some(s) = card_books.get(i - BOOKS.len() - uploads.len()) else {
             if uploads.is_empty() && card_books.is_empty() {
-                // No books anywhere: the welcome text says how to add some.
+                // No SD card at all: say so plainly (else it looks stuck).
+                if card_cell.borrow().as_ref().is_none_or(|c| !c.present()) {
+                    let mut book = Book::new("No SD card", "# No SD card\nThe reader found no SD card, so it has no books to show. Push the card into the slot until it clicks: the Library fills in by itself in a few seconds. Books can also be sent from the phone page (Settings > Web view).");
+                    book.stand_in = true;
+                    return book;
+                }
+                // A card with no books on it: the welcome text says how to add some.
                 return Book::from_bytes(WELCOME, "Welcome");
             }
             // A stand-in: reading it never moves the book's saved place.
