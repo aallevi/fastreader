@@ -258,14 +258,19 @@ impl Card {
         // every piece walked the file's cluster chain again each time (~64 KB/s).
         let State::Mounted { vm, dir, .. } = &self.state else { return None };
         let f = vm.open_file_in_dir(*dir, book.file.as_str(), Mode::ReadOnly).ok()?;
-        let mut text = Vec::new();
+        // Room for the text up front (at most 2 MB; the pictures after it
+        // stay on the card): growing it bit by bit copied it over and over.
+        let mut text = Vec::with_capacity((book.len as usize).min(2 * 1024 * 1024));
         let mut chunk = alloc::vec![0u8; 32 * 1024];
         let mut pictures = None;
+        let mut read_ms = 0u64;
         loop {
+            let t = esp_hal::time::Instant::now();
             let n = match vm.read(f, &mut chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
+            read_ms += t.elapsed().as_millis();
             text.extend_from_slice(&chunk[..n]);
             // Stop at the picture section: the pixels stay on the card.
             let from = text.len().saturating_sub(n + IMAGES_MAGIC2.len());
@@ -291,14 +296,17 @@ impl Card {
             }
             // An old-format (version 1) section can't be read piecewise:
             // a big book keeps only its text.
+            // (Only the newly read part is searched: searching all of it
+            // after every chunk made big books slow to open.)
             if book.len > 3 * 1024 * 1024 {
-                if let Some(p) = text.windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC) {
-                    text.truncate(p);
+                if let Some(p) = text[from..].windows(IMAGES_MAGIC.len()).position(|w| w == IMAGES_MAGIC) {
+                    text.truncate(from + p);
                     break;
                 }
             }
         }
         let _ = vm.close_file(f);
+        esp_println::println!("card: {} ms of that reading the card", read_ms);
         Some((text, pictures))
     }
 

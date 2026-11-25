@@ -2295,6 +2295,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::WebIdleOff => "Web view off (unused)".into(),
         Msg::CardInserted => "SD card inserted".into(),
         Msg::CaptionHidden => "Description hidden".into(),
+        Msg::Opening(i) => format!("Opening {}…", app.library.get(i as usize).map_or("the book", |t| t.as_str())),
         Msg::Formatting => "Formatting the card…".into(),
         Msg::CardReady => "SD card ready".into(),
         Msg::CardFailed => "Could not format the card".into(),

@@ -603,6 +603,10 @@ async fn main(spawner: Spawner) -> ! {
                     ui.invalidate();
                 }
                 Effect::OpenBook(i) => {
+                    // "Opening <title>…" first: a big book takes a moment.
+                    app.show_opening(i, now);
+                    let damage = ui.paint(app, now, &mut cv);
+                    flush!(damage);
                     app.park_book(); // free the old book first: memory is tight
                     app.open_book(open_book(i, &mut flash, &uploads, &card_books), i);
                     save_positions(&mut flash, &app.positions);

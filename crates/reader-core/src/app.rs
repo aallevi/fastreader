@@ -618,6 +618,8 @@ pub enum Msg {
     WebIdleOff,
     CaptionHidden,
     Formatting,
+    /// A book being opened (big ones take a moment): its library index.
+    Opening(u8),
     CardReady,
     CardFailed,
     Rotated,
@@ -1333,6 +1335,12 @@ impl App {
     /// it's the same kind of jump; 0 when there is none (a fresh count).
     fn prev_net(&self, now: u64, f: impl Fn(Msg) -> Option<i16>) -> i16 {
         self.toast.filter(|t| now < t.until).and_then(|t| f(t.feedback.msg)).unwrap_or(0)
+    }
+
+    /// "Opening <title>…" in the title bar, for the platform to show before
+    /// a slow load.
+    pub fn show_opening(&mut self, i: u8, now: u64) {
+        self.feedback(Feedback::ok(Msg::Opening(i)), now);
     }
 
     fn feedback(&mut self, fb: Feedback, now: u64) -> Feedback {
