@@ -482,7 +482,9 @@ function toMarkup(doc, docPath) {
   }
   // An opening bracket or quote before bold/italic markers goes inside them
   // ("(**check**)" -> "**(check**)"): the reader reads markers at a word's start.
-  return out.join('\n\n').replace(/([(\[“‘"'«‹]+)(\*+)(?=\S)/g, '$2$1');
+  // Markers starting mid-word ("rattle-*snake*,") move to its start too.
+  return out.join('\n\n').replace(/([(\[“‘"'«‹]+)(\*+)(?=\S)/g, '$2$1')
+    .replace(/(?<![\S*])([^\s*]+)(\*+)(?=[^\s*]\S*?\*)/g, '$2$1');
 }
 // Pictures go after the text: "\n\0FRIMG1", count, then width, height and
 // RGB565 pixels per picture, scaled to fit the reader's stage (300×190).

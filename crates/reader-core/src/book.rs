@@ -868,6 +868,8 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
         }
         let row = in_table && table_row(raw).is_some();
         let mut col: u16 = 0;
+        let tidy = tidy_dashes(line);
+        let line = tidy.as_str();
         let mut tokens = line.split_whitespace().peekable();
         let Some(&first) = tokens.peek() else {
             // Blank line: paragraph break.
@@ -1207,6 +1209,25 @@ pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
     ("(", ")")
 }
 
+/// Readies a line for splitting into words: drops the invisible
+/// characters some books use to steer line breaks (word joiner, zero-width
+/// spaces, soft hyphen), and breaks after an em dash between two words
+/// ("unless—unless" reads "unless—", "unless": the dash stays where the
+/// break is). Ranges ("1914–1918"), hyphenated words, a dash opening a line
+/// of dialogue and one ending interrupted speech stay as they are.
+fn tidy_dashes(line: &str) -> String {
+    let chars: Vec<char> = line.chars().filter(|c| !matches!(c, '\u{FEFF}' | '\u{2060}' | '\u{200B}' | '\u{00AD}')).collect();
+    let mut out = String::with_capacity(line.len() + 8);
+    for (i, &c) in chars.iter().enumerate() {
+        out.push(c);
+        let wordish = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || matches!(c, '’' | '\'' | '”' | '"' | ')' | '*' | '_' | '.' | ',' | '!' | '?'));
+        if c == '—' && i > 0 && wordish(chars.get(i - 1)) && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric() || matches!(n, '“' | '‘' | '"' | '(' | '*' | '_')) {
+            out.push(' ');
+        }
+    }
+    out
+}
+
 fn classify(word: &str) -> Pause {
     // Look past closing quotes/brackets: `end."` still ends a sentence.
     let tail = word.trim_end_matches(['"', '\'', ')', ']', '}', '>', '»', '›', '”', '’']);
@@ -1291,6 +1312,14 @@ mod tests {
 
     fn styles(b: &Book) -> Vec<(bool, bool, bool)> {
         (0..b.len()).map(|i| b.word(i).unwrap().style).map(|s| (s.bold(), s.italic(), s.heading())).collect()
+    }
+
+    #[test]
+    fn dashes_between_words_split_and_invisible_joiners_go() {
+        let b = Book::new("t", "“unless\u{FEFF}—unless we’re one—and two. 1914–1918 well-known —Hola, dijo—");
+        let w: Vec<String> = (0..b.len()).map(|i| String::from(b.text_of(b.word(i).unwrap()))).collect();
+        assert_eq!(w, ["“unless—", "unless", "we’re", "one—", "and", "two.", "1914–1918", "well-known", "—Hola,", "dijo—"]);
+        assert_eq!(b.word(0).unwrap().pause, Pause::Clause, "a breath at the dash");
     }
 
     #[test]

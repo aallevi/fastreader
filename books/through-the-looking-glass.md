@@ -337,7 +337,7 @@ Alice wondered a little at this, but she was too much in awe of the Queen to dis
 
 “I only wanted to see what the garden was like, your Majesty﻿—”
 
-“That’s right,” said the Queen, patting her on the head, which Alice didn’t like at all, “though, when you say ‘garden,’﻿—*I’ve* seen gardens, compared with which this would be a wilderness.”
+“That’s right,” said the Queen, patting her on the head, which Alice didn’t like at all, “though, when you say *‘garden,’﻿—I’ve* seen gardens, compared with which this would be a wilderness.”
 
 Alice didn’t dare to argue the point, but went on: “﻿—and I thought I’d try and find my way to the top of that hill﻿—”
 
@@ -549,7 +549,7 @@ Then came another of those melancholy little sighs, and this time the poor Gnat 
 
 She very soon came to an open field, with a wood on the other side of it: it looked much darker than the last wood, and Alice felt a *little* timid about going into it. However, on second thoughts, she made up her mind to go on: “for I certainly won’t go *back*,” she thought to herself, and this was the only way to the Eighth Square.
 
-“This must be the wood,” she said thoughtfully to herself, “where things have no names. I wonder what’ll become of *my* name when I go in? I shouldn’t like to lose it at all﻿—because they’d have to give me another, and it would be almost certain to be an ugly one. But then the fun would be trying to find the creature that had got my old name! That’s just like the advertisements, you know, when people lose dogs﻿—*‘answers* *to* *the* *name* *of* *“Dash”:* *had* *on* *a* *brass* *collar*’﻿—just fancy calling everything you met ‘Alice,’ till one of them answered! Only they wouldn’t answer at all, if they were wise.”
+“This must be the wood,” she said thoughtfully to herself, “where things have no names. I wonder what’ll become of *my* name when I go in? I shouldn’t like to lose it at all﻿—because they’d have to give me another, and it would be almost certain to be an ugly one. But then the fun would be trying to find the creature that had got my old name! That’s just like the advertisements, you know, when people lose *dogs﻿—‘answers* *to* *the* *name* *of* *“Dash”:* *had* *on* *a* *brass* *collar*’﻿—just fancy calling everything you met ‘Alice,’ till one of them answered! Only they wouldn’t answer at all, if they were wise.”
 
 She was rambling on in this way when she reached the wood: it looked very cool and shady. “Well, at any rate it’s a great comfort,” she said as she stepped under the trees, “after being so hot, to get into the﻿—into *what*?” she went on, rather surprised at not being able to think of the word. “I mean to get under the﻿—under the﻿—under *this*, you know!” putting her hand on the trunk of the tree. “What *does* it call itself, I wonder? I do believe it’s got no name﻿—why, to be sure it hasn’t!”
 
@@ -636,7 +636,7 @@ Then they let go of Alice’s hands, and stood looking at her for a minute: ther
 
 “So *much* obliged!” added Tweedledee. “You like poetry?”
 
-“Ye-es, pretty well﻿—*some* poetry,” Alice said doubtfully. “Would you tell me which road leads out of the wood?”
+“Ye-es, pretty *well﻿—some* poetry,” Alice said doubtfully. “Would you tell me which road leads out of the wood?”
 
 “What shall I repeat to her?” said Tweedledee, looking round at Tweedledum with great solemn eyes, and not noticing Alice’s question.
 
@@ -842,7 +842,7 @@ Tweedledum spread a large umbrella over himself and his brother, and looked up i
 
 “Do you see *that*?” he said, in a voice choking with passion, and his eyes grew large and yellow all in a moment, as he pointed with a trembling finger at a small white thing lying under the tree.
 
-“It’s only a rattle,” Alice said, after a careful examination of the little white thing. “Not a rattle-*snake*, you know,” she added hastily, thinking that he was frightened: “only an old rattle﻿—quite old and broken.”
+“It’s only a rattle,” Alice said, after a careful examination of the little white thing. “Not a *rattle-snake*, you know,” she added hastily, thinking that he was frightened: “only an old rattle﻿—quite old and broken.”
 
 “I knew it was!” cried Tweedledum, beginning to stamp about wildly and tear his hair. “It’s spoilt, of course!” Here he looked at Tweedledee, who immediately sat down on the ground, and tried to hide himself under the umbrella.
 
@@ -1138,7 +1138,7 @@ It might have been written a hundred times, easily, on that enormous face. Humpt
 
 “And how exactly like an egg he is!” she said aloud, standing with her hands ready to catch him, for she was every moment expecting him to fall.
 
-“It’s *very* provoking,” Humpty Dumpty said after a long silence, looking away from Alice as he spoke, “to be called an egg﻿—*very!*”
+“It’s *very* provoking,” Humpty Dumpty said after a long silence, looking away from Alice as he spoke, “to be called an *egg﻿—very!*”
 
 “I said you *looked* like an egg, Sir,” Alice gently explained. “And some eggs are very pretty, you know,” she added, hoping to turn her remark into a sort of a compliment.
 
@@ -1213,7 +1213,7 @@ Alice felt even more indignant at this suggestion. “I mean,” she said, “th
 
 Evidently Humpty Dumpty was very angry, though he said nothing for a minute or two. When he *did* speak again, it was in a deep growl.
 
-“It is a﻿—*most﻿—provoking*﻿—thing,” he said at last, “when a person doesn’t know a cravat from a belt!”
+“It is *a﻿—most﻿—provoking*﻿—thing,” he said at last, “when a person doesn’t know a cravat from a belt!”
 
 “I know it’s very ignorant of me,” Alice said, in so humble a tone that Humpty Dumpty relented.
 
@@ -2144,7 +2144,7 @@ The snoring got more distinct every minute, and sounded more like a tune: at las
 
 She was standing before an arched doorway over which were the words **Queen** **Alice** in large letters, and on each side of the arch there was a bell-handle; one was marked “Visitors’ Bell,” and the other “Servants’ Bell.”
 
-“I’ll wait till the song’s over,” thought Alice, “and then I’ll ring﻿—the﻿—*which* bell must I ring?” she went on, very much puzzled by the names. “I’m not a visitor, and I’m not a servant. There *ought* to be one marked ‘Queen,’ you know﻿—”
+“I’ll wait till the song’s over,” thought Alice, “and then I’ll *ring﻿—the﻿—which* bell must I ring?” she went on, very much puzzled by the names. “I’m not a visitor, and I’m not a servant. There *ought* to be one marked ‘Queen,’ you know﻿—”
 
 Just then the door opened a little way, and a creature with a long beak put its head out for a moment and said “No admittance till the week after next!” and shut the door again with a bang.
 

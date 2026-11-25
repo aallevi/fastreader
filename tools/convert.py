@@ -585,6 +585,10 @@ def main():
         # them ("(**check**)" -> "**(check**)"): the reader reads markers at
         # a word's start only.
         text = re.sub(r"([(\[“‘\"'«‹]+)(\*+)(?=\S)", r"\2\1", text)
+        # Markers starting mid-word ("rattle-*snake*,") move to the word's
+        # start too ("*rattle-snake*,"); else the closing one would switch
+        # the style on for the rest of the book.
+        text = re.sub(r"(?<![\S*])([^\s*]+)(\*+)(?=[^\s*][^\s]*?\*)", r"\2\1", text)
         # Collapse 3+ blank lines; first line carries the title for the library.
         text = re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
         if a.sd:
