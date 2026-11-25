@@ -72,7 +72,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 - [ ] While reading, tap a picture that has a description: reading pauses on it and the description shows; the Description button is still there while paused.
 
 ## Break reminder
-- [ ] Settings > Reading > Break reminder: after the chosen reading time, reading pauses and "Sleepy time" says "Time for a pause: 30 min of reading. Rest your eyes; your place is kept." with the hat turning; a touch closes it. A pause of 5 minutes or more counts as a break (the count starts again).
+- [ ] Settings > Reading > Break reminder: after the chosen reading time, reading pauses and "Sleepy time" says "Time for a pause: 30 min of reading. Rest your eyes; your place is kept." with the hat turning; a touch closes it. A pause of 5 minutes or more counts as a break (the count starts again). It stops at a natural point: a chapter's end within 5 minutes of the time, else a paragraph's within a minute, else a sentence's within 20 s, else the word.
 
 ## Battery (needs the battery)
 - [ ] Title bar: the level in battery brackets "(82%)", green / orange / red.

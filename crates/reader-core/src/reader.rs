@@ -172,6 +172,12 @@ impl Reader {
         t
     }
 
+    /// Reading time from the current word to word `i` (ahead of it), at
+    /// the current speed and pace.
+    pub fn ms_until(&self, i: usize) -> u64 {
+        self.ms_for(self.book.weight_from(self.pos).saturating_sub(self.book.weight_from(i)) as u64)
+    }
+
     pub fn ms_left(&self) -> u64 {
         self.ms_for(self.book.weight_from(self.pos) as u64)
     }

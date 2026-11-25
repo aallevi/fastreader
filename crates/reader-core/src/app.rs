@@ -9,7 +9,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::book::Book;
+use crate::book::{Book, Pause};
 use crate::input::Key;
 use crate::reader::Reader;
 use crate::settings::{Mode, Settings, Skip, ALIGN_NAMES, MODE_NAMES, PACE_NAMES, BRACKET_NAMES, PICTURE_NAMES, POSITION_NAMES, TABLE_NAMES, FIGURE_NAMES, SLEEP_MIN, SLEEP_NAMES, BREAK_MIN, BREAK_NAMES, BREAK_REST_MIN, WELCOME_MIN, WELCOME_NAMES, PARAGRAPH_NAMES, SKIPS, SKIP_NAMES, SPACING_NAMES};
@@ -745,6 +745,9 @@ pub const BATTERY_LOW: u8 = 5;
 pub const BATTERY_SLEEP: u8 = 2;
 /// How long the sleepy battery shows before the warning comes up.
 pub const BATTERY_DROWSY_MS: u64 = 60_000;
+/// The break reminder looks this far around its time for a good place
+/// to stop (a chapter's end), and stops at the latest this late.
+const BREAK_LOOK_MS: u64 = 5 * 60_000;
 /// How long the warning gives before sleeping (plugging in cancels it).
 pub const BATTERY_SLEEP_MS: u64 = 30_000;
 
@@ -836,6 +839,9 @@ pub struct App {
     paused_at: Option<u64>,
     /// The break reminder is on screen ("Sleepy time": a touch or key closes it).
     pub rest_warning: bool,
+    /// Where the break reminder will stop reading: after this word (a
+    /// chapter's, paragraph's or sentence's end near the chosen time).
+    break_stop: Option<usize>,
     /// Last key, touch or playing moment: the break is counted from here.
     last_input: u64,
     /// Last key, touch or moment of reading (menus open don't count): the
@@ -908,6 +914,7 @@ impl App {
             read_ms: 0,
             paused_at: None,
             rest_warning: false,
+            break_stop: None,
             last_input: 0,
             last_activity: 0,
             welcome_minute: None,
@@ -1077,6 +1084,7 @@ impl App {
                 Some(at) => {
                     if now.saturating_sub(at) >= BREAK_REST_MIN as u64 * 60_000 {
                         self.read_ms = 0;
+                        self.break_stop = None;
                     }
                 }
                 None => self.read_ms += since,
@@ -1085,20 +1093,68 @@ impl App {
             // Just started: was the pause before a real break?
             if self.paused_at.take().is_some_and(|at| now.saturating_sub(at) >= BREAK_REST_MIN as u64 * 60_000) {
                 self.read_ms = 0;
+                self.break_stop = None;
             }
         } else if self.paused_at.is_none() {
             self.paused_at = Some(now);
         }
         let limit = BREAK_MIN[(self.settings.break_after as usize).min(BREAK_MIN.len() - 1)] as u64 * 60_000;
-        if limit > 0 && self.read_ms >= limit && self.reader.is_playing() {
+        if limit == 0 || !self.reader.is_playing() {
+            return false;
+        }
+        // Five minutes ahead, choose where to stop: a natural end near the
+        // chosen time (see break_point).
+        if self.break_stop.is_none() && self.read_ms + BREAK_LOOK_MS >= limit && self.read_ms < limit {
+            self.break_stop = self.break_point(limit - self.read_ms);
+        }
+        let reached = match self.break_stop {
+            Some(stop) => self.reader.pos() > stop,
+            None => self.read_ms >= limit,
+        };
+        // (A stop never reached, after a jump or a change of speed: at the
+        // latest five minutes late.)
+        if reached || self.read_ms >= limit + BREAK_LOOK_MS {
             self.reader.pause();
             self.read_ms = 0;
+            self.break_stop = None;
             self.paused_at = Some(now);
             self.rest_warning = true;
             self.save();
             return true;
         }
         false
+    }
+
+    /// Where to stop for a break due in `due` ms of reading: after the
+    /// end of a chapter within 5 minutes of that moment (the closest),
+    /// else of a paragraph within a minute, else of a sentence within 20
+    /// seconds, else after the word read at that moment. None: no word
+    /// there (stop on time).
+    fn break_point(&self, due: u64) -> Option<usize> {
+        let r = &self.reader;
+        let b = &r.book;
+        let from = r.pos();
+        // The words ahead with their reading time from here, as far as
+        // five minutes past the due moment.
+        let mut ahead: Vec<(usize, u64)> = Vec::new();
+        let mut i = from;
+        while i < b.len() {
+            let t = r.ms_until(i + 1);
+            ahead.push((i, t));
+            if t > due + BREAK_LOOK_MS {
+                break;
+            }
+            i += 1;
+        }
+        let chapter_end = |i: usize| b.chapters().iter().any(|c| c.0 as usize == i + 1);
+        let pause = |i: usize| b.word(i).map(|w| w.pause);
+        let closest = |within: u64, end: &dyn Fn(usize) -> bool| {
+            ahead.iter().filter(|&&(i, t)| t.abs_diff(due) <= within && end(i)).min_by_key(|&&(_, t)| t.abs_diff(due)).map(|&(i, _)| i)
+        };
+        closest(BREAK_LOOK_MS, &chapter_end)
+            .or_else(|| closest(60_000, &|i| pause(i) == Some(Pause::Paragraph)))
+            .or_else(|| closest(20_000, &|i| matches!(pause(i), Some(Pause::Sentence | Pause::Paragraph))))
+            .or_else(|| ahead.iter().find(|&&(i, t)| t >= due && b.word(i).is_some_and(|w| !b.is_image(w))).map(|&(i, _)| i))
     }
 
     /// Minutes read before the break reminder came up (for its text).
@@ -2355,6 +2411,33 @@ mod tests {
         a.rest_warning = true;
         a.handle(Select, t + 4_000);
         assert!(a.reader.is_playing(), "▶ is \"Continue\" too");
+    }
+
+    #[test]
+    fn break_reminder_stops_at_a_chapter_end_near_its_time() {
+        // Chapters of ~300 words: at 300 wpm about a minute each. The
+        // reminder (20 min) stops right after a chapter's last word.
+        let mut text = String::new();
+        for c in 0..40 {
+            text.push_str(&format!("# Chapter {c}\n\n"));
+            for _ in 0..6 {
+                for _ in 0..10 {
+                    text.push_str("a few plain words here. ");
+                }
+                text.push_str("\n\n");
+            }
+        }
+        let mut a = App::new(Book::new("t", &text), CAT, Settings { wpm: 300, break_after: 1, sleep_after: 0, auto_dim: false, ..base() });
+        a.handle(Select, 0);
+        let mut t = 0;
+        while !a.rest_warning && t < 40 * 60_000 {
+            t += 50;
+            a.tick(t);
+        }
+        assert!(a.rest_warning, "reminded");
+        let starts: Vec<usize> = a.reader.book.chapters().iter().map(|c| c.0 as usize).collect();
+        assert!(starts.contains(&a.reader.pos()), "paused on a chapter's first word, at {}", a.reader.pos());
+        assert!((15 * 60_000..25 * 60_000).contains(&t), "near the 20 minutes: {} s", t / 1000);
     }
 
     #[test]
