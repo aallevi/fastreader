@@ -443,11 +443,11 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
 
-        // Battery every 10 s (and at start); every 2 s while nearly empty,
+        // Battery every 4 s (and at start); every 2 s while nearly empty,
         // so plugging in is seen quickly.
         if now >= last_battery {
             let nearly = app.battery.is_some_and(|b| b.percent <= reader_core::app::BATTERY_LOW);
-            last_battery = now + if nearly { 2_000 } else { 10_000 };
+            last_battery = now + if nearly { 2_000 } else { 4_000 };
             let raw: u16 = nb::block!(adc.read_oneshot(&mut bat_pin)).unwrap_or(0);
             println!("battery: {:?} mV, {:?}% (charging {})", board::battery_mv(raw), app.battery.map(|b| b.percent), app.battery.is_some_and(|b| b.charging));
             app.battery = board::battery_mv(raw).map(|mv| {

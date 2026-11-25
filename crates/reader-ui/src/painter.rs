@@ -877,7 +877,7 @@ fn bracket(cv: &mut Canvas, edge: f32, dir: f32, top: f32, bot: f32, arm: f32, r
 /// a bolt instead of the number; very low: "(!)"; about to sleep: empty
 /// with z's floating out. The tip never moves (room for the z's is kept to
 /// its right). Returns where the title must end.
-fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32, base: f32) -> f32 {
+fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32) -> f32 {
     let (th, l) = (c.th, c.l);
     let look = battery_look(&b, c.now);
     let small = l.px(11.0);
@@ -889,6 +889,10 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
         BatteryLook::Level(p) | BatteryLook::Charging(p) => battery_colour(th, p),
     };
     // The brackets are exactly the font's "(": its height and stroke.
+    // Centred in the title bar's height (the brackets span the font's "(",
+    // 0.668 of the size above the baseline, 0.161 below).
+    let bar = l.header;
+    let base = bar.cy() + small * (0.668 - 0.161) / 2.0;
     let (top, bot) = (base - small * 0.668, base + small * 0.161);
     let lw = (small * 0.106).max(1.0);
     let (arm, rad, gap) = (l.px(2.6), l.px(2.4), l.px(1.4));
@@ -906,6 +910,19 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
     let tip_x = right - l.px(17.0) - tip_w; // the z's float up in the 17 px after it
     let x1 = tip_x - l.px(1.0);
     let x0 = x1 - inner - 2.0 * (gap + lw);
+    // Its own tray at the bar's right end, set off by an etched line; on
+    // Windows 98's grey a sunken, lighter tray (like 98's system tray), so
+    // the colours read clearly.
+    let tray = Rect::new((x0 - l.px(6.0)) as i32, bar.y + l.i(3.0), (bar.right() - l.i(3.0)) - (x0 - l.px(6.0)) as i32, bar.h - l.i(6.0));
+    if th.chrome == Chrome::Win98 {
+        cv.fill(tray, 0xE4E4E4);
+        bevel(cv, tray, true);
+    } else {
+        let dark = mix(th.bar[0].1, BLACK, 90);
+        let light = mix(th.bar[0].1, WHITE, 70);
+        cv.fill(Rect::new(tray.x, tray.y, 1, tray.h), dark);
+        cv.fill(Rect::new(tray.x + 1, tray.y, 1, tray.h), light);
+    }
     bracket(cv, x0, 1.0, top, bot, arm, rad, lw, colour);
     bracket(cv, x1, -1.0, top, bot, arm, rad, lw, colour);
     let mid = (top + bot) / 2.0;
@@ -920,7 +937,7 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
         }
         BatteryLook::Sleepy(shown) => {
             // z's float up and away from the tip, each smaller.
-            let zs = [(l.px(9.0), l.px(3.5), l.px(-1.0)), (l.px(7.0), l.px(9.0), l.px(-6.0)), (l.px(5.0), l.px(13.5), l.px(-10.0))];
+            let zs = [(l.px(9.0), l.px(3.5), l.px(1.0)), (l.px(7.0), l.px(9.0), l.px(-2.5)), (l.px(5.0), l.px(13.5), l.px(-5.5))];
             for (i, &(px, dx, dy)) in zs.iter().enumerate() {
                 if shown & (1 << i) != 0 {
                     f.draw(cv, face, px, "z", tip_x + dx, mid + px * 0.33 + dy, colour);
@@ -933,7 +950,7 @@ fn draw_battery(f: &mut Fonts, cv: &mut Canvas, c: &Ctx, b: Battery, right: f32,
             }
         }
     }
-    x0 - l.px(4.0)
+    tray.x as f32 - l.px(4.0)
 }
 
 /// The battery warning's seconds left, while it shows.
@@ -1224,7 +1241,7 @@ fn draw_header(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) {
     let small = l.px(11.0);
     match app.battery {
         _ if app.toast().is_some() => {}
-        Some(b) => right = draw_battery(f, cv, c, b, right, base),
+        Some(b) => right = draw_battery(f, cv, c, b, right),
         None => {
             let txt = up(th, "USB");
             right -= f.measure(th.ui.0, small, &txt);

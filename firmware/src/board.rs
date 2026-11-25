@@ -62,23 +62,39 @@ pub fn battery_percent(mv: u16) -> u8 {
 /// To be checked with the battery: the jump size and how full looks.
 #[derive(Default)]
 pub struct Charger {
-    last: Option<u16>,
+    /// The last few readings (oldest first).
+    recent: [u16; 4],
+    count: usize,
     charging: bool,
 }
 
 impl Charger {
-    /// A sudden rise from one reading to the next.
-    const JUMP_MV: u16 = 40;
+    /// A rise this big over the last few readings: plugged in (the voltage
+    /// climbs over a few seconds, not in one step); a fall as big: unplugged.
+    const JUMP_MV: u16 = 60;
 
     pub fn update(&mut self, mv: u16) -> bool {
-        if let Some(last) = self.last {
-            if mv >= last + Self::JUMP_MV {
-                self.charging = true;
-            } else if mv + Self::JUMP_MV <= last {
-                self.charging = false;
-            }
+        if self.count == self.recent.len() {
+            self.recent.rotate_left(1);
+            self.count -= 1;
         }
-        self.last = Some(mv);
+        self.recent[self.count] = mv;
+        self.count += 1;
+        let seen = &self.recent[..self.count];
+        let (lo, hi) = (*seen.iter().min().unwrap_or(&mv), *seen.iter().max().unwrap_or(&mv));
+        if mv >= lo + Self::JUMP_MV && !self.charging {
+            self.charging = true;
+            self.reset(mv);
+        } else if mv + Self::JUMP_MV <= hi && self.charging {
+            self.charging = false;
+            self.reset(mv);
+        }
         self.charging
+    }
+
+    /// After a change, compare only against what comes next.
+    fn reset(&mut self, mv: u16) {
+        self.recent[0] = mv;
+        self.count = 1;
     }
 }
