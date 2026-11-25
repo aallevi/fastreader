@@ -378,6 +378,11 @@ impl Book {
         refs
     }
 
+    /// Word `i` is the last of an aside (it closes one of a kind that is on).
+    pub fn closes_aside_at(&self, i: usize) -> bool {
+        self.word(i).is_some_and(|w| w.style.bracketed() && (closes_aside(self.text_of(w)) || self.word(i + 1).is_none_or(|n| !n.style.bracketed())))
+    }
+
     /// Word `i` ends a reference to a figure (the "11" of "figure 11").
     pub fn ends_figure_ref(&self, i: usize) -> bool {
         self.figure_ref(i).is_some() && self.figure_ref(i + 1).is_none()
@@ -1021,7 +1026,7 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 cut -= 1;
             }
             let shown = &scratch[..cut];
-            let closes = shown.chars().any(|c| CLOSERS.contains(&c));
+            let closes = closes_aside(shown);
             // Which words are inside brackets is worked out once the whole
             // text is read (`mark_asides`): an aside may cross a page break.
             let st = style.with(Style::HEADING, heading);
@@ -1032,14 +1037,14 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 style: st,
             });
             // Brackets are punctuation: a breath as the aside opens and closes.
-            if shown.starts_with(OPENERS) && words.len() >= 2 {
+            if opens_aside(shown) && words.len() >= 2 {
                 let n = words.len();
                 let before = words.get(n - 2).unwrap();
                 if before.pause < Pause::Clause {
                     words.set(n - 2, Word { pause: Pause::Clause, ..before });
                 }
             }
-            if closes && shown.trim_end_matches(['.', ',', ';', ':', '!', '?', '"', '\'', '”', '’']).ends_with(CLOSERS) {
+            if closes {
                 let n = words.len();
                 let me = words.get(n - 1).unwrap();
                 if me.pause < Pause::Clause {
@@ -1131,6 +1136,55 @@ impl Iterator for MarkerIter<'_> {
     }
 }
 
+/// Which kinds of aside are read as asides (a breath as they open and
+/// close, side marks), one bit each: see the ASIDE_* constants. Set by the
+/// app from its settings before books are opened.
+static ASIDE_KINDS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(ASIDE_DEFAULT);
+pub const ASIDE_ROUND: u8 = 1 << 0; // ( )
+pub const ASIDE_SQUARE: u8 = 1 << 1; // [ ]
+pub const ASIDE_CURLY: u8 = 1 << 2; // { }
+pub const ASIDE_ANGLE: u8 = 1 << 3; // < >  << >>
+pub const ASIDE_GUILLEMET: u8 = 1 << 4; // « »  ‹ ›
+pub const ASIDE_QUOTE: u8 = 1 << 5; // “ ”  " "
+pub const ASIDE_DASH: u8 = 1 << 6; // — a phrase between dashes —
+/// Every bracket and quotes; dash pairs off.
+pub const ASIDE_DEFAULT: u8 = ASIDE_ROUND | ASIDE_SQUARE | ASIDE_CURLY | ASIDE_ANGLE | ASIDE_GUILLEMET | ASIDE_QUOTE;
+
+pub fn set_aside_kinds(kinds: u8) {
+    ASIDE_KINDS.store(kinds, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn aside_kinds() -> u8 {
+    ASIDE_KINDS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// The kind bit of a bracket character (opener or closer), if it is one.
+fn bracket_bit(c: char) -> Option<u8> {
+    Some(match c {
+        '(' | ')' => ASIDE_ROUND,
+        '[' | ']' => ASIDE_SQUARE,
+        '{' | '}' => ASIDE_CURLY,
+        '<' | '>' => ASIDE_ANGLE,
+        '«' | '»' | '‹' | '›' => ASIDE_GUILLEMET,
+        '“' | '”' | '"' => ASIDE_QUOTE,
+        _ => return None,
+    })
+}
+
+/// A word opening an aside of a kind that is on (its first character).
+fn opens_aside(word: &str) -> bool {
+    let k = aside_kinds();
+    word.chars().next().is_some_and(|c| (OPENERS.contains(&c) || matches!(c, '“' | '"')) && bracket_bit(c).is_some_and(|b| k & b != 0))
+}
+
+/// A word closing an aside of a kind that is on (its last character
+/// before trailing punctuation).
+fn closes_aside(word: &str) -> bool {
+    let k = aside_kinds();
+    let t = word.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '’']);
+    t.chars().last().is_some_and(|c| (CLOSERS.contains(&c) || matches!(c, '”' | '"')) && bracket_bit(c).is_some_and(|b| k & b != 0))
+}
+
 /// Brackets that open and close an aside: round ( ), square [ ], curly { },
 /// angle < > (also << >>), and guillemets « » ‹ ›.
 pub const OPENERS: [char; 6] = ['(', '[', '{', '<', '«', '‹'];
@@ -1145,13 +1199,50 @@ const MAX_ASIDE: usize = 1500;
 /// breaks split asides). Openers never closed reach only to the end of
 /// their paragraph; closers without an opener ("1)", "a)") are ignored.
 fn mark_asides(text: &crate::chunked::ChunkedText, words: &mut Chunked<Word>) {
+    let on = aside_kinds();
+    let enabled = |c: char| bracket_bit(c).is_some_and(|b| on & b != 0);
+    // Quotes are kind 6 (“ ” and straight ", which opens at a word's start
+    // and closes elsewhere).
     let kind = |c: char, set: &[char; 6]| set.iter().position(|&k| k == c);
     let mut open: Vec<(usize, usize)> = Vec::new(); // (kind, word)
     let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut dash: Option<usize> = None; // a dash pair's first word
     for i in 0..words.len() {
         let w = words.get(i).unwrap();
-        for c in text.get(w.start, w.len as usize).chars() {
-            if let Some(k) = kind(c, &OPENERS) {
+        let t = text.get(w.start, w.len as usize);
+        // A phrase between two dashes ("Alice— as she said— went"; the
+        // dash stays on the word before each break).
+        if on & ASIDE_DASH != 0 {
+            if let Some(d) = dash {
+                if w.pause == Pause::Paragraph || i - d > 40 {
+                    dash = None;
+                } else if t.trim_end_matches(['”', '"', '’']).ends_with('—') {
+                    spans.push((d, i));
+                    dash = None;
+                    continue;
+                }
+            }
+            if dash.is_none() && t.trim_end_matches(['”', '"', '’']).ends_with('—') && w.pause != Pause::Paragraph {
+                dash = Some(i + 1);
+            }
+        }
+        for (ci, c) in t.chars().enumerate() {
+            if !enabled(c) {
+                continue;
+            }
+            let quote_open = c == '“' || (c == '"' && ci == 0);
+            let quote_close = c == '”' || (c == '"' && ci > 0);
+            if quote_open {
+                open.push((6, i));
+            } else if quote_close {
+                if let Some(at) = open.iter().rposition(|&(ok, _)| ok == 6) {
+                    let start = open[at].1;
+                    open.truncate(at);
+                    if i - start <= MAX_ASIDE {
+                        spans.push((start, i));
+                    }
+                }
+            } else if let Some(k) = kind(c, &OPENERS) {
                 open.push((k, i));
             } else if let Some(k) = kind(c, &CLOSERS) {
                 if let Some(at) = open.iter().rposition(|&(ok, _)| ok == k) {
@@ -1189,10 +1280,26 @@ pub fn bracket_pair(book: &Book, i: usize) -> (&'static str, &'static str) {
         j -= 1;
         let Some(w) = book.word(j) else { break };
         if !w.style.bracketed() && j != i {
+            // Walked out of the aside without its opener: a phrase between
+            // dashes (the dash ends the word before it).
+            if book.text_of(w).trim_end_matches(['”', '"', '’']).ends_with('—') {
+                return ("—", "—");
+            }
             break;
         }
         let t = book.text_of(w);
         for c in t.chars().rev() {
+            if c == '“' || (c == '"' && t.starts_with('"')) {
+                if depth == 0 {
+                    return ("“", "”");
+                }
+                depth -= 1;
+                continue;
+            }
+            if c == '”' && j != i {
+                depth += 1;
+                continue;
+            }
             if CLOSERS.contains(&c) && j != i {
                 depth += 1;
             } else if OPENERS.contains(&c) {
@@ -1317,6 +1424,22 @@ mod tests {
 
     fn styles(b: &Book) -> Vec<(bool, bool, bool)> {
         (0..b.len()).map(|i| b.word(i).unwrap().style).map(|s| (s.bold(), s.italic(), s.heading())).collect()
+    }
+
+    #[test]
+    fn quotes_and_dash_pairs_are_asides_each_switchable() {
+        let aside = |b: &Book| (0..b.len()).filter(|&i| b.word(i).unwrap().style.bracketed()).map(|i| String::from(b.text_of(b.word(i).unwrap()))).collect::<Vec<_>>();
+        let text = "She said “come here” and left (quietly). Alice—as she said—went.";
+        set_aside_kinds(ASIDE_DEFAULT | ASIDE_DASH);
+        let b = Book::new("t", text);
+        assert_eq!(aside(&b), ["“come", "here”", "(quietly).", "as", "she", "said—"]);
+        assert_eq!(bracket_pair(&b, 1 + 2), ("“", "”"));
+        assert_eq!(bracket_pair(&b, 9), ("—", "—"));
+        assert_eq!(b.word(1).unwrap().pause, Pause::Clause, "a breath as the quote opens");
+        set_aside_kinds(ASIDE_DEFAULT & !ASIDE_QUOTE);
+        let b = Book::new("t", text);
+        assert_eq!(aside(&b), ["(quietly)."], "quotes off, dashes off: only the brackets");
+        set_aside_kinds(ASIDE_DEFAULT);
     }
 
     #[test]

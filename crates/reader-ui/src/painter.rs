@@ -184,8 +184,8 @@ impl Ui {
                 paused && app.reader.on_picture(),
                 // Each half of a split long word is its own frame (same position).
                 app.reader.split_part(),
-                // The Description button pressed.
-                lit == Some(Hit::Caption),
+                // The Description button pressed, or the side marks blinked off.
+                lit == Some(Hit::Caption) || app.aside_blink(now),
                 // A table's grid flashing before a cell.
                 app.grid_flash(now),
             ),
@@ -1482,7 +1482,7 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
         .map(|i| {
             let w = book.word(i).unwrap();
             let t = book.text_of(w);
-            let t = if side_marks { t.replace(reader_core::book::OPENERS, "").replace(reader_core::book::CLOSERS, "") } else { String::from(t) };
+            let t = if side_marks { t.replace(reader_core::book::OPENERS, "").replace(reader_core::book::CLOSERS, "").replace(['“', '”', '"'], "") } else { String::from(t) };
             (t, fam.face(w.style), w.style.heading())
         })
         .filter(|(t, _, _)| !t.is_empty())
@@ -1550,7 +1550,9 @@ fn draw_word(f: &mut Fonts, cv: &mut Canvas, c: &Ctx) -> Rect {
     for (s, face, _) in &words {
         x += f.draw(cv, *face, px, s, x, base, colour) + space;
     }
-    if side_marks {
+    // (Blinked off for the end of the closing word's breath: a new aside
+    // after it reads as a new phrase.)
+    if side_marks && !app.aside_blink(c.now) {
         let face = fam.face(Style::PLAIN);
         let bpx = word_px(c) * 1.15;
         let inset = l.px(5.0);

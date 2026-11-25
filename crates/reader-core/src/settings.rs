@@ -132,6 +132,8 @@ pub struct Settings {
     pub sleep_after: u8,
     /// The break reminder: index into BREAK_MIN.
     pub break_after: u8,
+    /// Which kinds of aside are read as asides (book::ASIDE_* bits).
+    pub asides: u8,
     /// The backlight dims after a minute with nothing happening.
     pub auto_dim: bool,
     /// With the recognition point: split words too long to fit in two
@@ -183,6 +185,7 @@ impl Default for Settings {
             menu_colours: false,
             sleep_after: 3,
             break_after: 0,
+            asides: crate::book::ASIDE_DEFAULT,
             auto_dim: true,
             captions: false,
             progress_bar: true,
@@ -212,7 +215,7 @@ const OLD_FIELDS: [&str; 27] = [
 ];
 
 /// Every setting the web page can change: (name, min, max).
-pub const FIELDS: [(&str, u16, u16); 40] = [
+pub const FIELDS: [(&str, u16, u16); 41] = [
     ("wpm", 100, 1000),
     ("theme", 0, 255),
     ("font", 0, 255),
@@ -248,6 +251,7 @@ pub const FIELDS: [(&str, u16, u16); 40] = [
     ("menu_colours", 0, 1),
     ("sleep_after", 0, 5),
     ("break_after", 0, 5),
+    ("asides", 0, 127),
     ("auto_dim", 0, 1),
     ("captions", 0, 1),
     ("progress_bar", 0, 1),
@@ -290,6 +294,7 @@ impl Settings {
             "menu_colours" => self.menu_colours as u16,
             "sleep_after" => self.sleep_after as u16,
             "break_after" => self.break_after as u16,
+            "asides" => self.asides as u16,
             "auto_dim" => self.auto_dim as u16,
             "captions" => self.captions as u16,
             "progress_bar" => self.progress_bar as u16,
@@ -341,6 +346,7 @@ impl Settings {
             "menu_colours" => self.menu_colours = v != 0,
             "sleep_after" => self.sleep_after = b,
             "break_after" => self.break_after = b,
+            "asides" => self.asides = b,
             "auto_dim" => self.auto_dim = v != 0,
             "captions" => self.captions = v != 0,
             "progress_bar" => self.progress_bar = v != 0,

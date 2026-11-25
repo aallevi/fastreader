@@ -181,6 +181,8 @@ async fn main(spawner: Spawner) -> ! {
     let mut flash = FlashStorage::new(p.FLASH);
     let mut buf = [0u8; SETTINGS_LEN];
     let settings = flash.read(SETTINGS_ADDR, &mut buf).ok().and_then(|_| Settings::from_bytes(&buf)).unwrap_or_default();
+    // Which brackets, quotes and dashes are asides: before any book is read.
+    reader_core::book::set_aside_kinds(settings.asides);
     let mut saved = settings.to_bytes();
 
     // --- App.

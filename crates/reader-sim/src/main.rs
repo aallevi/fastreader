@@ -260,6 +260,8 @@ fn run_window(first: Option<PathBuf>, (w, h): (u32, u32), scale: Scale, headless
     let books = Arc::new(Mutex::new(library(first)));
     let first_count = books.lock().unwrap().len();
     let mut settings = std::fs::read(settings_path()).ok().and_then(|b| Settings::from_bytes(&b)).unwrap_or_default();
+    // Which brackets, quotes and dashes are asides: before any book is read.
+    reader_core::book::set_aside_kinds(settings.asides);
     let list = books.lock().unwrap().clone();
     settings.book = settings.book.min(list.len().saturating_sub(1) as u8);
     let mut app = App::new(load_book(&list[settings.book as usize]), CATALOG, settings);

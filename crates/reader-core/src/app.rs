@@ -86,6 +86,9 @@ pub enum MenuItem {
     SubConnections,
     SubLayout,
     SubContent,
+    SubBrackets,
+    /// One kind of aside on or off (index into ASIDE_NAMES).
+    Aside(u8),
 }
 
 /// The four menus, one per button in the title bar (left to right). Keys
@@ -139,21 +142,41 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Paragraphs,
             MenuItem::Align,
             MenuItem::SubContent,
-            MenuItem::Brackets,
             MenuItem::Pictures,
             MenuItem::Tables,
             MenuItem::Figures,
+            MenuItem::SubBrackets,
+            MenuItem::Brackets,
+            MenuItem::Aside(0),
+            MenuItem::Aside(1),
+            MenuItem::Aside(2),
+            MenuItem::Aside(3),
+            MenuItem::Aside(4),
+            MenuItem::Aside(5),
+            MenuItem::Aside(6),
         ],
     ),
 ];
 
+/// The kinds of aside, each on or off in Settings > Brackets: (name, bit).
+pub const ASIDE_NAMES: [(&str, u8); 7] = [
+    ("( ) Round", crate::book::ASIDE_ROUND),
+    ("[ ] Square", crate::book::ASIDE_SQUARE),
+    ("{ } Curly", crate::book::ASIDE_CURLY),
+    ("< > Angle", crate::book::ASIDE_ANGLE),
+    ("« » Guillemets", crate::book::ASIDE_GUILLEMET),
+    ("“ ” Quotes", crate::book::ASIDE_QUOTE),
+    ("— — Dashes", crate::book::ASIDE_DASH),
+];
+
 /// Submenus: a heading and the items it opens (they follow it in MENU).
-pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
+pub const SUBMENUS: [(MenuItem, &[MenuItem]); 6] = [
     (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome, MenuItem::BreakAfter]),
     (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours, MenuItem::AutoDim]),
     (MenuItem::SubConnections, &[MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
-    (MenuItem::SubContent, &[MenuItem::Brackets, MenuItem::Pictures, MenuItem::Tables, MenuItem::Figures]),
+    (MenuItem::SubContent, &[MenuItem::Pictures, MenuItem::Tables, MenuItem::Figures]),
+    (MenuItem::SubBrackets, &[MenuItem::Brackets, MenuItem::Aside(0), MenuItem::Aside(1), MenuItem::Aside(2), MenuItem::Aside(3), MenuItem::Aside(4), MenuItem::Aside(5), MenuItem::Aside(6)]),
 ];
 
 /// The submenu heading an item sits under, if any.
@@ -226,7 +249,7 @@ pub fn menu_items() -> impl Iterator<Item = MenuItem> {
     MENU.iter().flat_map(|(_, items)| items.iter().copied())
 }
 
-pub const MENU_LEN: u8 = 45;
+pub const MENU_LEN: u8 = 53;
 
 pub fn menu_item(i: u8) -> MenuItem {
     menu_items().nth(i as usize).unwrap_or(MenuItem::Resume)
@@ -256,7 +279,7 @@ impl MenuItem {
             MenuItem::Spacing => "Line spacing",
             MenuItem::Paragraphs => "Paragraphs",
             MenuItem::Align => "Text alignment",
-            MenuItem::Brackets => "Brackets",
+            MenuItem::Brackets => "Show them",
             MenuItem::Pictures => "Picture time",
             MenuItem::MenuColours => "Menu buttons",
             MenuItem::Tables => "Tables",
@@ -284,6 +307,8 @@ impl MenuItem {
             MenuItem::SubConnections => "Connections",
             MenuItem::SubLayout => "Layout",
             MenuItem::SubContent => "Content",
+            MenuItem::SubBrackets => "Brackets",
+            MenuItem::Aside(k) => ASIDE_NAMES[if (k as usize) < ASIDE_NAMES.len() { k as usize } else { 0 }].0,
         }
     }
 
@@ -302,6 +327,7 @@ impl MenuItem {
             MenuItem::Chapters => PickKind::Chapter,
             MenuItem::Bookmarks => PickKind::Bookmark,
             MenuItem::Brackets => PickKind::Brackets,
+            MenuItem::Aside(k) => PickKind::Aside(k),
             MenuItem::Pictures => PickKind::Pictures,
             MenuItem::MenuColours => PickKind::MenuColours,
             MenuItem::Tables => PickKind::Tables,
@@ -339,6 +365,7 @@ pub enum PickKind {
     Guides,
     Welcome,
     MenuColours,
+    Aside(u8),
     Tables,
     Figures,
     SleepAfter,
@@ -372,6 +399,7 @@ impl PickKind {
             PickKind::Book => "Library",
             PickKind::Bookmark => "Bookmarks",
             PickKind::Brackets => "Brackets",
+            PickKind::Aside(k) => ASIDE_NAMES[if (k as usize) < ASIDE_NAMES.len() { k as usize } else { 0 }].0,
             PickKind::Pictures => "Picture time",
             PickKind::MenuColours => "Menu buttons",
             PickKind::Tables => "Tables",
@@ -1510,11 +1538,24 @@ impl App {
         // Something moving between words would ask for ~30 frames a second.
         let frame = (self.animating()).then_some(self.last_tick + 33);
         let grid = (self.grid_until != 0).then_some(self.grid_until);
-        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid, self.sleep_due(), self.battery_due()].into_iter().flatten().min()
+        [self.reader.next_due(), self.toast.map(|t| t.until), self.flash.map(|f| f.1), frame, self.welcome_due(), grid, self.sleep_due(), self.battery_due(), self.blink_due().filter(|&at| at > self.last_tick)].into_iter().flatten().min()
     }
 
     /// Nearly empty: the z's float out of the battery (a step every 0.6 s),
     /// the warning counts down each second, and then the reader sleeps.
+    /// Between two asides the side marks blink off for the second half of
+    /// the closing word's breath: wake for that moment.
+    fn blink_due(&self) -> Option<u64> {
+        let end = self.reader.next_due()?;
+        let s = self.reader.shown();
+        (self.settings.brackets && s.end > s.start && self.reader.book.closes_aside_at(s.end - 1)).then(|| end - self.reader.current_delay() * 45 / 100)
+    }
+
+    /// The side marks are off for now (see blink_due).
+    pub fn aside_blink(&self, now: u64) -> bool {
+        self.blink_due().is_some_and(|at| now >= at)
+    }
+
     fn battery_due(&self) -> Option<u64> {
         if self.rest_warning {
             // The break reminder's hat turning.
@@ -2108,7 +2149,7 @@ impl App {
         match kind {
             PickKind::Book => self.library.len().clamp(1, 250) as u8,
             PickKind::Bookmark => self.book_marks().len().min(250) as u8,
-            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::Figures | PickKind::AutoDim => 2,
+            PickKind::Brackets | PickKind::Position | PickKind::Card | PickKind::DeleteConfirm | PickKind::ProgressBar | PickKind::BookInfo | PickKind::LongWords | PickKind::ProgressBlocks | PickKind::Guides | PickKind::MenuColours | PickKind::Tables | PickKind::Figures | PickKind::AutoDim | PickKind::Aside(_) => 2,
             PickKind::DeleteWhich => self.library.len().clamp(1, 250) as u8,
             PickKind::Pictures => PICTURE_NAMES.len() as u8,
             PickKind::Welcome => WELCOME_NAMES.len() as u8,
@@ -2136,6 +2177,7 @@ impl App {
             PickKind::Book => self.library.get(i).cloned().unwrap_or_else(|| self.reader.book.title.clone()),
             PickKind::Bookmark => self.bookmark_label(self.book_marks().get(i).copied().unwrap_or(0) as usize),
             PickKind::Brackets => BRACKET_NAMES[i].into(),
+            PickKind::Aside(_) => ["In the text", "As asides (a breath, side marks)"][i.min(1)].into(),
             PickKind::Pictures => PICTURE_NAMES[i.min(PICTURE_NAMES.len() - 1)].into(),
             PickKind::Welcome => WELCOME_NAMES[i.min(WELCOME_NAMES.len() - 1)].into(),
             PickKind::SleepAfter => SLEEP_NAMES[i.min(SLEEP_NAMES.len() - 1)].into(),
@@ -2221,6 +2263,7 @@ impl App {
                 self.book_marks().iter().rposition(|&b| b <= pos).unwrap_or(0) as u8
             }
             PickKind::Brackets => self.settings.brackets as u8,
+            PickKind::Aside(k) => (self.settings.asides & ASIDE_NAMES[(k as usize).min(ASIDE_NAMES.len() - 1)].1 != 0) as u8,
             PickKind::Pictures => self.settings.pacing.picture.min(PICTURE_NAMES.len() as u8 - 1),
             PickKind::Welcome => self.settings.welcome.min(WELCOME_NAMES.len() as u8 - 1),
             PickKind::SleepAfter => self.settings.sleep_after.min(SLEEP_NAMES.len() as u8 - 1),
@@ -2265,6 +2308,16 @@ impl App {
             PickKind::Font => self.settings.font = v,
             PickKind::Theme => self.settings.theme = v,
             PickKind::Brackets => self.settings.brackets = v == 1,
+            PickKind::Aside(k) => {
+                let bit = ASIDE_NAMES[(k as usize).min(ASIDE_NAMES.len() - 1)].1;
+                let was = self.settings.asides;
+                self.settings.asides = if v == 1 { was | bit } else { was & !bit };
+                if self.settings.asides != was {
+                    // Read again with the new choice: the book reopens.
+                    crate::book::set_aside_kinds(self.settings.asides);
+                    self.effect(Effect::OpenBook(self.settings.book));
+                }
+            }
             PickKind::Position => {
                 self.settings.position = v;
                 self.apply_mode();

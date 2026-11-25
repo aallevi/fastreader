@@ -63,6 +63,8 @@ fn take_inbox() -> Vec<u8> {
 pub extern "C" fn start(w: u32, h: u32) {
     let saved = take_inbox();
     let settings = Settings::from_bytes(&saved).unwrap_or_default();
+    // Which brackets, quotes and dashes are asides: before any book is read.
+    reader_core::book::set_aside_kinds(settings.asides);
     // A stand-in until the books arrive: its place is never saved over a
     // real book's (the first book's starting chapter, say).
     let mut loading = Book::new("Fast Reader", "# Fast Reader\nLoading…");
