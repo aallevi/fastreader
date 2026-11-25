@@ -95,7 +95,9 @@ const HOME_WORKERS: usize = 2;
 
 /// Brings up the access point (and the home network, if one is saved) and
 /// spawns the network tasks.
-pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant, home: Option<Home>) {
+/// Returns the home network's name when it is being joined: the caller
+/// records it (it holds the app while handling the effect that got here).
+pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, inbox: &'static RefCell<Inbox>, sd: card::Shared, clock: Instant, home: Option<Home>) -> Option<String> {
     println!("wifi: starting (internal heap free {} KB)", esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into()) / 1024);
     let ap_config = AccessPointConfig::default().with_ssid(SSID.try_into().unwrap());
     let station = home.as_ref().and_then(|h| {
@@ -112,7 +114,7 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
         Ok(c) => c,
         Err(e) => {
             println!("wifi: failed to start: {:?}", e);
-            return;
+            return None;
         }
     };
     let config = embassy_net::Config::ipv4_static(StaticConfigV4 { address: Ipv4Cidr::new(IP, 24), gateway: Some(IP), dns_servers: Default::default() });
@@ -126,8 +128,6 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
         dhcp.hostname = "fastreader".try_into().ok();
         let seed2 = seed.rotate_left(17) ^ 0x9E37_79B9_7F4A_7C15;
         let (home_stack, home_runner) = embassy_net::new(Interface::station(), embassy_net::Config::dhcpv4(dhcp), mk_static!(StackResources<6>, StackResources::<6>::new()), seed2);
-        app.borrow_mut().device.home_ssid = h.ssid.clone();
-        app.borrow_mut().device.home = "joining…".into();
         spawner.spawn(station_link(controller, app, station.clone().unwrap(), ap_config).unwrap());
         spawner.spawn(home_net_task(home_runner).unwrap());
         spawner.spawn(home_address(home_stack, app).unwrap());
@@ -145,6 +145,7 @@ pub fn start(spawner: Spawner, wifi: WIFI<'static>, app: &'static RefCell<App>, 
         spawner.spawn(http(stack, app, inbox, sd, clock).unwrap());
     }
     println!("wifi: access point {} up, http://{}", SSID, IP);
+    home.map(|h| h.ssid)
 }
 
 #[embassy_executor::task]

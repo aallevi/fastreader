@@ -37,6 +37,7 @@
    - Like an RSS app: at the last word of an article, ▶▶ (or ⏭) goes straight to the next unread article.
    - Storage: everything except the firmware lives on the SD card (articles, feeds list, read marks); a "Clear old articles" button removes read and old feed items.
 3. **The Mac app as reader and readers manager.** The Mac app is one reader among the others and the place that runs them all.
+   - Finding a reader: first look for it on the home Wi-Fi (fastreader.local); if it isn't there, look for the reader's own network ("FastReader") and offer to join it for the moment needed, then go back to the home network.
    - Readers: find the physical readers on the home Wi-Fi (fastreader.local) or by USB, pair each once with a code shown on its screen, name them; see each one's battery, version, card space used and free, and its books.
    - Library: one own library on the Mac (books, articles, pictures); per reader, choose what it gets: everything, some shelves, or picked books; sync sends what's missing and removes what was taken off; bookmarks follow you between readers. Places: the readers have no clock, so when a book's place differs between two readers the app asks which to keep ("Mac: 48% · Reader: 41%. Continue from…"), never decides by itself.
    - Sources, each assigned to readers: an RSS/article feed (which reader gets which feeds), Zotero (collections to readers), folders on the Mac.

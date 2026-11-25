@@ -383,8 +383,13 @@ async fn main(spawner: Spawner) -> ! {
     let inbox: &'static RefCell<net::Inbox> = mk_static!(RefCell<net::Inbox>, RefCell::new(net::Inbox::default()));
     if app_cell.borrow().settings.wifi || cfg!(feature = "wifi-boot") {
         if let Some(w) = wifi_peripheral.take() {
-            net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash));
-            app_cell.borrow_mut().device.web = net::ADDRESS.into();
+            let home = net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash));
+            let mut app = app_cell.borrow_mut();
+            app.device.web = net::ADDRESS.into();
+            if let Some(ssid) = home {
+                app.device.home_ssid = ssid;
+                app.device.home = "joining…".into();
+            }
         }
     }
 
@@ -695,7 +700,11 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 Effect::Wifi(true) => {
                     if let Some(w) = wifi_peripheral.take() {
-                        net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash));
+                        // (The app is borrowed here: start() hands back what to record.)
+                        if let Some(ssid) = net::start(spawner, w, app_cell, inbox, card_cell, start, load_home(&mut flash)) {
+                            app.device.home_ssid = ssid;
+                            app.device.home = "joining…".into();
+                        }
                     }
                     app.device.web = net::ADDRESS.into();
                 }
