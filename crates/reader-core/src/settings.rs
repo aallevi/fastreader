@@ -186,7 +186,7 @@ impl Default for Settings {
             auto_dim: true,
             captions: false,
             progress_bar: true,
-            blue_blocks: false,
+            blue_blocks: true,
             book_info: true,
             skip: 0,
             context: true,
