@@ -115,6 +115,12 @@ impl Ui {
                 return Some(Hit::Continue);
             }
         }
+        // A picture with a description, tapped while reading: pause on it
+        // and show the description (the Description button stays for
+        // later, while paused).
+        if app.screen == Screen::Reading && app.reader.is_playing() && app.reader.on_picture() && app.reader.book.caption(app.reader.pos()).is_some() && self.layout.stage.contains(x, y) {
+            return Some(Hit::Picture);
+        }
         if let (Some(b), Screen::Reading, false) = (self.caption_button, app.screen, app.reader.is_playing()) {
             if b.inset(-6, -6).contains(x, y) {
                 return Some(Hit::Caption);

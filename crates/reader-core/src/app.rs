@@ -105,6 +105,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Pace,
             MenuItem::Skip,
             MenuItem::Welcome,
+            MenuItem::BreakAfter,
             MenuItem::SubScreen,
             MenuItem::Brightness,
             MenuItem::Rotate,
@@ -119,7 +120,6 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::Info,
             MenuItem::Sleep,
             MenuItem::SleepAfter,
-            MenuItem::BreakAfter,
         ],
     ),
     ("Book", &[MenuItem::Resume, MenuItem::Chapters, MenuItem::Bookmarks, MenuItem::GoTo, MenuItem::Restart, MenuItem::DeleteBook]),
@@ -149,7 +149,7 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
 
 /// Submenus: a heading and the items it opens (they follow it in MENU).
 pub const SUBMENUS: [(MenuItem, &[MenuItem]); 5] = [
-    (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome]),
+    (MenuItem::SubReading, &[MenuItem::Speed, MenuItem::Pace, MenuItem::Skip, MenuItem::Welcome, MenuItem::BreakAfter]),
     (MenuItem::SubScreen, &[MenuItem::Brightness, MenuItem::Rotate, MenuItem::ProgressBar, MenuItem::ProgressBlocks, MenuItem::BookInfo, MenuItem::MenuColours, MenuItem::AutoDim]),
     (MenuItem::SubConnections, &[MenuItem::HomeWifi, MenuItem::Card]),
     (MenuItem::SubLayout, &[MenuItem::Words, MenuItem::Position, MenuItem::LongWords, MenuItem::Guides, MenuItem::Spacing, MenuItem::Paragraphs, MenuItem::Align]),
@@ -556,6 +556,8 @@ pub enum Hit {
     ContextScroll { down: bool, room: bool },
     /// "Continue" on the break reminder: close it and read on.
     Continue,
+    /// A picture tapped while reading: pause on it and show its description.
+    Picture,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1235,6 +1237,11 @@ impl App {
                     Feedback::limit(if forward { Msg::AtEnd } else { Msg::AtStart })
                 };
                 self.feedback(fb, now)
+            }
+            (Hit::Picture, Screen::Reading) => {
+                self.reader.pause();
+                self.settings.captions = true;
+                self.feedback(Feedback::ok(Msg::CaptionShown), now)
             }
             (Hit::Caption, Screen::Reading) => {
                 self.settings.captions = !self.settings.captions;
@@ -2447,7 +2454,7 @@ mod tests {
         let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
         assert_eq!(
             level(&a),
-            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter, MenuItem::BreakAfter],
+            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter],
             "Settings: Theme and Web view first, then its headings"
         );
         a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };

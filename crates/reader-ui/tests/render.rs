@@ -774,3 +774,28 @@ fn every_message_fits_the_title_bar() {
     }
     assert!(bad.is_empty(), "cut short:\n{}", bad.join("\n"));
 }
+
+#[test]
+fn tapping_a_picture_while_reading_pauses_and_shows_its_description() {
+    let mut file = b"Words before.\n\n{image:0}\n{caption} A small square. {/caption}\n\nWords after.".to_vec();
+    file.extend_from_slice(reader_core::book::IMAGES_MAGIC);
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&40u16.to_le_bytes());
+    file.extend_from_slice(&40u16.to_le_bytes());
+    file.extend((0..1600).flat_map(|_| 0x0841u16.to_le_bytes()));
+    let mut a = App::new(Book::from_bytes(&file, "t"), CATALOG, Settings { captions: false, ..Settings::default() });
+    let mut cv = Canvas::new(320, 240);
+    let mut ui = Ui::new(320, 240);
+    let pic = (0..a.reader.book.len()).find(|&i| a.reader.book.is_image(a.reader.book.word(i).unwrap())).unwrap();
+    a.reader.seek(pic, 0);
+    a.handle(Key::Select, 0);
+    a.tick(5);
+    ui.paint(&mut a, 5, &mut cv);
+    let s = ui.layout.stage;
+    let hit = ui.hit(&a, s.cx() as i32, s.cy() as i32);
+    assert_eq!(hit, Some(Hit::Picture), "the picture answers a tap while reading");
+    a.tap(hit.unwrap(), 10);
+    assert!(!a.reader.is_playing() && a.settings.captions, "paused on it, its description shown");
+    ui.paint(&mut a, 20, &mut cv);
+    assert_ne!(ui.hit(&a, s.cx() as i32, s.cy() as i32), Some(Hit::Picture), "paused: the picture no longer answers (the Description button does)");
+}

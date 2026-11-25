@@ -42,6 +42,7 @@
    - Sources, each assigned to readers: an RSS/article feed (which reader gets which feeds), Zotero (collections to readers), folders on the Mac.
    - Feeds in and out: import subscriptions from another feed reader as OPML, and export them back as OPML, so feeds can move between this app and others (or be backed up).
    - Each reader's page (from its own Wi-Fi or the local network) keeps showing its own options and reader view; the manager uses the same routes the page uses today (books, upload, delete, settings).
+   - Pictures per reader: books are converted for one screen (pictures at most 300×190, in the reader's 16-bit colours), so on a bigger screen (a larger reader, the Mac app full size, the browser demo filling a page) they look soft. The library keeps each book's original pictures, and sync makes a version sized for each reader's screen.
    - Flashing: the app flashes readers itself, no command line. Over USB (built in, the same work as espflash): first install of a new board, updates, and rescue of a reader that won't start, with progress shown; settings, places and books kept unless a fresh start is chosen.
    - Over Wi-Fi (OTA): updates sent to a paired reader, which checks the image and starts it only if it boots fine (else it falls back to the old one). This needs two program slots in the reader's flash layout (the program is ~2.8 MB, the flash 16 MB), a one-time change made over USB.
    - The app offers each reader the matching firmware when a new version is out, with its changes, like its own update notice.
