@@ -127,6 +127,13 @@ pub extern "C" fn add_book(added: u32) -> u32 {
         let place = if added == 0 { Place::Builtin } else { Place::Flash };
         d.app.library_info.push(BookInfo { place, bytes: size });
         d.app.positions.resize(d.app.library.len(), 0);
+        // A first visit opens the demo's first book at its first chapter
+        // ("I"), past the front matter (Looking-Glass's chess problem).
+        if i == 0 && added == 0 && d.app.settings.pos == 0 {
+            if let Some(c) = book.chapters().iter().find(|c| c.1 == "I") {
+                d.app.positions[0] = c.0;
+            }
+        }
         let wanted = d.app.settings.book as usize;
         if i == wanted || (i == 0 && wanted >= d.books.len()) || d.app.reader.book.len() < 3 {
             if i != wanted {
