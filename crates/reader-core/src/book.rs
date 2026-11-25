@@ -40,7 +40,10 @@ impl Pause {
             Pause::Clause => p.comma as u32 * 10,
             // A quarter of a word more than a comma (1.75× by default),
             // never past a sentence's end.
-            Pause::Half => (p.comma as u32 * 10 + 25).min(p.sentence as u32 * 10),
+            Pause::Half => {
+                let (half, sentence) = (p.comma as u32 * 10 + 25, p.sentence as u32 * 10);
+                if half < sentence { half } else { sentence }
+            }
             Pause::Sentence => p.sentence as u32 * 10,
             Pause::Paragraph => p.paragraph as u32 * 10,
         }
