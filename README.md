@@ -6,18 +6,12 @@ RSVP readers turn a book into a stream of words and leave the rest behind;
 Fast Reader keeps pictures, figures, lists and tables in the reading, each
 shown the way it works best one word at a time, like no other fast reader.
 
-**192** tests · **13.7 ms** per word frame on the device · **4** themes ·
+**198** tests · **13.7 ms** per word frame on the device · **4** themes ·
 EPUB, PDF, Markdown, text · [Mac app](https://github.com/aallevi/fastreader/releases/latest)
-
-<img src="docs/themes.png" alt="The four themes: Windows 98, Vista, Scrivener, Night" width="340">
-
-![Sonnet 18, word by word, in the Windows 98 theme](docs/sonnet-18.gif)
-
-*Shakespeare's Sonnet 18 at 350 words a minute in the Windows 98 theme: near the end it pauses, jumps one sentence back, steps two words forward, bookmarks that word (the folded corner), and reads on to the end. Recorded from the simulator (`reader-sim record … --demo`).*
 
 ![Every feature in one short book](docs/everything.gif)
 
-*The whole book, not just its words: a picture in the stream, the same figure coming back below the word when the text refers to it, a list with a nested list, a numbered list, a table read cell by cell, and a catalogue with each picture beside its item (`books/showcase.md`, made by `tools/make_showcase.py`).*
+*The whole book, not just its words: a picture in the stream, the same figure coming back below the word when the text refers to it, a list with a nested list, a numbered list, a table read cell by cell, and a catalogue with each picture beside its item. Pictures stay 2 seconds here; how long is a setting (2 to 15 seconds, or until play). Try it in your browser: **[the demo](https://aallevi.github.io/fastreader/demo/)**, with Through the Looking-Glass.*
 
 ## What it does
 
@@ -52,6 +46,12 @@ EPUB, PDF, Markdown, text · [Mac app](https://github.com/aallevi/fastreader/rel
 
 - Themes: Windows 98, Vista, Scrivener, Night; optional colourful menu buttons; menus in levels with Theme and Web view on top.
 - Sleep timer (default 10 minutes), dim when idle, Web view off when unused, the battery level in green, orange or red.
+
+## Themes
+
+<img src="docs/themes.png" alt="The four themes: Windows 98, Vista, Scrivener, Night" width="340">
+
+*Windows 98, Vista, Scrivener and Night; menu buttons plain or in colour.*
 
 ## Hardware
 
@@ -185,3 +185,10 @@ built on esp-rs, Embassy, pdf.js and more, and on reading research from
 McConkie & Rayner to Rayner et al. (2016): see **[CREDITS.md](CREDITS.md)**
 for credits and bibliography. Code MIT ([LICENSE](LICENSE)); fonts SIL OFL 1.1 ([assets/fonts](assets/fonts/LICENSE.md));
 pdf.js Apache-2.0 ([assets/web](assets/web)).
+
+## Sleepy time
+
+![Sleepy time: a break after an hour of reading](docs/sleepy-time.gif)
+
+*After an hour of Through the Looking-Glass, the break reminder stops at the start of a chapter: a nightcap adrift on a starry night, "OK…" to stay paused or "Continue" to read on. The same window warns before the battery runs out.*
+

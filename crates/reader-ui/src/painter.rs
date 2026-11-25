@@ -1066,11 +1066,13 @@ fn warning_rect(c: &Ctx) -> Rect {
     Rect::new(stage.cx() as i32 - w / 2, stage.cy() as i32 - h / 2, w + l.i(5.0), h + l.i(5.0))
 }
 
-/// "20 min", "1 h", "1 h 30 min".
+/// "20 min", "1 hour", "1½ hours", "2 h 15 min".
 fn minutes(n: u64) -> String {
     match (n / 60, n % 60) {
         (0, m) => format!("{m} min"),
-        (h, 0) => format!("{h} h"),
+        (1, 0) => String::from("1 hour"),
+        (1, 30) => String::from("1½ hours"),
+        (h, 0) => format!("{h} hours"),
         (h, m) => format!("{h} h {m} min"),
     }
 }
