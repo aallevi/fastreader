@@ -2293,6 +2293,7 @@ pub fn toast_text(app: &App, fb: Feedback) -> String {
         Msg::Restarted => "From the start".into(),
         Msg::Finished => "The end. Play starts over".into(),
         Msg::Sleeping => "Going to sleep".into(),
+        Msg::TurningOff => "Turning off · BOOT turns it on".into(),
         Msg::PagesView => "Page view".into(),
         Msg::SpeedView => "Speed view".into(),
         Msg::Rotated => "Screen rotated".into(),

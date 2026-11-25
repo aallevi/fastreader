@@ -36,7 +36,7 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Menus and layout
 - [ ] Title bar: ⚙ Settings, 📖 Book, 📚 Library, Aa Text open their menus; touch areas reach a little below the bar.
 - [ ] 📚 opens the book list directly; ◀ returns to reading.
-- [ ] BOOT: twice quickly = play/pause; once = screen and touch off (reading goes on; once more brings them back); held 2 s = sleep. ▲▼ walk through all menus; ◀ backs out.
+- [ ] BOOT: twice quickly = play/pause; once = screen and touch off (reading goes on; once more brings them back); held 2 s = off (a touch does not wake it, only BOOT). ▲▼ walk through all menus; ◀ backs out.
 - [ ] Text area runs edge to edge in every theme (no grey side bands).
 
 ## Pictures

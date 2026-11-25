@@ -211,6 +211,7 @@ fn apply_effects(a: &mut App, books: &Arc<Mutex<Vec<PathBuf>>>) -> bool {
                 let _ = std::fs::write(settings_path(), a.settings.to_bytes());
             }
             Effect::Sleep => println!("(the device would sleep now; any button wakes it)"),
+            Effect::PowerOff => println!("(the device would turn off now; only BOOT turns it on)"),
             Effect::Dim(_) => redraw = true, // `present` shows it
             Effect::Download => {
                 let _ = std::process::Command::new("open").arg(update::RELEASES).spawn();

@@ -622,6 +622,7 @@ pub enum Msg {
     Restarted,
     Finished,
     Sleeping,
+    TurningOff,
     PagesView,
     SpeedView,
     Highlight(bool),
@@ -681,6 +682,8 @@ pub enum Effect {
     /// Brightness or rotation changed: apply to the hardware (and save).
     Display,
     Sleep,
+    /// Off, for a bag: like Sleep, but only BOOT wakes it (no touch).
+    PowerOff,
     /// Load library book N and call [`App::open_book`].
     OpenBook(u8),
     /// Turn the Wi-Fi web view on or off.
@@ -1365,11 +1368,12 @@ impl App {
         self.toast.filter(|t| now < t.until).and_then(|t| f(t.feedback.msg)).unwrap_or(0)
     }
 
-    /// Sleep now (the BOOT button held): the place saved first.
+    /// Off now (the BOOT button held): the place saved first; only BOOT
+    /// wakes it, so a touch in a bag doesn't.
     pub fn sleep_now(&mut self, now: u64) {
         self.save();
-        self.effect(Effect::Sleep);
-        self.feedback(Feedback::ok(Msg::Sleeping), now);
+        self.effect(Effect::PowerOff);
+        self.feedback(Feedback::ok(Msg::TurningOff), now);
     }
 
     /// "Opening <title>…" in the title bar, for the platform to show before

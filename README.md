@@ -137,7 +137,7 @@ moves pixels, touches and bytes.
 | ‹ / › | – | one word, and pause | same |
 | ▶ | BOOT twice | play / pause | same |
 | | BOOT once | screen and touch off (reading goes on, to listen); once more: back | |
-| | BOOT held 2 s | sleep (place saved) | |
+| | BOOT held 2 s | off, for a bag: only BOOT turns it on (place saved) | |
 | page corner | – | bookmark | same |
 
 ## Try it

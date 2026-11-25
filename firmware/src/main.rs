@@ -641,9 +641,11 @@ async fn main(spawner: Spawner) -> ! {
                     save_positions(&mut flash, &app.positions);
                     ui.invalidate();
                 }
-                Effect::Sleep => {
+                e @ (Effect::Sleep | Effect::PowerOff) => {
                     // Real deep sleep (~10 µA for the chip): save everything, screen
                     // off, then wake on BOOT or a touch; the reader restarts where it was.
+                    // Off (BOOT held): BOOT only, so a touch in a bag doesn't wake it.
+                    let touch_wakes = e == Effect::Sleep;
                     let _ = flash.write(SETTINGS_ADDR, &app.settings.to_bytes());
                     app.positions.resize(app.library.len().max(1), 0);
                     let book = app.settings.book as usize;
@@ -664,11 +666,11 @@ async fn main(spawner: Spawner) -> ! {
                     let wake = esp_hal::gpio::WakeupConfig::default().with_low_power_path(true);
                     boot.listen(esp_hal::gpio::Event::LowLevel);
                     let _ = boot.apply_wakeup_config(&wake);
-                    if touch_ok {
+                    if touch_ok && touch_wakes {
                         touch_int.listen(esp_hal::gpio::Event::LowLevel);
                         let _ = touch_int.apply_wakeup_config(&wake);
                     }
-                    println!("fastreader: deep sleep");
+                    println!("fastreader: {}", if touch_wakes { "deep sleep" } else { "off (BOOT wakes)" });
                     low_power.sleep_deep(esp_hal::rtc_cntl::sleep::RtcSleepConfig::deep());
                 }
                 Effect::SaveBookmarks => save_bookmarks(&mut flash, &app.bookmarks),
