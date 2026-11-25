@@ -102,7 +102,6 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
         "Settings",
         &[
             MenuItem::Theme,
-            MenuItem::Wifi,
             MenuItem::SubReading,
             MenuItem::Speed,
             MenuItem::Pace,
@@ -117,6 +116,9 @@ pub const MENU: [(&str, &[MenuItem]); 4] = [
             MenuItem::BookInfo,
             MenuItem::MenuColours,
             MenuItem::AutoDim,
+            // Web view just above Connections, away from Theme: no
+            // accidental Wi-Fi when reaching for the themes.
+            MenuItem::Wifi,
             MenuItem::SubConnections,
             MenuItem::HomeWifi,
             MenuItem::Card,
@@ -2609,8 +2611,8 @@ mod tests {
         let level = |a: &App| match a.screen { Screen::Menu { sel } => menu_level(sel).into_iter().map(menu_item).collect::<Vec<_>>(), _ => Vec::new() };
         assert_eq!(
             level(&a),
-            [MenuItem::Theme, MenuItem::Wifi, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter],
-            "Settings: Theme and Web view first, then its headings"
+            [MenuItem::Theme, MenuItem::SubReading, MenuItem::SubScreen, MenuItem::Wifi, MenuItem::SubConnections, MenuItem::Info, MenuItem::Sleep, MenuItem::SleepAfter],
+            "Settings: Theme first, Web view just above Connections"
         );
         a.screen = Screen::Menu { sel: menu_index(MenuItem::SubScreen) };
         a.handle(Select, 0);
