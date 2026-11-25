@@ -23,7 +23,11 @@ const CHECKPOINT: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pause {
     Normal,
+    /// After a comma or a dash: a breath.
     Clause,
+    /// After a semicolon or a colon: a half stop, between a comma's and a
+    /// sentence's (no setting of its own: halfway between the two).
+    Half,
     Sentence,
     Paragraph,
 }
@@ -34,6 +38,7 @@ impl Pause {
         match self {
             Pause::Normal => 100,
             Pause::Clause => p.comma as u32 * 10,
+            Pause::Half => (p.comma as u32 + p.sentence as u32) * 5,
             Pause::Sentence => p.sentence as u32 * 10,
             Pause::Paragraph => p.paragraph as u32 * 10,
         }
@@ -1207,7 +1212,8 @@ fn classify(word: &str) -> Pause {
     let tail = word.trim_end_matches(['"', '\'', ')', ']', '}', '>', '»', '›', '”', '’']);
     match tail.chars().last() {
         Some('.' | '!' | '?' | '…') => Pause::Sentence,
-        Some(',' | ';' | ':' | '—' | '–') => Pause::Clause,
+        Some(';' | ':') => Pause::Half,
+        Some(',' | '—' | '–') => Pause::Clause,
         _ => Pause::Normal,
     }
 }
@@ -1285,6 +1291,15 @@ mod tests {
 
     fn styles(b: &Book) -> Vec<(bool, bool, bool)> {
         (0..b.len()).map(|i| b.word(i).unwrap().style).map(|s| (s.bold(), s.italic(), s.heading())).collect()
+    }
+
+    #[test]
+    fn semicolons_and_colons_pause_longer_than_commas() {
+        let b = Book::new("t", "one, two; three: four. five");
+        let p: Vec<Pause> = (0..4).map(|i| b.word(i).unwrap().pause).collect();
+        assert_eq!(p, [Pause::Clause, Pause::Half, Pause::Half, Pause::Sentence]);
+        let pace = Pacing::default();
+        assert!(Pause::Clause.weight(&pace) < Pause::Half.weight(&pace) && Pause::Half.weight(&pace) < Pause::Sentence.weight(&pace));
     }
 
     #[test]
