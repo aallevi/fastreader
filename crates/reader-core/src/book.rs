@@ -505,9 +505,17 @@ impl Book {
     /// grid shows for that beat, then the word for its own time).
     fn weight_at(&self, i: usize, w: &Word, p: &Pacing) -> u32 {
         let n = i as u32;
+        // In a list, the item before a change of level (into a sub-list or
+        // back out of one) holds a beat longer, to follow the indent.
+        let level_change = self
+            .lists
+            .iter()
+            .find(|l| l.items[0].0 <= n + 1 && n + 1 < l.end)
+            .and_then(|l| l.items.iter().position(|it| it.0 == n + 1).filter(|&k| k > 0 && l.levels.get(k) != l.levels.get(k - 1)))
+            .map_or(0, |_| 100);
         match self.tables.iter().find(|t| t.cells[0].0 <= n && n < t.end) {
             Some(t) => w.weight(p) * 2 + if p.table_flash && t.cells.iter().any(|c| c.0 == n) { 100 } else { 0 },
-            None => w.weight(p),
+            None => w.weight(p) + level_change,
         }
     }
 
@@ -550,9 +558,13 @@ impl Book {
 
     /// First word of the sentence containing `i`.
     pub fn sentence_start(&self, i: usize) -> usize {
-        // A table is one sentence (⏮ ⏭ jump over it whole; ‹ › go by cell).
+        // A table is one sentence (⏮ ⏭ jump over it whole; ‹ › go by cell),
+        // and so is a list (‹ › go by item).
         if let Some((t, _)) = self.cell_at(i) {
             return t.cells[0].0 as usize;
+        }
+        if let Some((l, _)) = self.list_at(i) {
+            return l.items[0].0 as usize;
         }
         let mut j = i.min(self.words.len().saturating_sub(1));
         while j > 0 && self.words[j - 1].pause < Pause::Sentence {
@@ -565,6 +577,9 @@ impl Book {
     pub fn next_sentence(&self, i: usize) -> Option<usize> {
         if let Some((t, _)) = self.cell_at(i) {
             return ((t.end as usize) < self.words.len()).then_some(t.end as usize);
+        }
+        if let Some((l, _)) = self.list_at(i) {
+            return ((l.end as usize) < self.words.len()).then_some(l.end as usize);
         }
         let mut j = i;
         while j < self.words.len() {
@@ -1036,19 +1051,20 @@ fn tokenize(source: &str) -> (ChunkedText, Chunked<Word>, Captions, Vec<List>, V
                 pause: classify(shown),
                 style: st,
             });
-            // Brackets are punctuation: a breath as the aside opens and closes.
+            // Brackets and quotes: a breath as the aside opens and closes, a
+            // little longer than a comma's (the half stop), to set it apart.
             if opens_aside(shown) && words.len() >= 2 {
                 let n = words.len();
                 let before = words.get(n - 2).unwrap();
-                if before.pause < Pause::Clause {
-                    words.set(n - 2, Word { pause: Pause::Clause, ..before });
+                if before.pause < Pause::Half {
+                    words.set(n - 2, Word { pause: Pause::Half, ..before });
                 }
             }
             if closes {
                 let n = words.len();
                 let me = words.get(n - 1).unwrap();
-                if me.pause < Pause::Clause {
-                    words.set(n - 1, Word { pause: Pause::Clause, ..me });
+                if me.pause < Pause::Half {
+                    words.set(n - 1, Word { pause: Pause::Half, ..me });
                 }
             }
             for m in trail_markers {
@@ -1427,6 +1443,23 @@ mod tests {
     }
 
     #[test]
+    fn a_list_is_one_sentence_and_an_item_one_word() {
+        let b = Book::new("t", "Before it.\n\n• one two\n• three four\n  • five six\n• seven\n\nAfter it.");
+        let at = |w: &str| (0..b.len()).find(|&i| b.text_of(b.word(i).unwrap()).trim_matches(|c: char| !c.is_alphanumeric()) == w).unwrap();
+        assert_eq!(b.sentence_start(at("four")), at("one"), "⏮ goes to the list's start");
+        assert_eq!(b.next_sentence(at("two")), Some(at("After")), "⏭ skips the whole list");
+        let mut r = crate::reader::Reader::new(Book::new("t", "Before it.\n\n• one two\n• three four\n  • five six\n• seven\n\nAfter it."), 300);
+        r.seek(at("two"), 0);
+        r.step_word(true, 0);
+        assert_eq!(r.pos(), at("three"), "› goes to the next item");
+        r.step_word(false, 0);
+        assert_eq!(r.pos(), at("one"), "‹ back to the item before");
+        let p = Pacing::default();
+        let plain = b.word(at("two")).unwrap().weight(&p);
+        assert!(b.weight_at(at("four"), &b.word(at("four")).unwrap(), &p) > plain, "a beat more before a sub-list");
+    }
+
+    #[test]
     fn quotes_and_dash_pairs_are_asides_each_switchable() {
         let aside = |b: &Book| (0..b.len()).filter(|&i| b.word(i).unwrap().style.bracketed()).map(|i| String::from(b.text_of(b.word(i).unwrap()))).collect::<Vec<_>>();
         let text = "She said “come here” and left (quietly). Alice—as she said—went.";
@@ -1435,7 +1468,7 @@ mod tests {
         assert_eq!(aside(&b), ["“come", "here”", "(quietly).", "as", "she", "said—"]);
         assert_eq!(bracket_pair(&b, 1 + 2), ("“", "”"));
         assert_eq!(bracket_pair(&b, 9), ("—", "—"));
-        assert_eq!(b.word(1).unwrap().pause, Pause::Clause, "a breath as the quote opens");
+        assert_eq!(b.word(1).unwrap().pause, Pause::Half, "a breath as the quote opens");
         set_aside_kinds(ASIDE_DEFAULT & !ASIDE_QUOTE);
         let b = Book::new("t", text);
         assert_eq!(aside(&b), ["(quietly)."], "quotes off, dashes off: only the brackets");
@@ -1667,11 +1700,11 @@ mod tests {
     }
 
     #[test]
-    fn brackets_pause_like_commas() {
+    fn brackets_pause_a_little_more_than_commas() {
         let b = Book::new("t", "She said (quietly, almost to herself) nothing more");
         let pauses: Vec<Pause> = (0..b.len()).map(|i| b.word(i).unwrap().pause).collect();
-        assert_eq!(pauses[1], Pause::Clause, "a breath before the aside opens");
-        assert_eq!(pauses[5], Pause::Clause, "and as it closes");
+        assert_eq!(pauses[1], Pause::Half, "a breath before the aside opens");
+        assert_eq!(pauses[5], Pause::Half, "and as it closes");
         assert_eq!(pauses[6], Pause::Normal);
         let p = Pacing { long_words: false, ..Pacing::default() };
         assert_eq!(b.word(3).unwrap().weight(&p), 100, "asides go at the normal speed");
@@ -1685,7 +1718,7 @@ mod tests {
         assert_eq!(bracket_pair(&b, 3), ("«", "»"));
         assert_eq!(bracket_pair(&b, 5), ("«", "»"), "<< >> shows as « »");
         assert_eq!(bracket_pair(&b, 8), ("<", ">"));
-        assert_eq!(b.word(1).unwrap().pause, Pause::Clause, "a breath before the aside");
+        assert_eq!(b.word(1).unwrap().pause, Pause::Half, "a breath before the aside");
         let b = Book::new("t", "a (b [c] d) e");
         assert_eq!(bracket_pair(&b, 3), ("(", ")"));
         assert_eq!(bracket_pair(&b, 2), ("[", "]"), "the innermost pair shows");

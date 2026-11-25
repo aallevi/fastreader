@@ -71,6 +71,9 @@ Firmware flashed on the reader. Tick each line; note anything odd next to it.
 ## Pictures: tap to read the description
 - [ ] While reading, tap a picture that has a description: reading pauses on it and the description shows; the Description button is still there while paused.
 
+## Lists
+- [ ] In a list, ⏮ goes to the list's start and ⏭ past the whole list; ‹ › go item by item. Stepping into a sub-list or back out holds a beat longer.
+
 ## Brackets pane
 - [ ] Settings > Brackets: "Show them" (in the text / as side marks), then one row per kind: ( ) [ ] { } < > « » “ ” — —, each "In the text" or "As asides". Quotes on, dashes off by default; changing one reopens the book.
 - [ ] As side marks: “Come here,” said… shows “ ” at the sides; the marks blink off in the breath after the closing word, so the next phrase reads as new.

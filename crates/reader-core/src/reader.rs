@@ -314,18 +314,25 @@ impl Reader {
 
     /// One word back or forward. Returns false at either end.
     pub fn step_word(&mut self, forward: bool, now: u64) -> bool {
-        // In a table a cell is a word: ‹ › go cell by cell.
-        let in_table = self.book.cell_at(self.pos).map(|(t, c)| (t.cells.iter().map(|x| x.0 as usize).collect::<alloc::vec::Vec<_>>(), c, t.end as usize));
+        // In a table a cell is a word, in a list an item: ‹ › go cell by
+        // cell, item by item.
+        let in_table = self
+            .book
+            .cell_at(self.pos)
+            .map(|(t, c)| (t.cells.iter().map(|x| x.0 as usize).collect::<alloc::vec::Vec<_>>(), c, t.end as usize))
+            .or_else(|| self.book.list_at(self.pos).map(|(l, k)| (l.items.iter().map(|x| x.0 as usize).collect::<alloc::vec::Vec<_>>(), k, l.end as usize)));
         let target = match in_table {
             Some((starts, c, end)) if forward => starts.iter().copied().skip(c + 1).find(|&s| s > self.pos).unwrap_or(end),
             Some((starts, c, _)) if self.pos > starts[c] => starts[c],
             Some((starts, c, _)) if c > 0 => starts[..c].iter().rev().copied().find(|&s| s < self.pos).unwrap_or(starts[0]),
             _ => {
                 let t = if forward { self.pos + 1 } else { self.pos.wrapping_sub(1) };
-                // Stepping back into a table from just after it: its last cell.
-                match self.book.cell_at(t).filter(|_| !forward) {
-                    Some((tb, c)) => tb.cells[c].0 as usize,
-                    None => t,
+                // Stepping back into a table or list from just after it: its
+                // last cell or item.
+                match (self.book.cell_at(t).filter(|_| !forward), self.book.list_at(t).filter(|_| !forward)) {
+                    (Some((tb, c)), _) => tb.cells[c].0 as usize,
+                    (None, Some((l, k))) => l.items[k].0 as usize,
+                    _ => t,
                 }
             }
         };
