@@ -63,7 +63,11 @@ fn take_inbox() -> Vec<u8> {
 pub extern "C" fn start(w: u32, h: u32) {
     let saved = take_inbox();
     let settings = Settings::from_bytes(&saved).unwrap_or_default();
-    let mut app = App::new(Book::new("Fast Reader", "# Fast Reader\nLoading…"), CATALOG, settings);
+    // A stand-in until the books arrive: its place is never saved over a
+    // real book's (the first book's starting chapter, say).
+    let mut loading = Book::new("Fast Reader", "# Fast Reader\nLoading…");
+    loading.stand_in = true;
+    let mut app = App::new(loading, CATALOG, settings);
     app.battery = Some(Battery { percent: 100, charging: false, millivolts: 4150 });
     app.device = DeviceInfo {
         board: "Web demo (the same code as the reader)".into(),
