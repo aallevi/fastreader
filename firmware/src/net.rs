@@ -273,11 +273,20 @@ async fn mdns(stack: Stack<'static>) {
         let Some(ip) = stack.config_v4().map(|c| c.address.address().octets()) else { continue };
         loop {
             let Ok((n, meta)) = socket.recv_from(&mut query).await else { continue };
-            if let Some(len) = reader_ui::web::mdns_reply(&query[..n], reader_ui::web::MDNS_NAME, ip, &mut reply) {
+            let answer = reader_ui::web::mdns_reply(&query[..n], reader_ui::web::MDNS_NAME, ip, &mut reply);
+            if answer.is_some() {
+                println!("mdns: answered {:?}", meta.endpoint);
+            }
+            if let Some(len) = answer {
                 // Normal mDNS asks from port 5353 and is answered to the group;
                 // one-shot ("legacy") queries come from other ports and get a direct reply.
-                let to = if meta.endpoint.port == 5353 { (GROUP, 5353).into() } else { meta.endpoint };
-                let _ = socket.send_to(&reply[..len], to).await;
+                // Also straight to the asker: many networks drop the group
+                // reply on its way back from Wi-Fi, and Macs often ask for
+                // a direct one.
+                if meta.endpoint.port == 5353 {
+                    let _ = socket.send_to(&reply[..len], (GROUP, 5353)).await;
+                }
+                let _ = socket.send_to(&reply[..len], meta.endpoint).await;
             }
             if !stack.is_config_up() {
                 break; // address lost: wait for the new one
