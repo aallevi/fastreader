@@ -25,8 +25,8 @@ pub enum Pause {
     Normal,
     /// After a comma or a dash: a breath.
     Clause,
-    /// After a semicolon or a colon: a half stop, between a comma's and a
-    /// sentence's (no setting of its own: halfway between the two).
+    /// After a semicolon or a colon: a half stop, a little longer than a
+    /// comma's (no setting of its own: it follows the comma's).
     Half,
     Sentence,
     Paragraph,
@@ -38,7 +38,9 @@ impl Pause {
         match self {
             Pause::Normal => 100,
             Pause::Clause => p.comma as u32 * 10,
-            Pause::Half => (p.comma as u32 + p.sentence as u32) * 5,
+            // A quarter of a word more than a comma (1.75× by default),
+            // never past a sentence's end.
+            Pause::Half => (p.comma as u32 * 10 + 25).min(p.sentence as u32 * 10),
             Pause::Sentence => p.sentence as u32 * 10,
             Pause::Paragraph => p.paragraph as u32 * 10,
         }
