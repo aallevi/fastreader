@@ -26,13 +26,15 @@ pub fn touch_to_screen(raw_x: u16, raw_y: u16, flipped: bool) -> (i32, i32) {
     if flipped { (WIDTH as i32 - 1 - x, HEIGHT as i32 - 1 - y) } else { (x, y) }
 }
 
-/// Raw ADC (11 dB attenuation, 12-bit) → battery millivolts, assuming the
-/// usual 1:2 divider. A pinned-high reading means no battery (USB only).
-pub fn battery_mv(raw: u16) -> Option<u16> {
-    if raw >= 4080 || raw < 1000 {
+/// The battery pin's calibrated reading (millivolts at GPIO 9, behind the
+/// board's 200 kΩ / 200 kΩ divider: half the battery) → battery millivolts.
+/// (The uncalibrated reading sat at full scale; the chip's own calibration
+/// gives the real value.) Under 1 V at the pin: no battery.
+pub fn battery_mv(pin_mv: u16) -> Option<u16> {
+    if !(1_000..=2_300).contains(&pin_mv) {
         return None;
     }
-    Some((raw as u32 * 3100 * 2 / 4095) as u16)
+    Some(pin_mv * 2)
 }
 
 /// LiPo voltage → rough percentage (resting curve).

@@ -24,7 +24,7 @@ use embedded_graphics::pixelcolor::raw::RawU16;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
-use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
+use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::{DriveMode, Input, InputConfig, Level, Output, OutputConfig, Pull};
@@ -172,9 +172,9 @@ async fn main(spawner: Spawner) -> ! {
         reader_core::gestures::HeldKey::new(reader_core::Key::Right),
     ];
 
-    // --- Battery.
+    // --- Battery (calibrated reading: millivolts at the pin).
     let mut adc_cfg = AdcConfig::new();
-    let mut bat_pin = adc_cfg.enable_pin(p.GPIO9, Attenuation::_11dB);
+    let mut bat_pin = adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<esp_hal::peripherals::ADC1>>(p.GPIO9, Attenuation::_11dB);
     let mut adc = Adc::new(p.ADC1, adc_cfg);
 
     // --- Settings.
@@ -449,6 +449,7 @@ async fn main(spawner: Spawner) -> ! {
             let nearly = app.battery.is_some_and(|b| b.percent <= reader_core::app::BATTERY_LOW);
             last_battery = now + if nearly { 2_000 } else { 10_000 };
             let raw: u16 = nb::block!(adc.read_oneshot(&mut bat_pin)).unwrap_or(0);
+            println!("battery: {:?} mV, {:?}% (charging {})", board::battery_mv(raw), app.battery.map(|b| b.percent), app.battery.is_some_and(|b| b.charging));
             app.battery = board::battery_mv(raw).map(|mv| {
                 let charging = charger.update(mv);
                 Battery { percent: board::battery_percent(mv), charging, millivolts: mv }
